@@ -1,3 +1,16 @@
+pub use config::Flags;
+pub use terminal::Terminal;
+
+/// Contains the dispatch logic for running individual CLI subcommands.
+/// The CLI's main function calls into these entrypoints for each subcommand.
+mod cmd;
+/// configuration of the CLI, either from the environment of flags.
+mod config;
+/// This module mediates communication with the terminal. This
+/// lets us enforce our brand guidelines, respect user preferences for
+/// color codes, and emojis, and ensure input from the terminal is consistent.
+mod terminal;
+
 trait Named {
     fn name(&self) -> &str;
 }
