@@ -1,14 +1,14 @@
 use clap::{command, Parser};
 
 use super::colors::EnableColors;
-use super::command::WackCommand;
+use super::command::MultiCommand;
 
 /// multi is a cloud deployment multitool.
 #[derive(Parser)]
 pub struct Flags {
     /// The subcommand to execute
     #[command(subcommand)]
-    cmd: Option<WackCommand>,
+    cmd: Option<MultiCommand>,
 
     /// Whether to color the output
     #[arg(long, value_enum, default_value_t=EnableColors::default())]
@@ -17,7 +17,7 @@ pub struct Flags {
 
 impl Flags {
     /// Return the top-level command provided, if it exists.
-    pub fn cmd(&self) -> Option<&WackCommand> {
+    pub fn cmd(&self) -> Option<&MultiCommand> {
         self.cmd.as_ref()
     }
 

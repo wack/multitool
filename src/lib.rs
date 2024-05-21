@@ -1,4 +1,5 @@
 pub use config::Flags;
+pub use fs::manifest;
 pub use terminal::Terminal;
 
 /// Contains the dispatch logic for running individual CLI subcommands.
@@ -6,6 +7,8 @@ pub use terminal::Terminal;
 mod cmd;
 /// configuration of the CLI, either from the environment of flags.
 mod config;
+/// An abstraction over the user's filesystem, respecting $XFG_CONFIG.
+mod fs;
 /// This module mediates communication with the terminal. This
 /// lets us enforce our brand guidelines, respect user preferences for
 /// color codes, and emojis, and ensure input from the terminal is consistent.
