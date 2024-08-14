@@ -6,3 +6,4 @@ mod entry;
 mod entry_type;
 mod errors;
 mod journal;
+mod store; // Option 3

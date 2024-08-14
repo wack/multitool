@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use serde::Serialize;
-use tokio::{fs::File, io::AsyncWriteExt};
+use tokio::{
+    fs::File,
+    io::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+};
 
 use crate::state::{
     backend::meta::PlanMetadata, history::RunHistory, journal::Journal, ResourcePrototype,
@@ -14,29 +17,37 @@ use super::{
         Initialize, ProcessingCreate, ProcessingDelete, ProcessingUpdate,
     },
     errors::LocalError,
+    store::LocalStore, // Option 3
 };
 
-/// A `LocalJournal` writes journal entries to the local filesystem.
+// Option 1: BufWriter and BufReader are structs and not traits.
+// pub trait LocalStore: BufWriter + BufReader + AsyncSeek {}
+// impl<T: BufWriter + BufReader + AsyncSeek> LocalStore for T {}
+
+// Option 2: parameter type `T` may not live long enough and Journal can't do async things
+// pub trait LocalStore: AsyncWrite + AsyncRead + AsyncSeek {}
+// impl<T: AsyncWrite + AsyncRead + AsyncSeek> LocalStore for T {}
+
 pub struct LocalJournal {
-    file: File,
+    store: Box<dyn LocalStore>,
 }
 
 impl LocalJournal {
     /// We shouldn't accept a file directory. We should probably accept
     /// a Filesystem or a Wackfile or operate on a higher level
     /// of abstraction, like acceepting a trait here.
-    pub fn new(file: File) -> Self {
-        Self { file }
+    pub fn new<T: LocalStore>(store: T) -> Self {
+        Self {
+            store: Box::new(store),
+        }
     }
 
-    /// Writes a blob to the file and flushes it.
+    /// Writes a blob to the store
     async fn write_blob<T: Serialize>(&mut self, blob: &T) -> Result<(), std::io::Error> {
-        // • Serialize the record into a string.
+        // Serialize the record into a string
         let json = serde_json::to_vec(blob)?;
-        // • Write the string to the file.
-        self.file.write_all(&json).await?;
-        // • Flush the contents of the buffer.
-        self.file.flush().await?;
+        // Write the string to the store
+        self.store.write(&json);
         Ok(())
     }
 }

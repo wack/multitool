@@ -22,6 +22,14 @@ impl ResourcePrototype {
     pub fn new(id: Uuid, inputs: serde_json::Value) -> Self {
         Self { id, inputs }
     }
+
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    pub fn inputs(&self) -> &serde_json::Value {
+        &self.inputs
+    }
 }
 
 /// A ResourceRecord is a concrete resource within a cloud provider.
@@ -33,11 +41,16 @@ pub struct ResourceRecord {
     /// the cloud provider. It's used by multitool to construct a
     /// timeline of this resource's lifecycle.
     id: Uuid,
-    fields: serde_json::Value,
+    inputs: serde_json::Value,
+    computed_fields: serde_json::Value,
 }
 
 impl ResourceRecord {
-    pub fn new(id: Uuid, fields: serde_json::Value) -> Self {
-        Self { id, fields }
+    pub fn new(prototype: &ResourcePrototype, computed_fields: serde_json::Value) -> Self {
+        Self {
+            id: prototype.id(),
+            inputs: prototype.inputs().clone(),
+            computed_fields,
+        }
     }
 }
