@@ -9,6 +9,8 @@ mod cmd;
 mod config;
 /// An abstraction over the user's filesystem, respecting $XFG_CONFIG.
 mod fs;
+/// The `state` mod provides implementations for state management.
+mod state;
 /// This module mediates communication with the terminal. This
 /// lets us enforce our brand guidelines, respect user preferences for
 /// color codes, and emojis, and ensure input from the terminal is consistent.
