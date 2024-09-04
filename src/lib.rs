@@ -74,6 +74,8 @@ trait Adaptor {
     fn platform(&self) -> &dyn Platform;
 }
 
+mod resources;
+
 #[cfg(test)]
 mod tests {
 
