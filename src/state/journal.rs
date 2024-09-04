@@ -11,7 +11,8 @@ pub trait Journal {
 
     /// finalize writes the last entry to the journal (the entry that signifies
     /// the end of the run) and converts the journal into a RunHistory,
-    /// removing unnecessary operations.
+    /// removing unnecessary operations. Note that this method, because
+    /// of the "self" receiver, makes this type not object safe.
     async fn finalize(self) -> Result<RunHistory, Self::Error>;
 
     /// Immediately before creating a resource, journal the change to a destination
