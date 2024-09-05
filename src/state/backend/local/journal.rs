@@ -1,6 +1,11 @@
+use std::pin::Pin;
+
 use async_trait::async_trait;
 use serde::Serialize;
-use tokio::{fs::File, io::AsyncWriteExt};
+use tokio::{
+    fs::File,
+    io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt},
+};
 
 use crate::state::{
     backend::meta::PlanMetadata, history::RunHistory, journal::Journal, ResourcePrototype,
@@ -16,27 +21,28 @@ use super::{
     errors::LocalError,
 };
 
-/// A `LocalJournal` writes journal entries to the local filesystem.
+pub(super) trait LocalStore: AsyncWrite + AsyncBufRead + AsyncSeek + Send + 'static {}
+impl<T: AsyncWrite + AsyncBufRead + AsyncSeek + Send + 'static> LocalStore for T {}
+
 pub struct LocalJournal {
-    file: File,
+    store: Pin<Box<dyn LocalStore>>,
 }
 
 impl LocalJournal {
-    /// We shouldn't accept a file directory. We should probably accept
-    /// a Filesystem or a Wackfile or operate on a higher level
-    /// of abstraction, like acceepting a trait here.
-    pub fn new(file: File) -> Self {
-        Self { file }
+    pub(super) fn new(store: impl LocalStore) -> Self {
+        Self {
+            store: Box::pin(store),
+        }
     }
 
-    /// Writes a blob to the file and flushes it.
+    /// Writes a blob to the store
     async fn write_blob<T: Serialize>(&mut self, blob: &T) -> Result<(), std::io::Error> {
-        // • Serialize the record into a string.
+        // Serialize the record into a string
         let json = serde_json::to_vec(blob)?;
-        // • Write the string to the file.
-        self.file.write_all(&json).await?;
-        // • Flush the contents of the buffer.
-        self.file.flush().await?;
+        // Write the string to the store
+        self.store.write_all(&json).await?;
+        // Flush the contents of the buffer
+        self.store.flush().await?;
         Ok(())
     }
 }
@@ -126,5 +132,56 @@ impl Journal for LocalJournal {
         let entry = JournalEntry::<Finalize>::new(&());
         self.write_blob(&entry).await?;
         todo!("Have not implemented the RunHistory type yet");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::io::Cursor;
+
+    use miette::{IntoDiagnostic, Result};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use crate::state::ResourcePrototype;
+    use crate::state::ResourceRecord;
+
+    use super::Journal;
+    use super::LocalJournal;
+
+    #[tokio::test]
+    async fn in_memory_journal_write() -> Result<()> {
+        let store = Cursor::new(Vec::new());
+        let mut journal = LocalJournal::new(store);
+
+        let (proto, record) = fake_resource();
+
+        journal.before_create(&proto).await.into_diagnostic()?;
+        // End with a creation complete operation.
+        journal.after_create(&record).await.into_diagnostic()?;
+        // journal.finalize().await.into_diagnostic()?; // TODO: needs to be implemented
+
+        Ok(())
+    }
+
+    fn fake_resource() -> (ResourcePrototype, ResourceRecord) {
+        let id = Uuid::new_v4();
+
+        let proto = ResourcePrototype::new(
+            id,
+            json!({
+                "hello": "world",
+            }),
+        );
+
+        let record = ResourceRecord::new(
+            &proto,
+            json!({
+                "hello": "world",
+                "multitool": "rules",
+            }),
+        );
+        (proto, record)
     }
 }
