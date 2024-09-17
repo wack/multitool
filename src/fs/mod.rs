@@ -1,4 +1,5 @@
 use directories::ProjectDirs;
+use file::MultiFileInstance;
 use miette::{miette, Diagnostic, IntoDiagnostic, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
@@ -106,9 +107,20 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    fn read_json_file<T: MultiFile + DeserializeOwned>(&self) -> Result<T> {
-        // • Get the path to the file.
-        let path = T::path(self)?;
+    pub(crate) fn load_file_instance<T: MultiFileInstance + DeserializeOwned>(
+        &self,
+        val: T,
+    ) -> Result<T> {
+        match T::EXTENSION {
+            "json" => self.read_json_file::<T>(val),
+            _ => Err(miette!(
+                "Extension unknown! Internal error. Please file this error as a bug."
+            )),
+        }
+    }
+
+    /// Open the file and deserialize it with serde.
+    fn read_json_file<T: MultiFile + DeserializeOwned>(&self, path: PathBuf) -> Result<T> {
         // • Open it as a byte stream, then deserialize those bytes.
         let file = std::fs::File::open(path).into_diagnostic()?;
         let reader = BufReader::new(file);

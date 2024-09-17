@@ -26,6 +26,10 @@ impl State {
     pub fn diff(&self, _history: &RunHistory) -> State {
         todo!();
     }
+
+    pub fn add(&mut self, resource: ResourceRecord) {
+        self.resources.push(resource);
+    }
 }
 
 mod backend;
