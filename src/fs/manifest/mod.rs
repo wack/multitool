@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 pub use schema::{Dependency, DependencySection, ManifestAlpha, ManifestContents};
 
-use super::{DirectoryType, FileSystem, WackFile};
+use super::{DirectoryType, FileSystem, MultiFile};
 
 mod schema;
 
@@ -59,7 +59,7 @@ impl Manifest for JsonManifest {
 pub struct TomlManifest(ManifestContents);
 
 /// A manifest that was originally loaded from a TOML file.
-impl WackFile for TomlManifest {
+impl MultiFile for TomlManifest {
     const DIR: DirectoryType = DirectoryType::Project;
     const NAME: &'static str = MANIFEST_PREFIX;
     const EXTENSION: &'static str = MANIFEST_EXTENSIONS[0];
@@ -69,7 +69,7 @@ impl WackFile for TomlManifest {
 #[derive(Serialize, Deserialize)]
 pub struct JsonManifest(ManifestContents);
 
-impl WackFile for JsonManifest {
+impl MultiFile for JsonManifest {
     const DIR: DirectoryType = DirectoryType::Project;
     const NAME: &'static str = MANIFEST_PREFIX;
     const EXTENSION: &'static str = MANIFEST_EXTENSIONS[1];
@@ -80,7 +80,7 @@ impl WackFile for JsonManifest {
 #[derive(Serialize, Deserialize)]
 pub struct InitTomlManifest(pub ManifestContents);
 
-impl WackFile for InitTomlManifest {
+impl MultiFile for InitTomlManifest {
     const DIR: DirectoryType = DirectoryType::Pwd;
     const NAME: &'static str = TomlManifest::NAME;
     const EXTENSION: &'static str = TomlManifest::EXTENSION;
@@ -91,7 +91,7 @@ impl WackFile for InitTomlManifest {
 #[derive(Serialize, Deserialize)]
 pub struct InitJsonManifest(pub ManifestContents);
 
-impl WackFile for InitJsonManifest {
+impl MultiFile for InitJsonManifest {
     const DIR: DirectoryType = DirectoryType::Pwd;
     const NAME: &'static str = JsonManifest::NAME;
     const EXTENSION: &'static str = JsonManifest::EXTENSION;

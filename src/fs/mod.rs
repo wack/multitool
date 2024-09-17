@@ -9,11 +9,13 @@ use std::{
     path::PathBuf,
 };
 
-pub(crate) use file::WackFile;
+pub(crate) use file::MultiFile;
 
 use crate::manifest::TomlManifest;
 
 use self::manifest::{JsonManifest, Manifest};
+
+mod statefile;
 
 mod file;
 /// The schema and parsing code for the Wack.toml manifest file.
@@ -41,7 +43,7 @@ impl FileSystem {
     /// Returns `Ok(true)` if the file existed and was deleted.
     /// Returns `Ok(false)`` if the file did not exist.
     /// Returns `Err(_)`` if the file could not be deleted or there was another io error.
-    pub(crate) fn delete_file<T: WackFile>(&self) -> Result<bool> {
+    pub(crate) fn delete_file<T: MultiFile>(&self) -> Result<bool> {
         // • Grab the path to the file.
         let path = T::path(self)?;
         // Remove the file but check the error.
@@ -93,7 +95,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    pub(crate) fn load_file<T: WackFile + DeserializeOwned>(&self) -> Result<T> {
+    pub(crate) fn load_file<T: MultiFile + DeserializeOwned>(&self) -> Result<T> {
         match T::EXTENSION {
             "toml" => self.read_toml_file::<T>(),
             "json" => self.read_json_file::<T>(),
@@ -104,7 +106,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    fn read_json_file<T: WackFile + DeserializeOwned>(&self) -> Result<T> {
+    fn read_json_file<T: MultiFile + DeserializeOwned>(&self) -> Result<T> {
         // • Get the path to the file.
         let path = T::path(self)?;
         // • Open it as a byte stream, then deserialize those bytes.
@@ -116,7 +118,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    fn read_toml_file<T: WackFile + DeserializeOwned>(&self) -> Result<T> {
+    fn read_toml_file<T: MultiFile + DeserializeOwned>(&self) -> Result<T> {
         // • Get the path to the file.
         let path = T::path(self)?;
         // • Open it as a byte stream, then deserialize those bytes.
@@ -129,7 +131,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    pub(crate) fn save_file<T: WackFile + Serialize>(&self, blob: &T) -> Result<()> {
+    pub(crate) fn save_file<T: MultiFile + Serialize>(&self, blob: &T) -> Result<()> {
         // • Get the path to the file.
         let path = T::path(self)?;
         // • Creat the file if it doesn't exist.
