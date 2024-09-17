@@ -53,4 +53,16 @@ impl ResourceRecord {
             computed_fields,
         }
     }
+
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    pub fn computed(&self) -> &serde_json::Value {
+        &self.computed_fields
+    }
+
+    pub fn inputs(&self) -> &serde_json::Value {
+        &self.inputs
+    }
 }
