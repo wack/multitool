@@ -7,10 +7,12 @@ pub use resource::{ResourcePrototype, ResourceRecord};
 use serde::{Deserialize, Serialize};
 
 use self::history::RunHistory;
+pub use status::Status;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct State {
     resources: Vec<ResourceRecord>,
+    incompletes: Vec<Status>,
 }
 
 impl State {
