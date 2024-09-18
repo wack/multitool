@@ -8,6 +8,4 @@
 //!
 //! At the time of writing, dynamic resources are not supported.
 
-pub use static_::ResourceClass as StaticResourceClass;
-
 mod static_;

@@ -13,15 +13,15 @@ impl Backend for LocalBackend {
 
     type Error = LocalError;
 
-    async fn fetch_state(&self, proj: &Project) -> Result<State, Self::Error> {
+    async fn fetch_state(&self, _: &Project) -> Result<State, Self::Error> {
         todo!()
     }
 
-    async fn persist(&mut self, proj: &Project, state: &State) -> Result<(), Self::Error> {
+    async fn persist(&mut self, _: &Project, _: &State) -> Result<(), Self::Error> {
         todo!()
     }
 
-    async fn new_journal(&mut self, proj: &Project) -> Result<Self::J, Self::Error> {
+    async fn new_journal(&mut self, _: &Project) -> Result<Self::J, Self::Error> {
         todo!()
     }
 }

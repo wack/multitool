@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub use config::Flags;
 pub use fs::manifest;
 pub use terminal::Terminal;
