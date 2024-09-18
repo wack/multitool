@@ -82,7 +82,7 @@ impl From<ResourcePrototype> for S3BucketPrototype {
 impl From<ResourceRecord> for S3BucketRecord {
     fn from(value: ResourceRecord) -> Self {
         Self {
-            id: value.id().clone(),
+            id: value.id(),
             inputs: value.inputs().clone(),
             computed_fields: value.computed().clone(),
         }
@@ -133,15 +133,15 @@ impl ResourceClass for S3BucketClass {
         })
     }
 
-    async fn delete(&mut self, record: Self::Record) -> Result<()> {
+    async fn delete(&mut self, _: Self::Record) -> Result<()> {
         todo!()
     }
 
-    async fn read(&mut self, record: Self::Proto) -> Result<Self::Record> {
+    async fn read(&mut self, _: Self::Proto) -> Result<Self::Record> {
         todo!()
     }
 
-    async fn update(&mut self, record: Self::Record) -> Result<Self::Record> {
+    async fn update(&mut self, _: Self::Record) -> Result<Self::Record> {
         todo!()
     }
 }

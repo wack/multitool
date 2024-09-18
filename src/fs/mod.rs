@@ -1,6 +1,7 @@
 use directories::ProjectDirs;
+use file::StaticFile;
 use miette::{miette, Diagnostic, IntoDiagnostic, Result};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::Serialize;
 use std::fs;
 use thiserror::Error;
 
@@ -11,9 +12,7 @@ use std::{
 
 pub(crate) use file::WackFile;
 
-use crate::manifest::TomlManifest;
-
-use self::manifest::{JsonManifest, Manifest};
+use manifest::{JsonManifest, Manifest, TomlManifest};
 
 mod file;
 /// The schema and parsing code for the Wack.toml manifest file.
@@ -41,9 +40,9 @@ impl FileSystem {
     /// Returns `Ok(true)` if the file existed and was deleted.
     /// Returns `Ok(false)`` if the file did not exist.
     /// Returns `Err(_)`` if the file could not be deleted or there was another io error.
-    pub(crate) fn delete_file<T: WackFile>(&self) -> Result<bool> {
+    pub(crate) fn delete_file<T: StaticFile>(&self) -> Result<bool> {
         // • Grab the path to the file.
-        let path = T::path(self)?;
+        let path = T::static_path(self)?;
         // Remove the file but check the error.
         match std::fs::remove_file(path) {
             Ok(_) => Ok(true),
@@ -56,13 +55,13 @@ impl FileSystem {
 
     /// Load the project manifest file, looking for manifests in
     /// priority order up the file hierarchy.
-    pub fn project_manifest(&self) -> Result<Box<dyn Manifest>> {
-        // Attempt to load a TOML manifest. Fallback to JSON.
-        let toml_manifest = self.load_file::<TomlManifest>();
-        let json_manifest = self.load_file::<JsonManifest>();
-        let manifest_box: Box<dyn Manifest> = match (toml_manifest, json_manifest) {
-            (Ok(manifest), _) => Box::new(manifest),
-            (Err(_), Ok(manifest)) => Box::new(manifest),
+    pub fn project_manifest(&self) -> Result<Manifest> {
+        // • Attempt to load a TOML manifest. Fallback to JSON.
+        let toml_manifest = self.load_file(TomlManifest);
+        let json_manifest = self.load_file(JsonManifest);
+        let manifest_box = match (toml_manifest, json_manifest) {
+            (Ok(manifest), _) => manifest,
+            (Err(_), Ok(manifest)) => manifest,
             (Err(_), Err(_)) => return Err(ManifestMissing.into()),
         };
         Ok(manifest_box)
@@ -93,10 +92,10 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    pub(crate) fn load_file<T: WackFile + DeserializeOwned>(&self) -> Result<T> {
-        match T::EXTENSION {
-            "toml" => self.read_toml_file::<T>(),
-            "json" => self.read_json_file::<T>(),
+    pub(crate) fn load_file<F: WackFile>(&self, file: F) -> Result<F::Data> {
+        match F::EXTENSION {
+            "toml" => self.read_toml_file(file),
+            "json" => self.read_json_file(file),
             _ => Err(miette!(
                 "Extension unknown! Internal error. Please file this error as a bug."
             )),
@@ -104,9 +103,9 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    fn read_json_file<T: WackFile + DeserializeOwned>(&self) -> Result<T> {
+    fn read_json_file<F: WackFile>(&self, file: F) -> Result<F::Data> {
         // • Get the path to the file.
-        let path = T::path(self)?;
+        let path = file.path(self)?;
         // • Open it as a byte stream, then deserialize those bytes.
         let file = std::fs::File::open(path).into_diagnostic()?;
         let reader = BufReader::new(file);
@@ -116,9 +115,9 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    fn read_toml_file<T: WackFile + DeserializeOwned>(&self) -> Result<T> {
+    fn read_toml_file<F: WackFile>(&self, file: F) -> Result<F::Data> {
         // • Get the path to the file.
-        let path = T::path(self)?;
+        let path = file.path(self)?;
         // • Open it as a byte stream, then deserialize those bytes.
         // TODO: Chain these errors together functionally.
         let mut buffer = String::new();
@@ -129,12 +128,16 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    pub(crate) fn save_file<T: WackFile + Serialize>(&self, blob: &T) -> Result<()> {
+    pub(crate) fn save_file<F, T>(&self, file: F, blob: &T) -> Result<()>
+    where
+        F: WackFile,
+        T: Serialize,
+    {
         // • Get the path to the file.
-        let path = T::path(self)?;
+        let path = file.path(self)?;
         // • Creat the file if it doesn't exist.
         let mut file = std::fs::File::create(path).into_diagnostic()?;
-        let marshalled = match T::EXTENSION {
+        let marshalled = match F::EXTENSION {
             "toml" => toml::to_string_pretty(blob).into_diagnostic()?,
             "json" => serde_json::to_string_pretty(blob).into_diagnostic()?,
             _ => {
@@ -154,6 +157,7 @@ impl FileSystem {
             DirectoryType::Cache => Ok(self.xdg_dirs.cache_dir().to_path_buf()),
             DirectoryType::Project => self.project_dir()?.ok_or(ManifestMissing.into()),
             DirectoryType::Pwd => std::env::current_dir().into_diagnostic(),
+            DirectoryType::Data => Ok(self.xdg_dirs.data_dir().to_path_buf()),
         }
     }
 
@@ -189,6 +193,8 @@ struct ManifestMissing;
 pub enum DirectoryType {
     /// The directory for non-essential project files
     Cache,
+    /// Persistent data lives here between runs.
+    Data,
     /// The project directory is the dir that contains the manifest
     /// file relevant to the current operating context. It's usually
     /// the nearest wack.toml file, starting in the pwd and crawling

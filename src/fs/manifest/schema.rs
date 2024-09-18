@@ -10,33 +10,33 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(tag = "schema")]
 #[serde(rename = "manifest")]
-pub enum ManifestContents {
+pub enum Manifest {
     #[serde(rename = "alpha")]
     Alpha(ManifestAlpha),
 }
 
-impl ManifestContents {
+impl Manifest {
     pub fn dependencies(&self) -> IndexMap<String, Dependency> {
         match self {
-            ManifestContents::Alpha(manifest) => manifest.dependencies.dependencies.clone(),
+            Manifest::Alpha(manifest) => manifest.dependencies.dependencies.clone(),
         }
     }
 
     pub fn account(&self) -> &str {
         match self {
-            ManifestContents::Alpha(manifest) => &manifest.account,
+            Manifest::Alpha(manifest) => &manifest.account,
         }
     }
 
     pub fn pkg_name(&self) -> &str {
         match self {
-            ManifestContents::Alpha(manifest) => &manifest.pkg_name,
+            Manifest::Alpha(manifest) => &manifest.pkg_name,
         }
     }
 
     pub fn version(&self) -> &str {
         match self {
-            ManifestContents::Alpha(manifest) => &manifest.version,
+            Manifest::Alpha(manifest) => &manifest.version,
         }
     }
 }
@@ -70,7 +70,7 @@ pub enum Dependency {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dependency, DependencySection, ManifestAlpha, ManifestContents};
+    use super::{Dependency, DependencySection, Manifest, ManifestAlpha};
     use indexmap::indexmap;
     use pretty_assertions::assert_str_eq;
 
@@ -85,10 +85,9 @@ version = "v1.0.0"
 foo = "v2.0.0"
 bar = "v3.4.5"
 "#;
-        let observed: ManifestContents =
-            toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
+        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
 
-        let expected = ManifestContents::Alpha(ManifestAlpha {
+        let expected = Manifest::Alpha(ManifestAlpha {
             account: "foobar".to_owned(),
             pkg_name: "bazfizz".to_owned(),
             version: "v1.0.0".to_owned(),
