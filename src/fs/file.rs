@@ -8,7 +8,7 @@ use super::{DirectoryType, FileSystem};
 /// One of the handful of known Wack-managed files. We expect these
 /// file to be managed solely by the Wack CLI, so for correctness
 /// we enumerate them individually.
-pub(crate) trait WackFile {
+pub(crate) trait File {
     /// The data type this file serializes to and from..
     type Data: DeserializeOwned + Serialize;
 
@@ -41,7 +41,7 @@ pub(crate) trait StaticFile {
     }
 }
 
-impl<T: StaticFile> WackFile for T {
+impl<T: StaticFile> File for T {
     type Data = T::Data;
     const EXTENSION: &'static str = T::EXTENSION;
 

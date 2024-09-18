@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
 };
 
-pub(crate) use file::WackFile;
+pub(crate) use file::File;
 
 use manifest::{JsonManifest, Manifest, TomlManifest};
 
@@ -92,7 +92,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    pub(crate) fn load_file<F: WackFile>(&self, file: F) -> Result<F::Data> {
+    pub(crate) fn load_file<F: File>(&self, file: F) -> Result<F::Data> {
         match F::EXTENSION {
             "toml" => self.read_toml_file(file),
             "json" => self.read_json_file(file),
@@ -103,7 +103,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    fn read_json_file<F: WackFile>(&self, file: F) -> Result<F::Data> {
+    fn read_json_file<F: File>(&self, file: F) -> Result<F::Data> {
         // • Get the path to the file.
         let path = file.path(self)?;
         // • Open it as a byte stream, then deserialize those bytes.
@@ -115,7 +115,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    fn read_toml_file<F: WackFile>(&self, file: F) -> Result<F::Data> {
+    fn read_toml_file<F: File>(&self, file: F) -> Result<F::Data> {
         // • Get the path to the file.
         let path = file.path(self)?;
         // • Open it as a byte stream, then deserialize those bytes.
@@ -128,11 +128,7 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    pub(crate) fn save_file<F, T>(&self, file: F, blob: &T) -> Result<()>
-    where
-        F: WackFile,
-        T: Serialize,
-    {
+    pub(crate) fn save_file<F: File, T: Serialize>(&self, file: F, blob: &T) -> Result<()> {
         // • Get the path to the file.
         let path = file.path(self)?;
         // • Creat the file if it doesn't exist.
