@@ -95,31 +95,10 @@ impl Terminal {
             .unwrap()
     }
 
-    pub fn prompt_account_name(&self) -> String {
-        Input::with_theme(self.stdout.theme())
-            .with_prompt("Account Name")
-            .interact()
-            .unwrap()
-    }
-
     // TODO: Use a secure string to ensure password safety.
     pub fn prompt_password(&self) -> String {
         Password::with_theme(self.stdout.theme())
             .with_prompt("Password")
-            .interact()
-            .unwrap()
-    }
-
-    pub fn prompt_email_or_account_name(&self) -> String {
-        Input::with_theme(self.stdout.theme())
-            .with_prompt("Email or Account Name")
-            .interact()
-            .unwrap()
-    }
-
-    pub fn prompt_package_name(&self) -> String {
-        Input::with_theme(self.stdout.theme())
-            .with_prompt("Package name")
             .interact()
             .unwrap()
     }

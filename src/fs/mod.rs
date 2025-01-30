@@ -1,7 +1,6 @@
 use directories::ProjectDirs;
 use file::StaticFile;
 use miette::{miette, Diagnostic, IntoDiagnostic, Result};
-use serde::Serialize;
 use std::fs;
 use thiserror::Error;
 
@@ -11,12 +10,14 @@ use std::{
 };
 
 pub(crate) use file::File;
+pub(crate) use session::{Session, UserCreds};
 
 use manifest::{JsonManifest, Manifest, TomlManifest};
 
 mod file;
 /// The schema and parsing code for the Wack.toml manifest file.
 pub mod manifest;
+mod session;
 
 /// The name of the application as used on the filesystem for XDG conventions.
 const APPLICATION_NAME: &str = "multi";
@@ -128,10 +129,10 @@ impl FileSystem {
     }
 
     /// Open the file and deserialize it with serde.
-    pub(crate) fn save_file<F: File, T: Serialize>(&self, file: F, blob: &T) -> Result<()> {
+    pub(crate) fn save_file<F: File>(&self, file: &F, blob: &F::Data) -> Result<()> {
         // • Get the path to the file.
         let path = file.path(self)?;
-        // • Creat the file if it doesn't exist.
+        // • Create the file if it doesn't exist.
         let mut file = std::fs::File::create(path).into_diagnostic()?;
         let marshalled = match F::EXTENSION {
             "toml" => toml::to_string_pretty(blob).into_diagnostic()?,
