@@ -1,6 +1,9 @@
 use miette::Result;
 
-use crate::Terminal;
+use crate::{
+    fs::{FileSystem, Session},
+    Terminal,
+};
 
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Logout {
@@ -12,7 +15,16 @@ impl Logout {
         Self { terminal }
     }
 
+    /// Delete the user's session file if it exists.
     pub fn dispatch(self) -> Result<()> {
-        todo!();
+        let fs = FileSystem::new()?;
+        // Delete the user's session file.
+        // We don't care if the user was already logged in or not,
+        // so we ignore the return type.
+        let report = fs.delete_file::<Session>().map(|_| ());
+        if report.is_ok() {
+            self.terminal.logout_successful()?;
+        }
+        report
     }
 }
