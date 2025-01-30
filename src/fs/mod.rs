@@ -19,7 +19,7 @@ mod file;
 pub mod manifest;
 
 /// The name of the application as used on the filesystem for XDG conventions.
-const APPLICATION_NAME: &str = "wack";
+const APPLICATION_NAME: &str = "multi";
 
 /// An abstraction over the user's filesystem ensuring mediated
 /// access to the most commonly used files.
