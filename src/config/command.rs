@@ -4,18 +4,18 @@ use miette::Result;
 use crate::cmd::{Login, Logout, Run, Version};
 use crate::terminal::Terminal;
 
-use super::LoginFlags;
+use super::{LoginSubcommand, RunSubcommand};
 
 /// A `MultiCommand` is one of the top-level commands accepted by
 /// the multi CLI.
 #[derive(Subcommand, Clone)]
 pub enum MultiCommand {
     /// Log in to the hosted SaaS.
-    Login(LoginFlags),
+    Login(LoginSubcommand),
     Logout,
     /// Run will execute `multi` in "runner mode", where it will
     /// immediately deploy the provided artifact and start canarying.
-    Run,
+    Run(RunSubcommand),
     /// Print the CLI version and exit
     Version,
 }
@@ -26,7 +26,7 @@ impl MultiCommand {
         match self {
             Self::Login(flags) => Login::new(console, flags).dispatch().await,
             Self::Logout => Logout::new(console).dispatch(),
-            Self::Run => Run::new(console).dispatch(),
+            Self::Run(flags) => Run::new(console, flags).dispatch().await,
             Self::Version => Version::new(console).dispatch(),
         }
     }

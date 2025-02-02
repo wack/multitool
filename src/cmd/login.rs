@@ -4,7 +4,7 @@ use openapi::apis::{configuration::Configuration, login_api::login};
 use openapi::models::LoginRequest;
 
 use crate::{
-    config::LoginFlags,
+    config::LoginSubcommand,
     fs::{FileSystem, Session},
     Terminal,
 };
@@ -12,11 +12,11 @@ use crate::{
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Login {
     terminal: Terminal,
-    flags: LoginFlags,
+    flags: LoginSubcommand,
 }
 
 impl Login {
-    pub fn new(terminal: Terminal, flags: LoginFlags) -> Self {
+    pub fn new(terminal: Terminal, flags: LoginSubcommand) -> Self {
         Self { terminal, flags }
     }
 
