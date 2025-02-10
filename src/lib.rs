@@ -2,6 +2,9 @@ pub use config::Flags;
 pub use fs::manifest;
 pub use terminal::Terminal;
 
+/// `adapters` are traits that describe some external, effective
+/// service, like an AWS Lambda or a message bus, for example.
+mod adapters;
 /// For loading and handling various artifacts.
 /// Currently, we expect all artifacts to be  zipped
 /// lambda functions.
