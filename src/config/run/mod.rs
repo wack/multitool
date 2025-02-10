@@ -4,14 +4,11 @@ use clap::Args;
 
 #[derive(Args, Clone)]
 pub struct RunSubcommand {
+    #[arg(short, long, env = "MULTI_WORKSPACE")]
+    pub workspace: String,
+    #[arg(short, long, env = "MULTI_APPLICATION")]
+    pub application: String,
     /// The path to the zipped serverless function.
     #[arg(value_name = "FILE")]
-    artifact_path: PathBuf,
-}
-
-impl RunSubcommand {
-    /// Return the user's email, if provided via the CLI.
-    pub fn artifact_path(&self) -> &PathBuf {
-        &self.artifact_path
-    }
+    pub artifact_path: PathBuf,
 }

@@ -1,6 +1,6 @@
 use crate::fs::UserCreds;
 use miette::{IntoDiagnostic, Result};
-use openapi::apis::{configuration::Configuration, login_api::login};
+use openapi::apis::{configuration::Configuration, users_api::login};
 use openapi::models::LoginRequest;
 
 use crate::{
