@@ -13,12 +13,19 @@ pub struct Flags {
     /// Whether to color the output
     #[arg(long, value_enum, default_value_t=EnableColors::default())]
     enable_colors: EnableColors,
+
+    #[arg(long, short = 'o', default_value = Some("localhost:8000"))]
+    origin: Option<String>,
 }
 
 impl Flags {
     /// Return the top-level command provided, if it exists.
     pub fn cmd(&self) -> Option<&MultiCommand> {
         self.cmd.as_ref()
+    }
+
+    pub fn origin(&self) -> Option<&str> {
+        self.origin.as_deref()
     }
 
     /// Getter that returns the user-provided preference

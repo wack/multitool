@@ -23,7 +23,7 @@ async fn dispatch_command(flags: Flags) -> Result<()> {
     match flags.cmd() {
         // No command was provided.
         None => empty_command(),
-        Some(cmd) => cmd.clone().dispatch(terminal).await,
+        Some(cmd) => cmd.clone().dispatch(terminal, &flags).await,
     }
 }
 
