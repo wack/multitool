@@ -1,7 +1,7 @@
 use clap::Args;
 
 #[derive(Args, Clone)]
-pub struct LoginFlags {
+pub struct LoginSubcommand {
     /// The email of the account
     #[clap(long)]
     email: Option<String>,
@@ -10,7 +10,7 @@ pub struct LoginFlags {
     password: Option<String>,
 }
 
-impl LoginFlags {
+impl LoginSubcommand {
     /// Return the user's email, if provided via the CLI.
     pub fn email(&self) -> Option<&str> {
         self.email.as_deref()

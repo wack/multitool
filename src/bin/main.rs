@@ -23,9 +23,7 @@ async fn dispatch_command(flags: Flags) -> Result<()> {
     match flags.cmd() {
         // No command was provided.
         None => empty_command(),
-        // One or more flags were
-        // TODO: Re-enable
-        Some(cmd) => cmd.dispatch(terminal).await,
+        Some(cmd) => cmd.clone().dispatch(terminal).await,
     }
 }
 
