@@ -2,6 +2,7 @@ pub use config::Flags;
 pub use fs::manifest;
 pub use terminal::Terminal;
 
+mod adapters;
 /// For loading and handling various artifacts.
 /// Currently, we expect all artifacts to be  zipped
 /// lambda functions.
