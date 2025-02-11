@@ -37,7 +37,7 @@ impl Login {
             .map(ToString::to_string)
             .unwrap_or_else(|| self.terminal.prompt_password());
 
-        let creds = self.backend.exchange_creds(email, password).await?;
+        let creds = self.backend.exchange_creds(&email, &password).await?;
 
         // • Save the auth credentials to disk.
         fs.save_file(&creds, &creds)?;

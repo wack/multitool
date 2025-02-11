@@ -2,6 +2,10 @@ pub use config::Cli;
 pub use fs::manifest;
 pub use terminal::Terminal;
 
+pub use subsystems::{
+    ActionListenerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem,
+};
+
 mod adapters;
 /// For loading and handling various artifacts.
 /// Currently, we expect all artifacts to be  zipped
@@ -14,6 +18,11 @@ mod cmd;
 mod config;
 /// An abstraction over the user's filesystem, respecting $XFG_CONFIG.
 mod fs;
+/// [subsystems] are structs that run as actors in the system, communicating
+/// with each other through channels. They include Monitors, which read observations
+/// from the system under management, ingresses, which control routing traffic to
+/// user services, and platforms, which control the deployment of user services.
+mod subsystems;
 /// This module mediates communication with the terminal. This
 /// lets us enforce our brand guidelines, respect user preferences for
 /// color codes, and emojis, and ensure input from the terminal is consistent.
