@@ -1,23 +1,24 @@
-use crate::fs::UserCreds;
-use miette::{IntoDiagnostic, Result};
-use openapi::apis::{configuration::Configuration, users_api::login};
-use openapi::models::LoginRequest;
+use crate::adapters::{BackendClient, MultiToolBackend};
+use crate::Flags;
+use miette::Result;
 
-use crate::{
-    config::LoginSubcommand,
-    fs::{FileSystem, Session},
-    Terminal,
-};
+use crate::{config::LoginSubcommand, fs::FileSystem, Terminal};
 
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Login {
     terminal: Terminal,
     flags: LoginSubcommand,
+    backend: Box<dyn BackendClient>,
 }
 
 impl Login {
-    pub fn new(terminal: Terminal, flags: LoginSubcommand) -> Self {
-        Self { terminal, flags }
+    pub fn new(terminal: Terminal, login_flags: LoginSubcommand, flags: &Flags) -> Self {
+        let backend = Box::new(MultiToolBackend::new(flags));
+        Self {
+            terminal,
+            flags: login_flags,
+            backend,
+        }
     }
 
     pub async fn dispatch(self) -> Result<()> {
@@ -36,32 +37,12 @@ impl Login {
             .map(ToString::to_string)
             .unwrap_or_else(|| self.terminal.prompt_password());
 
-        // TODO: We also need to return an "expires at" timestamp
-        //       so we can expire the token.
-        let creds = Self::exchange_creds(email, password).await?;
+        let creds = self.backend.exchange_creds(email, password).await?;
 
         // • Save the auth credentials to disk.
         fs.save_file(&creds, &creds)?;
 
         // • Print a success message.
         self.terminal.login_successful()
-    }
-
-    /// Exchange auth credentials with the server for an auth token.
-    /// Account is either the user's account name or email address.
-    async fn exchange_creds(email: String, password: String) -> Result<Session> {
-        // TODO: Create the user's configuration higher up the call stack
-        // and globally reuse it, where possible.
-        let conf = Configuration {
-            ..Configuration::default()
-        };
-        // • Create and send the request, marshalling the result
-        //   into user credentials.
-        let creds: UserCreds = login(&conf, LoginRequest { email, password })
-            .await
-            .into_diagnostic()?
-            .into();
-
-        Ok(Session::User(creds))
     }
 }

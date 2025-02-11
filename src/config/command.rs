@@ -4,7 +4,7 @@ use miette::Result;
 use crate::cmd::{Login, Logout, Run, Version};
 use crate::terminal::Terminal;
 
-use super::{LoginSubcommand, RunSubcommand};
+use super::{Flags, LoginSubcommand, RunSubcommand};
 
 /// A `MultiCommand` is one of the top-level commands accepted by
 /// the multi CLI.
@@ -22,11 +22,11 @@ pub enum MultiCommand {
 
 impl MultiCommand {
     /// dispatch the user-provided arguments to the command handler.
-    pub async fn dispatch(self, console: Terminal) -> Result<()> {
+    pub async fn dispatch(self, console: Terminal, flags: &Flags) -> Result<()> {
         match self {
-            Self::Login(flags) => Login::new(console, flags).dispatch().await,
+            Self::Login(login_flags) => Login::new(console, login_flags, flags).dispatch().await,
             Self::Logout => Logout::new(console).dispatch(),
-            Self::Run(flags) => Run::new(console, flags).dispatch().await,
+            Self::Run(run_flags) => Run::new(console, run_flags).dispatch().await,
             Self::Version => Version::new(console).dispatch(),
         }
     }
