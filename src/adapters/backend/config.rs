@@ -2,15 +2,15 @@ use std::ops::Deref;
 
 use openapi::apis::configuration::Configuration;
 
-use crate::Flags;
+use crate::Cli;
 
 pub struct BackendConfig {
     conf: Configuration,
 }
 
-impl From<&Flags> for BackendConfig {
-    fn from(flags: &Flags) -> Self {
-        Self::new(flags.origin())
+impl From<&Cli> for BackendConfig {
+    fn from(cli: &Cli) -> Self {
+        Self::new(cli.origin())
     }
 }
 

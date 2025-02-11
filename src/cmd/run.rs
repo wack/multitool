@@ -1,6 +1,11 @@
 use std::path::PathBuf;
 
-use crate::{artifacts::LambdaZip, config::RunSubcommand};
+use crate::{
+    adapters::{BackendClient, MultiToolBackend},
+    artifacts::LambdaZip,
+    config::RunSubcommand,
+    Cli,
+};
 use miette::Result;
 use openapi::apis::{configuration::Configuration, workspaces_api::list_workspaces};
 
@@ -12,6 +17,7 @@ pub struct Run {
     artifact_path: PathBuf,
     workspace: String,
     application: String,
+    backend: Box<dyn BackendClient>,
 }
 
 type WorkspaceId = String;
@@ -37,9 +43,11 @@ trait RunBackend {
 }
 
 impl Run {
-    pub fn new(terminal: Terminal, args: RunSubcommand) -> Self {
+    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Self {
+        let backend = Box::new(MultiToolBackend::new(cli));
         Self {
             terminal,
+            backend,
             artifact_path: args.artifact_path,
             workspace: args.workspace,
             application: args.application,

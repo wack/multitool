@@ -5,7 +5,7 @@ use super::command::MultiCommand;
 
 /// multi is a cloud deployment multitool.
 #[derive(Parser)]
-pub struct Flags {
+pub struct Cli {
     /// The subcommand to execute
     #[command(subcommand)]
     cmd: Option<MultiCommand>,
@@ -18,7 +18,7 @@ pub struct Flags {
     origin: Option<String>,
 }
 
-impl Flags {
+impl Cli {
     /// Return the top-level command provided, if it exists.
     pub fn cmd(&self) -> Option<&MultiCommand> {
         self.cmd.as_ref()

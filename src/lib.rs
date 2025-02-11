@@ -1,4 +1,4 @@
-pub use config::Flags;
+pub use config::Cli;
 pub use fs::manifest;
 pub use terminal::Terminal;
 

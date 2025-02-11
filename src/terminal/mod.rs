@@ -1,7 +1,7 @@
 use dialoguer::{Input, Password};
 use miette::{DebugReportHandler, GraphicalReportHandler, IntoDiagnostic, Result};
 
-use crate::Flags;
+use crate::Cli;
 
 use dest::TermDestination;
 
@@ -14,11 +14,11 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    pub fn new(flags: &Flags) -> Self {
+    pub fn new(cli: &Cli) -> Self {
         // Check to see whether we should color the
         // terminal output.
-        let stdout = TermDestination::stdout(flags);
-        let stderr = TermDestination::stderr(flags);
+        let stdout = TermDestination::stdout(cli);
+        let stderr = TermDestination::stderr(cli);
 
         Self { stdout, stderr }
     }

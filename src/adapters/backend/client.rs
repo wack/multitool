@@ -7,7 +7,7 @@ use openapi::models::{ApplicationDetails, LoginRequest, WorkspaceSummary};
 use uuid::Uuid;
 
 use crate::fs::UserCreds;
-use crate::Flags;
+use crate::Cli;
 
 use super::{BackendClient, BackendConfig, Session};
 
@@ -37,8 +37,8 @@ impl BackendClient for MultiToolBackend {
 
 impl MultiToolBackend {
     /// Return a new backend client for the MultiTool backend.
-    pub fn new(flags: &Flags) -> Self {
-        let conf = BackendConfig::from(flags);
+    pub fn new(cli: &Cli) -> Self {
+        let conf = BackendConfig::from(cli);
         Self { conf }
     }
 
