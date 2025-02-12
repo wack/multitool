@@ -72,6 +72,8 @@ impl MultiToolBackend {
 
     // This soup is because of the nastiness of OpenAPI Generator.
     fn marshall_config(app_conf: AppConf) -> ApplicationConfig {
+        todo!()
+        /*
         let AppConf::ApplicationConfigOneOf(conf_one_of) = app_conf;
         let WebServiceConfig::WebServiceConfigOneOf(web_service) = *conf_one_of.web_service;
         let aws = *web_service.aws;
@@ -92,9 +94,10 @@ impl MultiToolBackend {
                 resource_path: todo!(),
                 resource_method: todo!(),
             })
-                
+
             monitor: (),
         }
+        */
     }
 
     /// Given the id of the workspace containing the application, and the application's
