@@ -1,7 +1,7 @@
 use console::{colors_enabled, colors_enabled_stderr, Term};
 use dialoguer::theme::Theme;
 
-use crate::Flags;
+use crate::Cli;
 
 use super::theme::{colorful_theme, SIMPLE_THEME};
 
@@ -28,12 +28,12 @@ impl TermDestination {
         self.allow_color
     }
 
-    pub(super) fn stdout(flags: &Flags) -> Self {
+    pub(super) fn stdout(cli: &Cli) -> Self {
         let term = Term::stdout();
         // Respect the user's preference for color,
         // but fall back to inspecting the terminal for a tty
         // if no preference has been provided.
-        let allow_color = flags
+        let allow_color = cli
             .enable_colors()
             .color_preference()
             .unwrap_or_else(colors_enabled);
@@ -52,12 +52,12 @@ impl TermDestination {
 
     /// This function is very similar to stdout, but using stderr
     /// instead.
-    pub(super) fn stderr(flags: &Flags) -> Self {
+    pub(super) fn stderr(cli: &Cli) -> Self {
         let term = Term::stderr();
         // Respect the user's preference for color,
         // but fall back to inspecting the terminal for a tty
         // if no preference has been provided.
-        let allow_color = flags
+        let allow_color = cli
             .enable_colors()
             .color_preference()
             .unwrap_or_else(colors_enabled_stderr);

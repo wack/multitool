@@ -1,5 +1,5 @@
 use crate::adapters::{BackendClient, MultiToolBackend};
-use crate::Flags;
+use crate::Cli;
 use miette::Result;
 
 use crate::{config::LoginSubcommand, fs::FileSystem, Terminal};
@@ -12,11 +12,11 @@ pub struct Login {
 }
 
 impl Login {
-    pub fn new(terminal: Terminal, login_flags: LoginSubcommand, flags: &Flags) -> Self {
-        let backend = Box::new(MultiToolBackend::new(flags));
+    pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Self {
+        let backend = Box::new(MultiToolBackend::new(cli));
         Self {
             terminal,
-            flags: login_flags,
+            flags,
             backend,
         }
     }
@@ -37,7 +37,7 @@ impl Login {
             .map(ToString::to_string)
             .unwrap_or_else(|| self.terminal.prompt_password());
 
-        let creds = self.backend.exchange_creds(email, password).await?;
+        let creds = self.backend.exchange_creds(&email, &password).await?;
 
         // • Save the auth credentials to disk.
         fs.save_file(&creds, &creds)?;

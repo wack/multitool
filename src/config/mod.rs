@@ -1,9 +1,9 @@
-pub use flags::Flags;
+pub use cli::Cli;
 pub use login::LoginSubcommand;
 pub use run::RunSubcommand;
 
+mod cli;
 mod colors;
 mod command;
-mod flags;
 mod login;
 mod run;

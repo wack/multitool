@@ -1,10 +1,25 @@
 use std::path::PathBuf;
 
-use crate::{artifacts::LambdaZip, config::RunSubcommand};
+use crate::subsystems::{
+    ACTION_LISTENER_SUBSYSTEM_NAME, INGRESS_SUBSYSTEM_NAME, MONITOR_SUBSYSTEM_NAME,
+    PLATFORM_SUBSYSTEM_NAME,
+};
+use crate::{
+    adapters::{BackendClient, MultiToolBackend},
+    artifacts::LambdaZip,
+    config::RunSubcommand,
+    ActionListenerSubsystem, Cli, IngressSubsystem, MonitorSubsystem, PlatformSubsystem,
+};
 use miette::Result;
-use openapi::apis::{configuration::Configuration, workspaces_api::list_workspaces};
+use openapi::models::{ApplicationConfig, ApplicationConfigOneOf, WebServiceConfig};
+use tokio::time::Duration;
+use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, SubsystemHandle, Toplevel};
 
 use crate::Terminal;
+
+/// The amount of time, in miliseconds, each subsystem has
+/// to gracefully shutdown before being forcably shutdown.
+const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Run {
@@ -12,34 +27,15 @@ pub struct Run {
     artifact_path: PathBuf,
     workspace: String,
     application: String,
-}
-
-type WorkspaceId = String;
-type ApplicationConfig = String;
-type ApplicationId = String;
-type DeploymentId = String;
-
-trait RunBackend {
-    // Given the workspace name, return the workspace ID.
-    fn query_workspace(&mut self, name: String) -> Result<WorkspaceId>;
-    // Given the workspace id and the application name, return
-    // the application configuration and ID.
-    fn query_application(
-        &mut self,
-        name: String,
-        workspace: WorkspaceId,
-    ) -> Result<ApplicationConfig>;
-    /// Create a new deployment for this application.
-    fn create_deployment(&mut self, id: ApplicationId) -> Result<DeploymentId>;
-
-    /// Check the status of the deployment.
-    fn check_deployment(&mut self, id: DeploymentId);
+    backend: Box<dyn BackendClient>,
 }
 
 impl Run {
-    pub fn new(terminal: Terminal, args: RunSubcommand) -> Self {
+    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Self {
+        let backend = Box::new(MultiToolBackend::new(cli));
         Self {
             terminal,
+            backend,
             artifact_path: args.artifact_path,
             workspace: args.workspace,
             application: args.application,
@@ -54,11 +50,47 @@ impl Run {
         // • Now, we have to load the application's configuration
         //   from the backend. We have the name of the workspace and
         //   application, but we need to look up the details.
-        let display_name = self.workspace.clone();
-        let conf = Configuration {
-            ..Configuration::default()
-        };
-        let workspaces = list_workspaces(&conf, Some(&display_name)).await;
-        todo!();
+        let conf = self
+            .backend
+            .fetch_config(&self.workspace, &self.application)
+            .await?;
+        let platform_conf = conf.platform().clone();
+        let ingress_conf = conf.ingress().clone();
+        let monitor_conf = conf.monitor().clone();
+        // • Using the application configuration, we can spawn
+        //   the Monitor, the Platform, and the Ingress.
+        //
+        //   …but before we do, let's capture the shutdown
+        //   signal from the OS.
+        Toplevel::new(|s| async move {
+            let ingress = IngressSubsystem;
+            let monitor = MonitorSubsystem;
+            let platform = PlatformSubsystem::new(artifact);
+            let listener = ActionListenerSubsystem;
+            // • Start the monitor subsystem.
+            s.start(SubsystemBuilder::new(
+                MONITOR_SUBSYSTEM_NAME,
+                monitor.into_subsystem(),
+            ));
+            // • Start the platform subsystem.
+            s.start(SubsystemBuilder::new(
+                PLATFORM_SUBSYSTEM_NAME,
+                platform.into_subsystem(),
+            ));
+            // • Start the ingress subsystem.
+            s.start(SubsystemBuilder::new(
+                INGRESS_SUBSYSTEM_NAME,
+                ingress.into_subsystem(),
+            ));
+            // • Start the action listener subsystem.
+            s.start(SubsystemBuilder::new(
+                ACTION_LISTENER_SUBSYSTEM_NAME,
+                listener.into_subsystem(),
+            ));
+        })
+        .catch_signals()
+        .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
+        .await
+        .map_err(Into::into)
     }
 }

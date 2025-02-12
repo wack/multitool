@@ -1,16 +1,18 @@
 use std::ops::Deref;
 
-use openapi::apis::configuration::Configuration;
+use openapi::{
+    apis::configuration::Configuration, models::AwsIngressConfigOneOfRestApiGatewayConfig,
+};
 
-use crate::Flags;
+use crate::Cli;
 
 pub struct BackendConfig {
     conf: Configuration,
 }
 
-impl From<&Flags> for BackendConfig {
-    fn from(flags: &Flags) -> Self {
-        Self::new(flags.origin())
+impl From<&Cli> for BackendConfig {
+    fn from(cli: &Cli) -> Self {
+        Self::new(cli.origin())
     }
 }
 
@@ -36,4 +38,44 @@ impl Deref for BackendConfig {
     fn deref(&self) -> &Self::Target {
         &self.conf
     }
+}
+
+// TODO: We should pull these types out into a shared
+// crate, open source, that we can can use on both the
+// CLI and the backend.
+// MultiToolCore. It can be within the CLI workspace, and we
+// can pull it into the backend.
+
+#[non_exhaustive]
+pub enum PlatformConfig {
+    Lambda(LambdaConfig),
+}
+
+// TODO: Add the derive Getter macro.
+pub struct LambdaConfig {
+    pub region: String,
+    pub name: String,
+}
+
+#[non_exhaustive]
+pub enum IngressConfig {
+    RestApiGateway(AwsRestApiGatewayConfig),
+}
+
+pub struct AwsRestApiGatewayConfig {
+    region: String,
+    gateway_name: String,
+    stage_name: String,
+    resource_path: String,
+    resource_method: String,
+}
+
+#[non_exhaustive]
+pub enum MonitorConfig {
+    AwsCloudwatchMetrics(CloudwatchMetricsConfig),
+}
+
+pub struct CloudwatchMetricsConfig {
+    // TODO: We probably need the slug to
+    //       the lambda name.
 }
