@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::adapters::ApplicationConfig;
 use crate::subsystems::{
     ACTION_LISTENER_SUBSYSTEM_NAME, INGRESS_SUBSYSTEM_NAME, MONITOR_SUBSYSTEM_NAME,
     PLATFORM_SUBSYSTEM_NAME,
@@ -11,9 +12,8 @@ use crate::{
     ActionListenerSubsystem, Cli, IngressSubsystem, MonitorSubsystem, PlatformSubsystem,
 };
 use miette::Result;
-use openapi::models::{ApplicationConfig, ApplicationConfigOneOf, WebServiceConfig};
 use tokio::time::Duration;
-use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, SubsystemHandle, Toplevel};
+use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
 
 use crate::Terminal;
 
@@ -54,19 +54,17 @@ impl Run {
             .backend
             .fetch_config(&self.workspace, &self.application)
             .await?;
-        let platform_conf = conf.platform().clone();
-        let ingress_conf = conf.ingress().clone();
-        let monitor_conf = conf.monitor().clone();
+        let ApplicationConfig { ingress, platform } = conf;
+        // let monitor_conf = conf.monitor().clone();
         // • Using the application configuration, we can spawn
         //   the Monitor, the Platform, and the Ingress.
-        //
+        let ingress = IngressSubsystem::new(ingress);
+        let monitor = MonitorSubsystem;
+        let platform = PlatformSubsystem::new(artifact, platform);
+        let listener = ActionListenerSubsystem;
         //   …but before we do, let's capture the shutdown
         //   signal from the OS.
         Toplevel::new(|s| async move {
-            let ingress = IngressSubsystem;
-            let monitor = MonitorSubsystem;
-            let platform = PlatformSubsystem::new(artifact);
-            let listener = ActionListenerSubsystem;
             // • Start the monitor subsystem.
             s.start(SubsystemBuilder::new(
                 MONITOR_SUBSYSTEM_NAME,

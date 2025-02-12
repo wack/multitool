@@ -2,7 +2,15 @@ use async_trait::async_trait;
 use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
+use crate::adapters::BoxIngress;
+
 pub struct IngressSubsystem;
+
+impl IngressSubsystem {
+    pub fn new(_ingress: BoxIngress) -> Self {
+        Self
+    }
+}
 
 pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
 
