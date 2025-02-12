@@ -3,12 +3,20 @@ pub use ingress::{IngressSubsystem, INGRESS_SUBSYSTEM_NAME};
 pub use monitor::{MonitorSubsystem, MONITOR_SUBSYSTEM_NAME};
 pub use platform::{PlatformSubsystem, PLATFORM_SUBSYSTEM_NAME};
 
-use bon::Builder;
-
 mod action_listener;
 mod ingress;
 mod monitor;
 mod platform;
+
+/*
+
+impl AwsIngressBuilder {
+    fn new(region: String, config: AwsIngressConfigOneOf) -> Self {
+        Self { region, config }
+    }
+}
+
+
 
 pub enum IngressConfig {
     Aws(AwsIngressConfigBuilder),
@@ -69,18 +77,4 @@ pub enum AwsMonitorBuilder {
 
 #[derive(Builder)]
 pub struct CloudwatchMetricsConfig {}
-
-#[cfg(test)]
-mod tests {
-    use openapi::models::ApplicationConfig;
-
-    #[test]
-    fn parse_app_config() {
-        // • Get the JSON describing this configuration.
-        // • Marshal it into a type.
-        // • Try to parse it into a domain type.
-        let config = ApplicationConfig::default();
-        // TODO: Turn this shit into traits.
-        todo!()
-    }
-}
+*/
