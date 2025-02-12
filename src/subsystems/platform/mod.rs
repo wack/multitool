@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
-use crate::artifacts::LambdaZip;
+use crate::{adapters::BoxPlatform, artifacts::LambdaZip};
 
 pub const PLATFORM_SUBSYSTEM_NAME: &str = "platform";
 
@@ -11,7 +11,7 @@ pub struct PlatformSubsystem {
 }
 
 impl PlatformSubsystem {
-    pub fn new(artifact: LambdaZip) -> Self {
+    pub fn new(artifact: LambdaZip, _platform: BoxPlatform) -> Self {
         Self { artifact }
     }
 }

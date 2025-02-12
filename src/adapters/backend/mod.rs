@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use config::{IngressConfig, MonitorConfig, PlatformConfig};
 use miette::Result;
 
 pub use client::MultiToolBackend;
@@ -7,6 +6,8 @@ pub use config::BackendConfig;
 use derive_getters::Getters;
 
 use crate::fs::Session;
+
+use super::{BoxIngress, BoxPlatform};
 
 mod client;
 mod config;
@@ -25,7 +26,7 @@ pub trait BackendClient {
 
 #[derive(Getters)]
 pub struct ApplicationConfig {
-    platform: PlatformConfig,
-    ingress: IngressConfig,
-    monitor: MonitorConfig,
+    pub platform: BoxPlatform,
+    pub ingress: BoxIngress,
+    // pub monitor: BoxMonitor,
 }

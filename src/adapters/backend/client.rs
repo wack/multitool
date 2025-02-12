@@ -3,16 +3,12 @@ use miette::{bail, IntoDiagnostic, Result};
 use openapi::apis::applications_api::{get_application, list_applications};
 use openapi::apis::users_api::login;
 use openapi::apis::workspaces_api::list_workspaces;
-use openapi::models::{
-    ApplicationConfig as AppConf, AwsPlatformConfig, AwsPlatformConfigOneOfLambda,
-};
-use openapi::models::{ApplicationDetails, LoginRequest, WebServiceConfig, WorkspaceSummary};
+use openapi::models::{ApplicationDetails, LoginRequest, WorkspaceSummary};
 use uuid::Uuid;
 
 use crate::fs::UserCreds;
 use crate::Cli;
 
-use super::config::{AwsRestApiGatewayConfig, IngressConfig, LambdaConfig, PlatformConfig};
 use super::{ApplicationConfig, BackendClient, BackendConfig, Session};
 
 pub struct MultiToolBackend {
@@ -68,36 +64,6 @@ impl MultiToolBackend {
             // TODO: We can simplify this code with .ok_or()
             Ok(workspaces.pop().unwrap())
         }
-    }
-
-    // This soup is because of the nastiness of OpenAPI Generator.
-    fn marshall_config(app_conf: AppConf) -> ApplicationConfig {
-        todo!()
-        /*
-        let AppConf::ApplicationConfigOneOf(conf_one_of) = app_conf;
-        let WebServiceConfig::WebServiceConfigOneOf(web_service) = *conf_one_of.web_service;
-        let aws = *web_service.aws;
-        let ingress = *aws.ingress;
-        let monitor = aws.monitor;
-        let AwsPlatformConfig::AwsPlatformConfigOneOf(platform) = *aws.platform;
-        let lambda_name = platform.lambda.name;
-        let region = aws.region;
-        ApplicationConfig {
-            platform: PlatformConfig::Lambda(LambdaConfig {
-                region: region.clone(),
-                name: lambda_name,
-            }),
-            ingress: IngressConfig::RestApiGateway(AwsRestApiGatewayConfig{
-                region: region.clone(),
-                gateway_name: todo!(),
-                stage_name: todo!(),
-                resource_path: todo!(),
-                resource_method: todo!(),
-            })
-
-            monitor: (),
-        }
-        */
     }
 
     /// Given the id of the workspace containing the application, and the application's
