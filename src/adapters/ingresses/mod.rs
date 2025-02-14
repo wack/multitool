@@ -3,7 +3,7 @@ use miette::Result;
 
 /// Convenience alias since this type is often dynamically
 /// dispatched.
-pub type BoxIngress = Box<dyn Ingress>;
+pub type BoxedIngress = Box<dyn Ingress + Send>;
 pub use apig::AwsApiGateway;
 pub use builder::IngressBuilder;
 

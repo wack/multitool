@@ -1,9 +1,11 @@
 use openapi::models::{self, ApplicationConfig, AwsIngressConfigOneOf, WebServiceConfig};
 
-use crate::adapters::{AwsApiGateway, Ingress};
+use crate::adapters::AwsApiGateway;
+
+use super::BoxedIngress;
 
 pub trait IngressBuilder {
-    fn build(&self) -> Box<dyn Ingress>;
+    fn build(&self) -> BoxedIngress;
 }
 
 struct ApplicationIngressBuilder {
@@ -17,7 +19,7 @@ impl ApplicationIngressBuilder {
 }
 
 impl IngressBuilder for ApplicationIngressBuilder {
-    fn build(&self) -> Box<dyn Ingress> {
+    fn build(&self) -> BoxedIngress {
         let ApplicationConfig::ApplicationConfigOneOf(appconfig) = self.config.clone();
         match *appconfig.web_service {
             WebServiceConfig::WebServiceConfigOneOf(web_service_config) => {
@@ -32,7 +34,7 @@ struct WebServiceIngressBuilder {
 }
 
 impl IngressBuilder for WebServiceIngressBuilder {
-    fn build(&self) -> Box<dyn Ingress> {
+    fn build(&self) -> BoxedIngress {
         match *self.config.aws.ingress {
             models::AwsIngressConfig::AwsIngressConfigOneOf(ref aws_ingress) => {
                 AwsIngressBuilder::new(self.config.aws.region.clone(), *aws_ingress.clone()).build()
@@ -53,7 +55,7 @@ impl AwsIngressBuilder {
 }
 
 impl IngressBuilder for AwsIngressBuilder {
-    fn build(&self) -> Box<dyn Ingress> {
+    fn build(&self) -> BoxedIngress {
         let gateway_name = self.config.rest_api_gateway_config.gateway_name.clone();
         let resource_method = self.config.rest_api_gateway_config.resource_method.clone();
         let resource_path = self.config.rest_api_gateway_config.resource_path.clone();
@@ -76,7 +78,7 @@ impl WebServiceIngressBuilder {
 }
 #[cfg(test)]
 mod tests {
-    use crate::adapters::BoxIngress;
+    use crate::adapters::BoxedIngress;
     use miette::{IntoDiagnostic, Result};
     use openapi::models::ApplicationConfig;
     use serde_json::{json, Value};
@@ -114,7 +116,7 @@ mod tests {
         let config_object: ApplicationConfig =
             serde_json::from_str(&config_json).into_diagnostic()?;
         // • Try to parse it into a domain type.
-        let _: BoxIngress = ApplicationIngressBuilder::new(config_object).build();
+        let _: BoxedIngress = ApplicationIngressBuilder::new(config_object).build();
         Ok(())
     }
 }
