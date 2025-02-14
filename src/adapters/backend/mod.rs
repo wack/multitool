@@ -7,7 +7,7 @@ use derive_getters::Getters;
 
 use crate::fs::Session;
 
-use super::{BoxedIngress, BoxPlatform};
+use super::{BoxedIngress, BoxedPlatform};
 
 mod client;
 mod config;
@@ -26,7 +26,7 @@ pub trait BackendClient {
 
 #[derive(Getters)]
 pub struct ApplicationConfig {
-    pub platform: BoxPlatform,
+    pub platform: BoxedPlatform,
     pub ingress: BoxedIngress,
     // pub monitor: BoxMonitor,
 }

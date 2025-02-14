@@ -3,7 +3,7 @@ use miette::Result;
 
 pub use builder::PlatformBuilder;
 pub use lambda::LambdaPlatform;
-pub type BoxPlatform = Box<dyn Platform>;
+pub type BoxedPlatform = Box<dyn Platform + Send>;
 
 #[async_trait]
 pub trait Platform {
