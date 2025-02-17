@@ -10,10 +10,15 @@ name = "multi"
 path = "src/bin/main.rs"
 
 [dependencies]
+async-stream = "0.3.6"
 async-trait = "0.1.81"
 aws-config = { version = "1.1.7", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1.49.0"
+aws-sdk-apigateway = "1.50.0"
+aws-sdk-cloudwatch = "1.54.0"
+aws-sdk-lambda = "1.56.0"
+aws-smithy-types = "1.2.9"
 bon = "3.3.2"
+chrono = "0.4.38"
 clap = { version = "4.3", features = ["derive", "env"] }
 console = "0.15.8"
 derive-getters = "0.5.0"

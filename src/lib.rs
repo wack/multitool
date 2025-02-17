@@ -18,6 +18,10 @@ mod cmd;
 mod config;
 /// An abstraction over the user's filesystem, respecting $XFG_CONFIG.
 mod fs;
+/// Contains the concrete metrics we can capture and observe.
+mod metrics;
+/// Our statistics library.
+mod stats;
 /// [subsystems] are structs that run as actors in the system, communicating
 /// with each other through channels. They include Monitors, which read observations
 /// from the system under management, ingresses, which control routing traffic to
@@ -27,3 +31,4 @@ mod subsystems;
 /// lets us enforce our brand guidelines, respect user preferences for
 /// color codes, and emojis, and ensure input from the terminal is consistent.
 mod terminal;
+mod utils;
