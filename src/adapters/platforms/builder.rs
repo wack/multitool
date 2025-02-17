@@ -1,9 +1,9 @@
 use openapi::models::{self, ApplicationConfig, AwsPlatformConfigOneOf, WebServiceConfig};
 
-use super::{LambdaPlatform, Platform};
+use super::{BoxedPlatform, LambdaPlatform};
 
 pub trait PlatformBuilder {
-    fn build(&self) -> Box<dyn Platform>;
+    fn build(&self) -> BoxedPlatform;
 }
 
 struct ApplicationPlatformBuilder {
@@ -17,7 +17,7 @@ impl ApplicationPlatformBuilder {
 }
 
 impl PlatformBuilder for ApplicationPlatformBuilder {
-    fn build(&self) -> Box<dyn Platform> {
+    fn build(&self) -> BoxedPlatform {
         let ApplicationConfig::ApplicationConfigOneOf(appconfig) = self.config.clone();
         match *appconfig.web_service {
             WebServiceConfig::WebServiceConfigOneOf(web_service_config) => {
@@ -32,7 +32,7 @@ struct WebServicePlatformBuilder {
 }
 
 impl PlatformBuilder for WebServicePlatformBuilder {
-    fn build(&self) -> Box<dyn Platform> {
+    fn build(&self) -> BoxedPlatform {
         match *self.config.aws.platform {
             models::AwsPlatformConfig::AwsPlatformConfigOneOf(ref aws_platform) => {
                 AwsPlatformBuilder::new(self.config.aws.region.clone(), *aws_platform.clone())
@@ -54,7 +54,7 @@ impl AwsPlatformBuilder {
 }
 
 impl PlatformBuilder for AwsPlatformBuilder {
-    fn build(&self) -> Box<dyn Platform> {
+    fn build(&self) -> BoxedPlatform {
         let lambda_name = self.config.lambda.name.clone();
         let platform = LambdaPlatform::builder()
             .region(self.region.clone())
@@ -71,7 +71,7 @@ impl WebServicePlatformBuilder {
 }
 #[cfg(test)]
 mod tests {
-    use crate::adapters::BoxPlatform;
+    use crate::adapters::BoxedPlatform;
     use miette::{IntoDiagnostic, Result};
     use openapi::models::ApplicationConfig;
     use serde_json::{json, Value};
@@ -109,7 +109,7 @@ mod tests {
         let config_object: ApplicationConfig =
             serde_json::from_str(&config_json).into_diagnostic()?;
         // • Try to parse it into a domain type.
-        let _: BoxPlatform = ApplicationPlatformBuilder::new(config_object).build();
+        let _: BoxedPlatform = ApplicationPlatformBuilder::new(config_object).build();
         Ok(())
     }
 }
