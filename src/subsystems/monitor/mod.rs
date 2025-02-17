@@ -6,6 +6,9 @@ pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
 
 pub struct MonitorSubsystem;
 
+mod handle;
+mod mail;
+
 #[async_trait]
 impl IntoSubsystem<Report> for MonitorSubsystem {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {

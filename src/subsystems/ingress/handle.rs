@@ -6,7 +6,10 @@ use tokio::sync::{mpsc::Sender, oneshot};
 
 use crate::adapters::Ingress;
 
-use super::{mail::IngressMail, CanaryTrafficPercent, TrafficParams};
+use super::{
+    mail::{IngressMail, TrafficParams},
+    CanaryTrafficPercent,
+};
 
 #[derive(Clone)]
 pub struct IngressHandle {

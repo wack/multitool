@@ -9,13 +9,13 @@ pub(super) enum IngressMail {
 
 pub(super) struct TrafficParams {
     /// The sender where the response is written.
-    outbox: oneshot::Sender<TrafficResp>,
+    pub(super) outbox: oneshot::Sender<TrafficResp>,
     /// The amount of traffic the user is expected to receive.
-    percent: u32,
+    pub(super) percent: u32,
 }
 
 impl TrafficParams {
-    fn new(outbox: oneshot::Sender<TrafficResp>, percent: CanaryTrafficPercent) -> Self {
+    pub(super) fn new(outbox: oneshot::Sender<TrafficResp>, percent: CanaryTrafficPercent) -> Self {
         Self { outbox, percent }
     }
 }

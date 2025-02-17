@@ -24,14 +24,6 @@ pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
 /// than picking a power of two.
 const INGRESS_MAILBOX_SIZE: usize = 1 << 4;
 
-/// The IngressSubsystem handles synchronizing access to the
-/// `BoxedIngress` using message-passing and channels.
-pub struct IngressSubsystem {
-    /// This is where we write messages for the `[BoxedIngress]` to receive.
-    handle: IngressHandle,
-    thread_done: JoinHandle<()>,
-}
-
 /// We anticipate changing this number in the future, so for now we're
 /// just going to use a type alias to keep everything localized to one spot.
 /// In the prototype, we used a "WholeNumber" percentage to ensure the
@@ -39,6 +31,14 @@ pub struct IngressSubsystem {
 /// but we want to validate that the number is between [0..100] regardless
 /// of whether we use fractions or not.
 type CanaryTrafficPercent = u32;
+
+/// The IngressSubsystem handles synchronizing access to the
+/// `BoxedIngress` using message-passing and channels.
+pub struct IngressSubsystem {
+    /// This is where we write messages for the `[BoxedIngress]` to receive.
+    handle: IngressHandle,
+    thread_done: JoinHandle<()>,
+}
 
 impl IngressSubsystem {
     pub fn handle(&self) -> IngressHandle {
