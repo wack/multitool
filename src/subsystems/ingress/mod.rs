@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use mail::IngressMail;
 use miette::{IntoDiagnostic, Report, Result};
 use tokio::{
     sync::{
@@ -13,6 +14,11 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::adapters::{BoxedIngress, Ingress};
 
+pub use handle::IngressHandle;
+
+mod handle;
+mod mail;
+
 pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
 /// If you're going to pick an arbitrary number, you could do worse
 /// than picking a power of two.
@@ -24,29 +30,6 @@ pub struct IngressSubsystem {
     /// This is where we write messages for the `[BoxedIngress]` to receive.
     handle: IngressHandle,
     thread_done: JoinHandle<()>,
-}
-
-#[derive(Clone)]
-pub struct IngressHandle {
-    outbox: Arc<Sender<IngressMail>>,
-}
-
-#[async_trait]
-impl Ingress for IngressHandle {
-    async fn set_canary_traffic(&mut self, percent: CanaryTrafficPercent) -> Result<()> {
-        let (sender, receiver): (oneshot::Sender<Result<()>>, oneshot::Receiver<Result<()>>) =
-            oneshot::channel();
-        let params = TrafficParams::new(sender, percent);
-        let mail = IngressMail::SetCanaryTraffic(params);
-        self.outbox.send(mail).await.into_diagnostic()?;
-        receiver.await.into_diagnostic()?
-    }
-}
-
-impl IngressHandle {
-    fn new(outbox: Arc<Sender<IngressMail>>) -> Self {
-        Self { outbox }
-    }
 }
 
 /// We anticipate changing this number in the future, so for now we're
@@ -95,25 +78,6 @@ impl IngressSubsystem {
         self.handle.set_canary_traffic(percent).await
     }
 }
-
-enum IngressMail {
-    SetCanaryTraffic(TrafficParams),
-}
-
-struct TrafficParams {
-    /// The sender where the response is written.
-    outbox: oneshot::Sender<TrafficResp>,
-    /// The amount of traffic the user is expected to receive.
-    percent: u32,
-}
-
-impl TrafficParams {
-    fn new(outbox: oneshot::Sender<TrafficResp>, percent: CanaryTrafficPercent) -> Self {
-        Self { outbox, percent }
-    }
-}
-
-type TrafficResp = Result<()>;
 
 #[async_trait]
 impl IntoSubsystem<Report> for IngressSubsystem {
