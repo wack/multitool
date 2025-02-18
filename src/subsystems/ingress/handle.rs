@@ -19,7 +19,19 @@ use super::{
 #[derive(Clone)]
 pub struct IngressHandle {
     outbox: Arc<Sender<IngressMail>>,
-    shutdown_trigger: mpsc::Sender<()>,
+    shutdown_trigger: Arc<mpsc::Sender<()>>,
+}
+
+impl IngressHandle {
+    pub(super) fn new(
+        outbox: Arc<Sender<IngressMail>>,
+        shutdown_trigger: Arc<mpsc::Sender<()>>,
+    ) -> Self {
+        Self {
+            outbox,
+            shutdown_trigger,
+        }
+    }
 }
 
 #[async_trait]
@@ -33,22 +45,23 @@ impl Ingress for IngressHandle {
     }
 }
 
+/// Send the shutdown signal. The `IngressHandle` does not wait
+/// for shutdown, it only propagates the signal. This is because
+/// other top-level subsystems wait for the shutdown signal,
+/// and the joinhandle is not clone.
 #[async_trait]
 impl Shutdownable for IngressHandle {
     async fn shutdown(&mut self) -> ShutdownResult {
-        self.shutdown_trigger.send(()).await;
-        todo!();
+        self.shutdown_trigger.send(()).await.into_diagnostic()
     }
 }
 
-impl IngressHandle {
-    pub(super) fn new(
-        outbox: Arc<Sender<IngressMail>>,
-        shutdown_trigger: mpsc::Sender<()>,
-    ) -> Self {
-        Self {
-            outbox,
-            shutdown_trigger,
-        }
-    }
+#[cfg(test)]
+mod tests {
+    use super::IngressHandle;
+    use crate::adapters::Ingress;
+
+    use static_assertions::assert_impl_all;
+
+    assert_impl_all!(IngressHandle: Ingress);
 }
