@@ -14,6 +14,8 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 use crate::{
     adapters::{BoxedPlatform, Platform},
     artifacts::LambdaZip,
+    subsystems::ShutdownResult,
+    Shutdownable,
 };
 
 use super::mail::{DeployParams, PlatformMail, PromoteParams, RollbackParams};
@@ -55,5 +57,12 @@ impl Platform for PlatformHandle {
 impl PlatformHandle {
     pub fn new(outbox: Arc<Sender<PlatformMail>>) -> Self {
         Self { outbox }
+    }
+}
+
+#[async_trait]
+impl Shutdownable for PlatformHandle {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        todo!();
     }
 }

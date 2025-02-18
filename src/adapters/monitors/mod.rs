@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use miette::Result;
 
-use crate::stats::Observation;
+use crate::{stats::Observation, Shutdownable};
 
 pub use cloudwatch::CloudWatch;
 
 #[async_trait]
-pub trait Monitor {
+pub trait Monitor: Shutdownable {
     type Item: Observation;
     async fn query(&mut self) -> Result<Vec<Self::Item>>;
 }

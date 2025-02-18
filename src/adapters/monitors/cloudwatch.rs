@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use crate::{
     metrics::ResponseStatusCode,
     stats::{CategoricalObservation, Group},
+    subsystems::ShutdownResult,
     utils::load_default_aws_config,
+    Shutdownable,
 };
 use aws_sdk_cloudwatch::{
     client::Client as AwsClient,
@@ -137,6 +139,13 @@ impl CloudWatch {
                     .sum::<f64>() as u32
             })
             .into_diagnostic()
+    }
+}
+
+#[async_trait]
+impl Shutdownable for CloudWatch {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        todo!()
     }
 }
 

@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::Result;
 
+use crate::{subsystems::ShutdownResult, Shutdownable};
+
 use super::Ingress;
 
 /// AwsApiGateway is the Ingress implementation for AWS API Gateway + Lambda.
@@ -40,6 +42,13 @@ impl AwsApiGateway {
 #[async_trait]
 impl Ingress for AwsApiGateway {
     async fn set_canary_traffic(&mut self, percent: u32) -> Result<()> {
+        todo!();
+    }
+}
+
+#[async_trait]
+impl Shutdownable for AwsApiGateway {
+    async fn shutdown(&mut self) -> ShutdownResult {
         todo!();
     }
 }
