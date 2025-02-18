@@ -80,7 +80,7 @@ impl IngressSubsystem {
 impl IntoSubsystem<Report> for IngressSubsystem {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         subsys.on_shutdown_requested().await;
-        // Send the shutdown signal.
+        // Propagate the shutdown signal.
         let shutdown_result = self.handle.shutdown().await;
         // Wait for the thread to be shutdown.
         let task_result = self.task_done.await.into_diagnostic();

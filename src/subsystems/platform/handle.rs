@@ -1,22 +1,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use miette::{IntoDiagnostic, Report, Result};
-use tokio::{
-    sync::{
-        mpsc::{self, Sender},
-        oneshot,
-    },
-    task::JoinHandle,
+use miette::{IntoDiagnostic, Result};
+use tokio::sync::{
+    mpsc::{self, Sender},
+    oneshot,
 };
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
-use crate::{
-    adapters::{BoxedPlatform, Platform},
-    artifacts::LambdaZip,
-    subsystems::ShutdownResult,
-    Shutdownable,
-};
+use crate::{adapters::Platform, subsystems::ShutdownResult, Shutdownable};
 
 use super::mail::{DeployParams, PlatformMail, PromoteParams, RollbackParams};
 
@@ -25,6 +16,7 @@ use super::mail::{DeployParams, PlatformMail, PromoteParams, RollbackParams};
 #[derive(Clone)]
 pub struct PlatformHandle {
     outbox: Arc<Sender<PlatformMail>>,
+    shutdown_trigger: Arc<mpsc::Sender<()>>,
 }
 
 #[async_trait]
@@ -55,14 +47,30 @@ impl Platform for PlatformHandle {
 }
 
 impl PlatformHandle {
-    pub fn new(outbox: Arc<Sender<PlatformMail>>) -> Self {
-        Self { outbox }
+    pub(super) fn new(
+        outbox: Arc<Sender<PlatformMail>>,
+        shutdown_trigger: Arc<mpsc::Sender<()>>,
+    ) -> Self {
+        Self {
+            outbox,
+            shutdown_trigger,
+        }
     }
 }
 
 #[async_trait]
 impl Shutdownable for PlatformHandle {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!();
+        self.shutdown_trigger.send(()).await.into_diagnostic()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PlatformHandle;
+    use crate::adapters::Platform;
+
+    use static_assertions::assert_impl_all;
+
+    assert_impl_all!(PlatformHandle: Platform);
 }
