@@ -54,12 +54,16 @@ impl Run {
             .backend
             .fetch_config(&self.workspace, &self.application)
             .await?;
-        let ApplicationConfig { ingress, platform } = conf;
+        let ApplicationConfig {
+            ingress,
+            platform,
+            monitor,
+        } = conf;
         // let monitor_conf = conf.monitor().clone();
         // • Using the application configuration, we can spawn
         //   the Monitor, the Platform, and the Ingress.
         let ingress = IngressSubsystem::new(ingress);
-        let monitor = MonitorSubsystem;
+        let monitor = MonitorSubsystem::new(monitor);
         let platform = PlatformSubsystem::new(artifact, platform);
         let listener = ActionListenerSubsystem;
         //   …but before we do, let's capture the shutdown

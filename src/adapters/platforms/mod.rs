@@ -3,10 +3,12 @@ use miette::Result;
 
 pub use builder::PlatformBuilder;
 pub use lambda::LambdaPlatform;
+
+use crate::Shutdownable;
 pub type BoxedPlatform = Box<dyn Platform + Send>;
 
 #[async_trait]
-pub trait Platform {
+pub trait Platform: Shutdownable {
     /// Deploy the canary app. Do not assign it any traffic.
     async fn deploy(&mut self) -> Result<()>;
     /// Remove the canary app from the platform.

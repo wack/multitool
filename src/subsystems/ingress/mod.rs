@@ -1,53 +1,30 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use aws_sdk_lambda::config::IntoShared;
+use mail::IngressMail;
+use miette::miette;
 use miette::{IntoDiagnostic, Report, Result};
+use tokio::select;
+use tokio::sync::mpsc::channel;
 use tokio::{
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        oneshot,
-    },
+    sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::adapters::{BoxedIngress, Ingress};
 
+use super::{ShutdownResult, Shutdownable};
+
+use mail::IngressHandle;
+
+mod mail;
+
 pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
 /// If you're going to pick an arbitrary number, you could do worse
 /// than picking a power of two.
 const INGRESS_MAILBOX_SIZE: usize = 1 << 4;
-
-/// The IngressSubsystem handles synchronizing access to the
-/// `BoxedIngress` using message-passing and channels.
-pub struct IngressSubsystem {
-    /// This is where we write messages for the `[BoxedIngress]` to receive.
-    handle: IngressHandle,
-    thread_done: JoinHandle<()>,
-}
-
-#[derive(Clone)]
-pub struct IngressHandle {
-    outbox: Arc<Sender<IngressMail>>,
-}
-
-#[async_trait]
-impl Ingress for IngressHandle {
-    async fn set_canary_traffic(&mut self, percent: CanaryTrafficPercent) -> Result<()> {
-        let (sender, receiver): (oneshot::Sender<Result<()>>, oneshot::Receiver<Result<()>>) =
-            oneshot::channel();
-        let params = TrafficParams::new(sender, percent);
-        let mail = IngressMail::SetCanaryTraffic(params);
-        self.outbox.send(mail).await.into_diagnostic()?;
-        receiver.await.into_diagnostic()?
-    }
-}
-
-impl IngressHandle {
-    fn new(outbox: Arc<Sender<IngressMail>>) -> Self {
-        Self { outbox }
-    }
-}
 
 /// We anticipate changing this number in the future, so for now we're
 /// just going to use a type alias to keep everything localized to one spot.
@@ -57,72 +34,56 @@ impl IngressHandle {
 /// of whether we use fractions or not.
 type CanaryTrafficPercent = u32;
 
-impl IngressSubsystem {
-    pub fn handle(&self) -> IngressHandle {
-        self.handle.clone()
-    }
+pub struct IngressSubsystem {
+    task_done: JoinHandle<ShutdownResult>,
+    handle: IngressHandle,
+}
 
+impl IngressSubsystem {
     pub fn new(mut ingress: BoxedIngress) -> Self {
-        // • Spawn a new task with the BoxedIngress and the mailbox.
-        let (outbox, mut inbox) = mpsc::channel(INGRESS_MAILBOX_SIZE);
-        // • Spawn the thread that reads from the mailbox and processes
-        //   each request.
-        let join_handle = tokio::spawn(async move {
-            while let Some(mail) = inbox.recv().await {
-                match mail {
-                    IngressMail::SetCanaryTraffic(traffic_params) => {
-                        let outbox = traffic_params.outbox;
-                        let traffic = traffic_params.percent;
-                        let result = ingress.set_canary_traffic(traffic).await;
-                        outbox.send(result).unwrap();
+        let (shutdown_trigger, mut shutdown_signal) = channel(1);
+        let (mail_outbox, mut mail_inbox) = channel(INGRESS_MAILBOX_SIZE);
+        let task_done = tokio::spawn(async move {
+            loop {
+                select! {
+                    _ = shutdown_signal.recv() => {
+                        return ingress.shutdown().await;
+                    }
+                    mail = mail_inbox.recv() => {
+                        if let Some(mail) = mail {
+                            match mail {
+                                IngressMail::SetCanaryTraffic(params) => {
+                                    let percent = params.percent;
+                                    let result = ingress.set_canary_traffic(percent).await;
+                                    params.outbox.send(result).unwrap();
+                                }
+                            }
+                        } else {
+                            return ingress.shutdown().await;
+                        }
                     }
                 }
             }
-            // TODO: Is there any cleanup to do here?
-            println!("Ingress shutting down.");
         });
-        // Return the Subsystem, storing the outbox and the join handle.
-        let obj_handle = IngressHandle::new(Arc::new(outbox));
-        Self {
-            thread_done: join_handle,
-            handle: obj_handle,
-        }
+        let shutdown = Arc::new(shutdown_trigger);
+        let handle = IngressHandle::new(Arc::new(mail_outbox), shutdown);
+        Self { handle, task_done }
+    }
+
+    pub fn handle(&self) -> IngressHandle {
+        self.handle.clone()
     }
 }
-
-impl IngressSubsystem {
-    pub async fn set_canary_traffic(&mut self, percent: CanaryTrafficPercent) -> Result<()> {
-        self.handle.set_canary_traffic(percent).await
-    }
-}
-
-enum IngressMail {
-    SetCanaryTraffic(TrafficParams),
-}
-
-struct TrafficParams {
-    /// The sender where the response is written.
-    outbox: oneshot::Sender<TrafficResp>,
-    /// The amount of traffic the user is expected to receive.
-    percent: u32,
-}
-
-impl TrafficParams {
-    fn new(outbox: oneshot::Sender<TrafficResp>, percent: CanaryTrafficPercent) -> Self {
-        Self { outbox, percent }
-    }
-}
-
-type TrafficResp = Result<()>;
 
 #[async_trait]
 impl IntoSubsystem<Report> for IngressSubsystem {
-    async fn run(self, subsys: SubsystemHandle) -> Result<()> {
+    async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         subsys.on_shutdown_requested().await;
-        // TODO: Do we need a second channel to shutdown with priority?
-        // The channel will be shutdown when all copies of the sender
-        // are dropped.
-        Ok(())
+        // Propagate the shutdown signal.
+        let shutdown_result = self.handle.shutdown().await;
+        // Wait for the thread to be shutdown.
+        let task_result = self.task_done.await.into_diagnostic();
+        shutdown_result.and(task_result?)
     }
 }
 

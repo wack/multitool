@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use miette::Result;
 
+use crate::Shutdownable;
+
 /// Convenience alias since this type is often dynamically
 /// dispatched.
 pub type BoxedIngress = Box<dyn Ingress + Send>;
@@ -11,7 +13,7 @@ pub use builder::IngressBuilder;
 /// gets (hence the name ingress, since it functions like a virtual LB) and
 /// (2) deploying, yanking, and promoting both the canary and the baseline.
 #[async_trait]
-pub trait Ingress {
+pub trait Ingress: Shutdownable {
     // TODO: Change percent back to WholePercent.
     async fn set_canary_traffic(&mut self, percent: u32) -> Result<()>;
 }

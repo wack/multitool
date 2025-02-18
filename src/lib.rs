@@ -3,7 +3,7 @@ pub use fs::manifest;
 pub use terminal::Terminal;
 
 pub use subsystems::{
-    ActionListenerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem,
+    ActionListenerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem, Shutdownable,
 };
 
 mod adapters;
