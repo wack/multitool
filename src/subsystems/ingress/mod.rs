@@ -15,11 +15,10 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::adapters::{BoxedIngress, Ingress};
 
-pub use handle::IngressHandle;
-
 use super::{ShutdownResult, Shutdownable};
 
-mod handle;
+use mail::IngressHandle;
+
 mod mail;
 
 pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";

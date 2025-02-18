@@ -1,4 +1,5 @@
 use super::{group::Group, Categorical};
+use std::fmt;
 
 /// Marker trait. This marker trait is used to ensure concrete types satisfy
 /// the expectations of the backend. The backend accepts
@@ -10,7 +11,7 @@ pub trait Observation {}
 /// be binned into 2XX (successes), 3XX (redirects), 4XX (client side errors), and 5XX
 /// (server side errors). These four categories are enumerable (fixed in number).
 #[derive(Clone)]
-pub struct CategoricalObservation<const N: usize, Cat: Categorical<N>> {
+pub struct CategoricalObservation<const N: usize, Cat: Categorical<N> + fmt::Debug> {
     /// The experimental group or the control group.
     pub group: Group,
     /// The outcome of the observation, bucketed into a specific category.
@@ -18,8 +19,19 @@ pub struct CategoricalObservation<const N: usize, Cat: Categorical<N>> {
     pub outcome: Cat,
 }
 
+impl<const N: usize, Cat: Categorical<N> + fmt::Debug> fmt::Debug
+    for CategoricalObservation<N, Cat>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Group: {:?}, Outcome: {:?}", self.group, self.outcome)
+    }
+}
+
 // Implement the marker trait. CategoricalObservations are a type of observation.
-impl<const N: usize, Cat: Categorical<N>> Observation for CategoricalObservation<N, Cat> {}
+impl<const N: usize, Cat: Categorical<N> + fmt::Debug> Observation
+    for CategoricalObservation<N, Cat>
+{
+}
 
 #[cfg(test)]
 mod tests {

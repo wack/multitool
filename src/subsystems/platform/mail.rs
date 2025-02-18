@@ -1,10 +1,42 @@
-use miette::Result;
+use async_trait::async_trait;
+use miette::{IntoDiagnostic as _, Result};
 use tokio::sync::oneshot;
+
+use crate::{adapters::Platform, subsystems::handle::Handle};
+
+pub(super) type PlatformHandle = Handle<PlatformMail>;
 
 pub(super) enum PlatformMail {
     DeployCanary(DeployParams),
     RollbackCanary(RollbackParams),
     PromoteCanary(PromoteParams),
+}
+
+#[async_trait]
+impl Platform for PlatformHandle {
+    async fn deploy(&mut self) -> Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        let params = DeployParams::new(sender);
+        let mail = PlatformMail::DeployCanary(params);
+        self.outbox.send(mail).await.into_diagnostic()?;
+        receiver.await.into_diagnostic()?
+    }
+
+    async fn rollback_canary(&mut self) -> Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        let params = RollbackParams::new(sender);
+        let mail = PlatformMail::RollbackCanary(params);
+        self.outbox.send(mail).await.into_diagnostic()?;
+        receiver.await.into_diagnostic()?
+    }
+
+    async fn promote_canary(&mut self) -> Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        let params = PromoteParams::new(sender);
+        let mail = PlatformMail::PromoteCanary(params);
+        self.outbox.send(mail).await.into_diagnostic()?;
+        receiver.await.into_diagnostic()?
+    }
 }
 
 pub(super) struct DeployParams {

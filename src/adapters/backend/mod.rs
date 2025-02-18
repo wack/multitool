@@ -5,9 +5,9 @@ pub use client::MultiToolBackend;
 pub use config::BackendConfig;
 use derive_getters::Getters;
 
-use crate::fs::Session;
+use crate::{fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation};
 
-use super::{BoxedIngress, BoxedPlatform};
+use super::{BoxedIngress, BoxedMonitor, BoxedPlatform};
 
 mod client;
 mod config;
@@ -28,5 +28,5 @@ pub trait BackendClient {
 pub struct ApplicationConfig {
     pub platform: BoxedPlatform,
     pub ingress: BoxedIngress,
-    // pub monitor: BoxMonitor,
+    pub monitor: BoxedMonitor<CategoricalObservation<5, ResponseStatusCode>>,
 }

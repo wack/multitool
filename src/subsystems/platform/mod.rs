@@ -17,11 +17,9 @@ pub const PLATFORM_SUBSYSTEM_NAME: &str = "platform";
 /// than picking a power of two.
 const PLATFORM_MAILBOX_SIZE: usize = 1 << 4;
 
-pub use handle::PlatformHandle;
-
 use super::{ShutdownResult, Shutdownable};
+use mail::PlatformHandle;
 
-mod handle;
 mod mail;
 
 /// The PlatformSubsystem handles sychronizing access to the
@@ -90,10 +88,13 @@ impl IntoSubsystem<Report> for PlatformSubsystem {
 
 #[cfg(test)]
 mod tests {
+    use crate::{adapters::Platform, subsystems::platform::mail::PlatformHandle};
+
     use super::PlatformSubsystem;
     use miette::Report;
     use static_assertions::assert_impl_all;
     use tokio_graceful_shutdown::IntoSubsystem;
 
     assert_impl_all!(PlatformSubsystem: IntoSubsystem<Report>);
+    assert_impl_all!(PlatformHandle: Platform, Clone);
 }
