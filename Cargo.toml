@@ -17,6 +17,7 @@ aws-sdk-apigateway = "1.50.0"
 aws-sdk-cloudwatch = "1.54.0"
 aws-sdk-lambda = "1.56.0"
 aws-smithy-types = "1.2.9"
+bigdecimal = { version = "0.4.7", features = [ "serde-json" ] }
 bon = "3.3.2"
 chrono = "0.4.38"
 clap = { version = "4.3", features = ["derive", "env"] }

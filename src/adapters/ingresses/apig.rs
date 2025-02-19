@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::Result;
 
-use crate::{subsystems::ShutdownResult, Shutdownable};
+use crate::{subsystems::ShutdownResult, Shutdownable, WholePercent};
 
 use super::Ingress;
 
@@ -41,7 +41,7 @@ impl AwsApiGateway {
 
 #[async_trait]
 impl Ingress for AwsApiGateway {
-    async fn set_canary_traffic(&mut self, percent: u32) -> Result<()> {
+    async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         todo!();
     }
 }

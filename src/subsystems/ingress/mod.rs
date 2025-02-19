@@ -1,19 +1,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use aws_sdk_lambda::config::IntoShared;
 use mail::IngressMail;
-use miette::miette;
 use miette::{IntoDiagnostic, Report, Result};
 use tokio::select;
 use tokio::sync::mpsc::channel;
-use tokio::{
-    sync::mpsc::{Receiver, Sender},
-    task::JoinHandle,
-};
+use tokio::task::JoinHandle;
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
-use crate::adapters::{BoxedIngress, Ingress};
+use crate::adapters::BoxedIngress;
 
 use super::{ShutdownResult, Shutdownable};
 
@@ -25,14 +20,6 @@ pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
 /// If you're going to pick an arbitrary number, you could do worse
 /// than picking a power of two.
 const INGRESS_MAILBOX_SIZE: usize = 1 << 4;
-
-/// We anticipate changing this number in the future, so for now we're
-/// just going to use a type alias to keep everything localized to one spot.
-/// In the prototype, we used a "WholeNumber" percentage to ensure the
-/// user only put in a number from 0-100. We can imagine using fractions,
-/// but we want to validate that the number is between [0..100] regardless
-/// of whether we use fractions or not.
-type CanaryTrafficPercent = u32;
 
 pub struct IngressSubsystem {
     task_done: JoinHandle<ShutdownResult>,

@@ -4,8 +4,6 @@ use tokio::sync::mpsc::Sender;
 
 use std::sync::Arc;
 
-use crate::adapters::Ingress;
-
 use super::{ShutdownResult, Shutdownable};
 
 /// A handle to a thread, communicating over a channel.
