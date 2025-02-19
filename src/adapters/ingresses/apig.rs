@@ -1,8 +1,15 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::Result;
+use miette::{miette, IntoDiagnostic as _, Result};
 
-use crate::{subsystems::ShutdownResult, Shutdownable, WholePercent};
+use crate::{
+    subsystems::ShutdownResult, utils::load_default_aws_config, Shutdownable, WholePercent,
+};
+
+use aws_sdk_apigateway::{
+    client::Client as GatewayClient,
+    types::{Op, PatchOperation, RestApi},
+};
 
 use super::Ingress;
 
@@ -10,8 +17,7 @@ use super::Ingress;
 /// It's responsible for creating canary deployments on API Gateway, updating their
 /// traffic and promoting them, and deploying Lambda functions.
 pub struct AwsApiGateway {
-    // apig_client: GatewayClient,
-    // lambda_client: LambdaClient,
+    apig_client: GatewayClient,
     region: String,
     gateway_name: String,
     stage_name: String,
@@ -22,14 +28,17 @@ pub struct AwsApiGateway {
 #[bon]
 impl AwsApiGateway {
     #[builder]
-    pub fn new(
+    pub async fn new(
         gateway_name: String,
         stage_name: String,
         resource_path: String,
         resource_method: String,
         region: String,
     ) -> Self {
+        let config = load_default_aws_config().await;
+        let apig_client = GatewayClient::new(config);
         Self {
+            apig_client,
             region,
             gateway_name,
             stage_name,
@@ -37,72 +46,9 @@ impl AwsApiGateway {
             resource_method,
         }
     }
-}
-
-#[async_trait]
-impl Ingress for AwsApiGateway {
-    async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
-        todo!();
-    }
-}
-
-#[async_trait]
-impl Shutdownable for AwsApiGateway {
-    async fn shutdown(&mut self) -> ShutdownResult {
-        todo!();
-    }
-}
-
-/*
-// use crate::utils::load_default_aws_config;
-// use crate::WholePercent;
-
-use super::Ingress;
-use async_trait::async_trait;
-// use aws_sdk_apigateway::types::{Op, PatchOperation, RestApi};
-use miette::miette;
-use miette::{IntoDiagnostic, Result};
-use tokio::{fs::File, io::AsyncReadExt};
-
-// use aws_sdk_apigateway::{client::Client as GatewayClient, types::DeploymentCanarySettings};
-// use aws_sdk_lambda::{client::Client as LambdaClient, primitives::Blob, types::FunctionCode};
-
-
-
-impl AwsApiGateway {
-    /// Given a path to the lambda, create a new APIG Ingress.
-    pub async fn new(
-        artifact_path: PathBuf,
-        gateway_name: &str,
-        stage_name: &str,
-        lambda_name: &str,
-    ) -> Result<Self> {
-        // let artifact = read_file(artifact_path).await?;
-        // Now, configure the AWS SDKs.
-        // TODO: Extract Config into a single location so we don't have to
-        //       repeat this code every time we initialize an AWS client.
-        todo!();
-        /*
-        let config = load_default_aws_config().await;
-        let apig_client = GatewayClient::new(config);
-        let lambda_client = LambdaClient::new(config);
-
-        Ok(Self {
-            lambda_artifact: artifact,
-            apig_client,
-            lambda_client,
-            gateway_name: gateway_name.to_owned(),
-            stage_name: stage_name.to_owned(),
-            lambda_name: lambda_name.to_owned(),
-        })
-        */
-    }
 
     // Helper function to convert an API Gateway's name to its auto-generated AWS ID
-    /*
     pub async fn get_api_id_by_name(&self, api_name: &str) -> Result<RestApi> {
-        todo!();
-
         let all_apis = self
             .apig_client
             .get_rest_apis()
@@ -120,18 +66,49 @@ impl AwsApiGateway {
             ))?;
 
         Ok(api.clone())
-
     }
-        */
 }
-*/
+
+#[async_trait]
+impl Ingress for AwsApiGateway {
+    async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
+        let api = self.get_api_id_by_name(&self.gateway_name).await?;
+        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
+        // Remove the trailing percent sign from the string.
+        let percent_string = percent.to_string();
+        let percent_trimmed = percent_string.trim_end_matches('%');
+
+        let patch_op = PatchOperation::builder()
+            .op(Op::Replace)
+            .path("/canarySettings/percentTraffic")
+            .value(percent_trimmed)
+            .build();
+
+        self.apig_client
+            .update_stage()
+            .rest_api_id(api_id)
+            .stage_name(&self.stage_name)
+            .patch_operations(patch_op)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Shutdownable for AwsApiGateway {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        todo!();
+    }
+}
+
 /*
 #[async_trait]
 impl Ingress for AwsApiGateway {
     async fn deploy(&mut self) -> Result<()> {
         todo!();
-        */
-/*
 // First, we need to deploy the new version of the lambda
 
 // Parse the bytes into the format AWS wants
@@ -191,33 +168,9 @@ self.apig_client
     .into_diagnostic()?;
 
 Ok(())
-*/
 //    }
-
-/*
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         todo!();
-
-        let api = self.get_api_id_by_name(&self.gateway_name).await?;
-        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
-
-        let patch_op = PatchOperation::builder()
-            .op(Op::Replace)
-            .path("/canarySettings/percentTraffic")
-            .value(percent.to_string())
-            .build();
-
-        self.apig_client
-            .update_stage()
-            .rest_api_id(api_id)
-            .stage_name(&self.stage_name)
-            .patch_operations(patch_op)
-            .send()
-            .await
-            .into_diagnostic()?;
-
-        Ok(())
-
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
