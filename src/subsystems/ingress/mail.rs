@@ -2,9 +2,7 @@ use async_trait::async_trait;
 use miette::{IntoDiagnostic as _, Result};
 use tokio::sync::oneshot;
 
-use crate::{adapters::Ingress, subsystems::handle::Handle};
-
-use super::CanaryTrafficPercent;
+use crate::{adapters::Ingress, subsystems::handle::Handle, WholePercent};
 
 pub(super) type IngressHandle = Handle<IngressMail>;
 
@@ -14,7 +12,7 @@ pub(super) enum IngressMail {
 
 #[async_trait]
 impl Ingress for IngressHandle {
-    async fn set_canary_traffic(&mut self, percent: CanaryTrafficPercent) -> Result<()> {
+    async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
         let params = TrafficParams::new(sender, percent);
         let mail = IngressMail::SetCanaryTraffic(params);
@@ -27,11 +25,11 @@ pub(super) struct TrafficParams {
     /// The sender where the response is written.
     pub(super) outbox: oneshot::Sender<TrafficResp>,
     /// The amount of traffic the user is expected to receive.
-    pub(super) percent: u32,
+    pub(super) percent: WholePercent,
 }
 
 impl TrafficParams {
-    pub(super) fn new(outbox: oneshot::Sender<TrafficResp>, percent: CanaryTrafficPercent) -> Self {
+    pub(super) fn new(outbox: oneshot::Sender<TrafficResp>, percent: WholePercent) -> Self {
         Self { outbox, percent }
     }
 }

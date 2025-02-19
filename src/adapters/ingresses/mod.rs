@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use miette::Result;
 
-use crate::Shutdownable;
+use crate::{Shutdownable, WholePercent};
 
 /// Convenience alias since this type is often dynamically
 /// dispatched.
@@ -14,8 +14,10 @@ pub use builder::IngressBuilder;
 /// (2) deploying, yanking, and promoting both the canary and the baseline.
 #[async_trait]
 pub trait Ingress: Shutdownable {
-    // TODO: Change percent back to WholePercent.
-    async fn set_canary_traffic(&mut self, percent: u32) -> Result<()>;
+    async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()>;
+
+    // TODO:
+    // We might need the "promote" and "rollback" functions here too.
 }
 
 mod apig;

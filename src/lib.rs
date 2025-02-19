@@ -2,6 +2,8 @@ pub use config::Cli;
 pub use fs::manifest;
 pub use terminal::Terminal;
 
+pub use numbers::WholePercent;
+
 pub use subsystems::{
     ActionListenerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem, Shutdownable,
 };
@@ -20,6 +22,8 @@ mod config;
 mod fs;
 /// Contains the concrete metrics we can capture and observe.
 mod metrics;
+/// Utilities for handling rational and decimal numbers.
+mod numbers;
 /// Our statistics library.
 mod stats;
 /// [subsystems] are structs that run as actors in the system, communicating
