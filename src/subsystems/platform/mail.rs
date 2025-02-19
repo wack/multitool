@@ -8,8 +8,8 @@ pub(super) type PlatformHandle = Handle<PlatformMail>;
 
 pub(super) enum PlatformMail {
     DeployCanary(DeployParams),
-    RollbackCanary(RollbackParams),
-    PromoteCanary(PromoteParams),
+    YankCanary(RollbackParams),
+    PromoteDeployment(PromoteParams),
 }
 
 #[async_trait]
@@ -22,18 +22,18 @@ impl Platform for PlatformHandle {
         receiver.await.into_diagnostic()?
     }
 
-    async fn rollback_canary(&mut self) -> Result<()> {
+    async fn yank_canary(&mut self) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
         let params = RollbackParams::new(sender);
-        let mail = PlatformMail::RollbackCanary(params);
+        let mail = PlatformMail::YankCanary(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
     }
 
-    async fn promote_canary(&mut self) -> Result<()> {
+    async fn promote_deployment(&mut self) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
         let params = PromoteParams::new(sender);
-        let mail = PlatformMail::PromoteCanary(params);
+        let mail = PlatformMail::PromoteDeployment(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
     }

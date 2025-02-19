@@ -12,9 +12,9 @@ pub trait Platform: Shutdownable {
     /// Deploy the canary app. Do not assign it any traffic.
     async fn deploy(&mut self) -> Result<()>;
     /// Remove the canary app from the platform.
-    async fn rollback_canary(&mut self) -> Result<()>;
+    async fn yank_canary(&mut self) -> Result<()>;
     /// Make the canary app the new baseline.
-    async fn promote_canary(&mut self) -> Result<()>;
+    async fn promote_deployment(&mut self) -> Result<()>;
 }
 
 mod builder;

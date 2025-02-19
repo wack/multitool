@@ -14,10 +14,23 @@ pub use builder::IngressBuilder;
 /// (2) deploying, yanking, and promoting both the canary and the baseline.
 #[async_trait]
 pub trait Ingress: Shutdownable {
+    /// The `[Ingress]` controls how much traffic the canary gets.
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()>;
-
-    // TODO:
-    // We might need the "promote" and "rollback" functions here too.
+    /// This method is subtly different from `Platform::yank_canary`.
+    /// The `[Ingress]` may be responsible for cutting traffic to the canary
+    /// in the event of a rollback. Unlike `Platform::yank_canary`,
+    /// which removes the canary from the platform, this method
+    /// cuts traffic to the canary and removes it from the ingress,
+    /// but it doesn't remove the deployment from the platform.
+    ///
+    /// In the "build, deploy, release" model of application lifecycle,
+    /// this is effectively cutting the release without affecting the
+    /// deployment.
+    async fn rollback_canary(&mut self) -> Result<()>;
+    /// This method promotes the canary to the new baseline within
+    /// the context of the ingress. It does not affect the underlying
+    /// deployment.
+    async fn promote_canary(&mut self) -> Result<()>;
 }
 
 mod apig;

@@ -95,6 +95,14 @@ impl Ingress for AwsApiGateway {
 
         Ok(())
     }
+
+    async fn rollback_canary(&mut self) -> Result<()> {
+        todo!()
+    }
+
+    async fn promote_canary(&mut self) -> Result<()> {
+        todo!()
+    }
 }
 
 #[async_trait]

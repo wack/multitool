@@ -48,14 +48,14 @@ impl PlatformSubsystem {
                                     let result = platform.deploy().await;
                                     outbox.send(result).unwrap();
                                 }
-                                PlatformMail::RollbackCanary(rollback_params) => {
+                                PlatformMail::YankCanary(rollback_params) => {
                                     let outbox = rollback_params.outbox;
-                                    let result = platform.rollback_canary().await;
+                                    let result = platform.yank_canary().await;
                                     outbox.send(result).unwrap();
                                 }
-                                PlatformMail::PromoteCanary(promote_params) => {
+                                PlatformMail::PromoteDeployment(promote_params) => {
                                     let outbox = promote_params.outbox;
-                                    let result = platform.rollback_canary().await;
+                                    let result = platform.yank_canary().await;
                                     outbox.send(result).unwrap();
                                 }
                             }
