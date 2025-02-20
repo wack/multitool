@@ -1,8 +1,8 @@
-use crate::adapters::{BackendClient, MultiToolBackend};
 use crate::Cli;
+use crate::adapters::{BackendClient, MultiToolBackend};
 use miette::Result;
 
-use crate::{config::LoginSubcommand, fs::FileSystem, Terminal};
+use crate::{Terminal, config::LoginSubcommand, fs::FileSystem};
 
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Login {

@@ -1,13 +1,14 @@
 [package]
 name = "multitool"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 default-run = "multi"
 repository = "https://github.com/wack/multitool"
 
 [[bin]]
 name = "multi"
 path = "src/bin/main.rs"
+edition = "2024"
 
 [dependencies]
 async-stream = "0.3.6"

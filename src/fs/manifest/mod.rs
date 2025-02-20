@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub use schema::{Dependency, DependencySection, Manifest, ManifestAlpha};
 
-use super::{file::StaticFile, DirectoryType};
+use super::{DirectoryType, file::StaticFile};
 
 mod schema;
 

@@ -1,4 +1,4 @@
-use clap::{command, Parser};
+use clap::{Parser, command};
 
 use super::colors::EnableColors;
 use super::command::MultiCommand;

@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
 use crate::{
+    Shutdownable,
     metrics::ResponseStatusCode,
     stats::{CategoricalObservation, Group},
     subsystems::ShutdownResult,
     utils::load_default_aws_config,
-    Shutdownable,
 };
 use aws_sdk_cloudwatch::{
     client::Client as AwsClient,

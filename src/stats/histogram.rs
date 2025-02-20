@@ -73,7 +73,9 @@ where
 
     pub(super) fn get_count_by_index(&self, i: usize) -> u32 {
         if i >= N {
-            panic!("Index out of bounds. The index provided must be a natural number less than the number of categories.");
+            panic!(
+                "Index out of bounds. The index provided must be a natural number less than the number of categories."
+            );
         }
         self.bins[i]
     }

@@ -1,6 +1,6 @@
 use directories::ProjectDirs;
 use file::StaticFile;
-use miette::{miette, Diagnostic, IntoDiagnostic, Result};
+use miette::{Diagnostic, IntoDiagnostic, Result, miette};
 use std::fs;
 use thiserror::Error;
 
@@ -140,7 +140,7 @@ impl FileSystem {
             _ => {
                 return Err(miette!(
                     "Extension unknown! Internal error. Please file this error as a bug."
-                ))
+                ));
             }
         };
         file.write_all(marshalled.as_bytes()).into_diagnostic()?;

@@ -37,24 +37,27 @@ impl IngressSubsystem {
                         return ingress.shutdown().await;
                     }
                     mail = mail_inbox.recv() => {
-                        if let Some(mail) = mail {
-                            match mail {
-                                IngressMail::RollbackCanary(params) => {
-                                    let result = ingress.rollback_canary().await;
-                                    params.outbox.send(result).unwrap();
+                        match mail {
+                            Some(mail) => {
+                                match mail {
+                                    IngressMail::RollbackCanary(params) => {
+                                        let result = ingress.rollback_canary().await;
+                                        params.outbox.send(result).unwrap();
+                                    }
+                                    IngressMail::PromoteCanary(params) => {
+                                        let result = ingress.promote_canary().await;
+                                        params.outbox.send(result).unwrap();
+                                    }
+                                    IngressMail::SetCanaryTraffic(params) => {
+                                        let percent = params.percent;
+                                        let result = ingress.set_canary_traffic(percent).await;
+                                        params.outbox.send(result).unwrap();
+                                    }
                                 }
-                                IngressMail::PromoteCanary(params) => {
-                                    let result = ingress.promote_canary().await;
-                                    params.outbox.send(result).unwrap();
-                                }
-                                IngressMail::SetCanaryTraffic(params) => {
-                                    let percent = params.percent;
-                                    let result = ingress.set_canary_traffic(percent).await;
-                                    params.outbox.send(result).unwrap();
-                                }
-                            }
-                        } else {
+                            },
+                            _ => {
                             return ingress.shutdown().await;
+                            }
                         }
                     }
                 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use miette::{IntoDiagnostic, Result};
 use tokio::sync::oneshot;
 
-use crate::{adapters::Ingress, subsystems::handle::Handle, WholePercent};
+use crate::{WholePercent, adapters::Ingress, subsystems::handle::Handle};
 
 pub(super) type IngressHandle = Handle<IngressMail>;
 

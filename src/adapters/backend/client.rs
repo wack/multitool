@@ -1,13 +1,13 @@
 use async_trait::async_trait;
-use miette::{bail, IntoDiagnostic, Result};
+use miette::{IntoDiagnostic, Result, bail};
 use openapi::apis::applications_api::{get_application, list_applications};
 use openapi::apis::users_api::login;
 use openapi::apis::workspaces_api::list_workspaces;
 use openapi::models::{ApplicationDetails, LoginRequest, WorkspaceSummary};
 use uuid::Uuid;
 
-use crate::fs::UserCreds;
 use crate::Cli;
+use crate::fs::UserCreds;
 
 use super::{ApplicationConfig, BackendClient, BackendConfig, Session};
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use miette::Result;
 
-use crate::{stats::Observation, Shutdownable};
+use crate::{Shutdownable, stats::Observation};
 
 pub use cloudwatch::CloudWatch;
 

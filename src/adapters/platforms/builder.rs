@@ -74,7 +74,7 @@ mod tests {
     use crate::adapters::BoxedPlatform;
     use miette::{IntoDiagnostic, Result};
     use openapi::models::ApplicationConfig;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::{ApplicationPlatformBuilder, PlatformBuilder};
 

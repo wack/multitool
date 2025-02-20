@@ -1,4 +1,4 @@
-use super::{group::Group, Categorical};
+use super::{Categorical, group::Group};
 use std::fmt;
 
 /// Marker trait. This marker trait is used to ensure concrete types satisfy

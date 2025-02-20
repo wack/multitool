@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use crate::stats::{histogram::Histogram, Categorical};
+use crate::stats::{Categorical, histogram::Histogram};
 
 /// A `ContingencyTable` is conceptually a two-dimensional table,
 /// where each column represents a category, each row is a group (expected and observed),

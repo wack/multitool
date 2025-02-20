@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use miette::Result;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use super::{DirectoryType, FileSystem};
 

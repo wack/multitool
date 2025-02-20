@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{miette, IntoDiagnostic as _, Result};
+use miette::{IntoDiagnostic as _, Result, miette};
 
 use crate::{
-    subsystems::ShutdownResult, utils::load_default_aws_config, Shutdownable, WholePercent,
+    Shutdownable, WholePercent, subsystems::ShutdownResult, utils::load_default_aws_config,
 };
 
 use aws_sdk_apigateway::{

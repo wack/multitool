@@ -1,9 +1,9 @@
-use console::{colors_enabled, colors_enabled_stderr, Term};
+use console::{Term, colors_enabled, colors_enabled_stderr};
 use dialoguer::theme::Theme;
 
 use crate::Cli;
 
-use super::theme::{colorful_theme, SIMPLE_THEME};
+use super::theme::{SIMPLE_THEME, colorful_theme};
 
 /// A TermDestination references an output file, usually stdout.
 pub(super) struct TermDestination {
