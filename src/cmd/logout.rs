@@ -1,8 +1,8 @@
 use miette::Result;
 
 use crate::{
-    fs::{FileSystem, Session},
     Terminal,
+    fs::{FileSystem, Session},
 };
 
 /// Deploy the Lambda function as a canary and monitor it.

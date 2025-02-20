@@ -34,15 +34,18 @@ impl<T: Observation + fmt::Debug + Send + 'static> MonitorSubsystem<T> {
                         return monitor.shutdown().await;
                     }
                     mail = mail_inbox.recv() => {
-                        if let Some(mail) = mail {
-                            match mail {
-                                MonitorMail::Query(params) => {
-                                    let result = monitor.query().await;
-                                    params.outbox.send(result).unwrap();
+                        match mail {
+                            Some(mail) => {
+                                match mail {
+                                    MonitorMail::Query(params) => {
+                                        let result = monitor.query().await;
+                                        params.outbox.send(result).unwrap();
+                                    }
                                 }
+                            },
+                            _ => {
+                                return monitor.shutdown().await;
                             }
-                        } else {
-                            return monitor.shutdown().await;
                         }
                     }
                 }

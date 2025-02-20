@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::Result;
 
-use crate::{subsystems::ShutdownResult, Shutdownable};
+use crate::{Shutdownable, subsystems::ShutdownResult};
 
 use super::Platform;
 
