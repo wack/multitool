@@ -27,11 +27,11 @@ impl Platform for LambdaPlatform {
         todo!()
     }
 
-    async fn rollback_canary(&mut self) -> Result<()> {
+    async fn yank_canary(&mut self) -> Result<()> {
         todo!()
     }
 
-    async fn promote_canary(&mut self) -> Result<()> {
+    async fn promote_deployment(&mut self) -> Result<()> {
         todo!()
     }
 }
