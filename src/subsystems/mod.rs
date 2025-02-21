@@ -1,10 +1,10 @@
-pub use action_listener::{ACTION_LISTENER_SUBSYSTEM_NAME, ActionListenerSubsystem};
 use async_trait::async_trait;
+pub use controller::{CONTROLLER_SUBSYSTEM_NAME, ControllerSubsystem};
 pub use ingress::{INGRESS_SUBSYSTEM_NAME, IngressSubsystem};
 pub use monitor::{MONITOR_SUBSYSTEM_NAME, MonitorSubsystem};
 pub use platform::{PLATFORM_SUBSYSTEM_NAME, PlatformSubsystem};
 
-mod action_listener;
+mod controller;
 mod handle;
 mod ingress;
 mod monitor;

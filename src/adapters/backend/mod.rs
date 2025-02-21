@@ -16,7 +16,7 @@ mod config;
 
 /// Backend references the MultiTool backend.
 #[async_trait]
-pub trait BackendClient {
+pub trait BackendClient: Send + Sync {
     /// Given the workspace name and the application name, fetch
     /// the configuration of the application.
     async fn fetch_config(
@@ -36,4 +36,13 @@ pub struct ApplicationConfig {
     pub platform: BoxedPlatform,
     pub ingress: BoxedIngress,
     pub monitor: BoxedMonitor<CategoricalObservation<5, ResponseStatusCode>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BackendClient;
+
+    use static_assertions::assert_obj_safe;
+
+    assert_obj_safe!(BackendClient);
 }
