@@ -1,30 +1,61 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::Result;
+use miette::{IntoDiagnostic as _, Result, miette};
 
-use crate::{Shutdownable, subsystems::ShutdownResult};
+use crate::{
+    Shutdownable, artifacts::LambdaZip, subsystems::ShutdownResult, utils::load_default_aws_config,
+};
+use aws_sdk_lambda::{client::Client, primitives::Blob, types::FunctionCode};
 
 use super::Platform;
 
-// TODO: I probably have to pass in the Artifact here.
-//       On second thought, maybe we pass it in to the Deploy fucntion.
 pub struct LambdaPlatform {
+    client: Client,
     region: String,
     name: String,
+    artifact: LambdaZip,
 }
 
 #[bon]
 impl LambdaPlatform {
     #[builder]
-    pub fn new(region: String, name: String) -> Self {
-        Self { region, name }
+    pub async fn new(region: String, name: String, artifact: LambdaZip) -> Self {
+        let config = load_default_aws_config().await;
+        let client = aws_sdk_lambda::Client::new(config);
+        Self {
+            client,
+            region,
+            name,
+            artifact,
+        }
     }
 }
 
 #[async_trait]
 impl Platform for LambdaPlatform {
+    /// Update the Lambda code with the zip we're holding.
     async fn deploy(&mut self) -> Result<()> {
-        todo!()
+        // First, we need to deploy the new version of the lambda
+        // Parse the bytes into the format AWS wants
+        let code = Blob::from(self.artifact.as_ref());
+
+        // Turn it into an uploadable zip file
+        let function_code = FunctionCode::builder().zip_file(code).build();
+        let zip_file = function_code
+            .zip_file()
+            .ok_or(miette!("Couldn't zip lambda code"))?;
+
+        // Upload it to Lambda
+        let _res = self
+            .client
+            .update_function_code()
+            .function_name(&self.name)
+            .zip_file(zip_file.clone())
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
     }
 
     async fn yank_canary(&mut self) -> Result<()> {

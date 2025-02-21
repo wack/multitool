@@ -10,7 +10,7 @@ use tokio::{
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
-use crate::{adapters::BoxedPlatform, artifacts::LambdaZip};
+use crate::adapters::BoxedPlatform;
 
 pub const PLATFORM_SUBSYSTEM_NAME: &str = "platform";
 /// if you're going to pick an arbirary number, you could do worse
@@ -30,7 +30,7 @@ pub struct PlatformSubsystem {
 }
 
 impl PlatformSubsystem {
-    pub fn new(artifact: LambdaZip, mut platform: BoxedPlatform) -> Self {
+    pub fn new(mut platform: BoxedPlatform) -> Self {
         // • Spawn a new task with the BoxedPlatform and the mailbox.
         let (shutdown_trigger, mut shutdown_signal) = channel(1);
         let (mail_outbox, mut mail_inbox) = mpsc::channel(PLATFORM_MAILBOX_SIZE);

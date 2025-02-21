@@ -5,7 +5,9 @@ pub use client::MultiToolBackend;
 pub use config::BackendConfig;
 use derive_getters::Getters;
 
-use crate::{fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation};
+use crate::{
+    artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation,
+};
 
 use super::{BoxedIngress, BoxedMonitor, BoxedPlatform};
 
@@ -17,7 +19,12 @@ mod config;
 pub trait BackendClient {
     /// Given the workspace name and the application name, fetch
     /// the configuration of the application.
-    async fn fetch_config(&self, workspace: &str, application: &str) -> Result<ApplicationConfig>;
+    async fn fetch_config(
+        &self,
+        workspace: &str,
+        application: &str,
+        artifact: LambdaZip,
+    ) -> Result<ApplicationConfig>;
 
     /// This fuction logs the user into the backend by exchanging these credentials
     /// with the backend server.
