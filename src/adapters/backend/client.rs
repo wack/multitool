@@ -7,6 +7,7 @@ use openapi::models::{ApplicationDetails, LoginRequest, WorkspaceSummary};
 use uuid::Uuid;
 
 use crate::Cli;
+use crate::artifacts::LambdaZip;
 use crate::fs::UserCreds;
 
 use super::{ApplicationConfig, BackendClient, BackendConfig, Session};
@@ -17,7 +18,12 @@ pub struct MultiToolBackend {
 
 #[async_trait]
 impl BackendClient for MultiToolBackend {
-    async fn fetch_config(&self, workspace: &str, application: &str) -> Result<ApplicationConfig> {
+    async fn fetch_config(
+        &self,
+        workspace: &str,
+        application: &str,
+        artifact: LambdaZip,
+    ) -> Result<ApplicationConfig> {
         // • First, we have to exchange the workspace name for it's id.
         let workspace = self.get_workspace_by_name(workspace).await?;
         // • Then, we can do the same with the application name.

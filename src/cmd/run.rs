@@ -52,7 +52,7 @@ impl Run {
         //   application, but we need to look up the details.
         let conf = self
             .backend
-            .fetch_config(&self.workspace, &self.application)
+            .fetch_config(&self.workspace, &self.application, artifact)
             .await?;
         let ApplicationConfig {
             ingress,
@@ -64,7 +64,7 @@ impl Run {
         //   the Monitor, the Platform, and the Ingress.
         let ingress = IngressSubsystem::new(ingress);
         let monitor = MonitorSubsystem::new(monitor);
-        let platform = PlatformSubsystem::new(artifact, platform);
+        let platform = PlatformSubsystem::new(platform);
         let listener = ActionListenerSubsystem;
         //   …but before we do, let's capture the shutdown
         //   signal from the OS.

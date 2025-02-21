@@ -1,27 +1,35 @@
+use async_trait::async_trait;
 use openapi::models::{self, ApplicationConfig, AwsPlatformConfigOneOf, WebServiceConfig};
+
+use crate::artifacts::LambdaZip;
 
 use super::{BoxedPlatform, LambdaPlatform};
 
+#[async_trait]
 pub trait PlatformBuilder {
-    fn build(&self) -> BoxedPlatform;
+    async fn build(self) -> BoxedPlatform;
 }
 
 struct ApplicationPlatformBuilder {
     config: ApplicationConfig,
+    artifact: LambdaZip,
 }
 
 impl ApplicationPlatformBuilder {
-    fn new(config: ApplicationConfig) -> Self {
-        Self { config }
+    fn new(config: ApplicationConfig, artifact: LambdaZip) -> Self {
+        Self { config, artifact }
     }
 }
 
+#[async_trait]
 impl PlatformBuilder for ApplicationPlatformBuilder {
-    fn build(&self) -> BoxedPlatform {
+    async fn build(self) -> BoxedPlatform {
         let ApplicationConfig::ApplicationConfigOneOf(appconfig) = self.config.clone();
         match *appconfig.web_service {
             WebServiceConfig::WebServiceConfigOneOf(web_service_config) => {
-                WebServicePlatformBuilder::new(*web_service_config).build()
+                WebServicePlatformBuilder::new(*web_service_config, self.artifact)
+                    .build()
+                    .await
             }
         }
     }
@@ -29,14 +37,21 @@ impl PlatformBuilder for ApplicationPlatformBuilder {
 
 struct WebServicePlatformBuilder {
     config: models::WebServiceConfigOneOf,
+    artifact: LambdaZip,
 }
 
+#[async_trait]
 impl PlatformBuilder for WebServicePlatformBuilder {
-    fn build(&self) -> BoxedPlatform {
+    async fn build(self) -> BoxedPlatform {
         match *self.config.aws.platform {
             models::AwsPlatformConfig::AwsPlatformConfigOneOf(ref aws_platform) => {
-                AwsPlatformBuilder::new(self.config.aws.region.clone(), *aws_platform.clone())
-                    .build()
+                AwsPlatformBuilder::new(
+                    self.config.aws.region.clone(),
+                    *aws_platform.clone(),
+                    self.artifact,
+                )
+                .build()
+                .await
             }
         }
     }
@@ -45,33 +60,42 @@ impl PlatformBuilder for WebServicePlatformBuilder {
 struct AwsPlatformBuilder {
     config: AwsPlatformConfigOneOf,
     region: String,
+    artifact: LambdaZip,
 }
 
 impl AwsPlatformBuilder {
-    fn new(region: String, config: AwsPlatformConfigOneOf) -> Self {
-        Self { config, region }
+    fn new(region: String, config: AwsPlatformConfigOneOf, artifact: LambdaZip) -> Self {
+        Self {
+            config,
+            region,
+            artifact,
+        }
     }
 }
 
+#[async_trait]
 impl PlatformBuilder for AwsPlatformBuilder {
-    fn build(&self) -> BoxedPlatform {
+    async fn build(self) -> BoxedPlatform {
         let lambda_name = self.config.lambda.name.clone();
         let platform = LambdaPlatform::builder()
             .region(self.region.clone())
             .name(lambda_name)
-            .build();
+            .artifact(self.artifact)
+            .build()
+            .await;
         Box::new(platform)
     }
 }
 
 impl WebServicePlatformBuilder {
-    fn new(config: models::WebServiceConfigOneOf) -> Self {
-        Self { config }
+    fn new(config: models::WebServiceConfigOneOf, artifact: LambdaZip) -> Self {
+        Self { config, artifact }
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use crate::adapters::BoxedPlatform;
+    use crate::{adapters::BoxedPlatform, artifacts::LambdaZip};
     use miette::{IntoDiagnostic, Result};
     use openapi::models::ApplicationConfig;
     use serde_json::{Value, json};
@@ -101,15 +125,17 @@ mod tests {
         }})
     }
 
-    #[test]
-    fn parse_app_config() -> Result<()> {
+    #[tokio::test]
+    async fn parse_app_config() -> Result<()> {
         // • Get the JSON describing this configuration.
         let config_json = serde_json::to_string(&application_json()).into_diagnostic()?;
         // • Marshal it into a type.
         let config_object: ApplicationConfig =
             serde_json::from_str(&config_json).into_diagnostic()?;
         // • Try to parse it into a domain type.
-        let _: BoxedPlatform = ApplicationPlatformBuilder::new(config_object).build();
+        let _: BoxedPlatform = ApplicationPlatformBuilder::new(config_object, LambdaZip::mock())
+            .build()
+            .await;
         Ok(())
     }
 }
