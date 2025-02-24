@@ -5,7 +5,7 @@ pub use terminal::Terminal;
 pub use numbers::WholePercent;
 
 pub use subsystems::{
-    ActionListenerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem, Shutdownable,
+    ControllerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem, Shutdownable,
 };
 
 mod adapters;

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::adapters::BoxedMonitor;
+use crate::adapters::{BoxedMonitor, Monitor};
 use crate::stats::Observation;
 use async_trait::async_trait;
 use mail::MonitorMail;
@@ -10,6 +10,7 @@ use tokio::{select, sync::mpsc::channel, task::JoinHandle};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use super::{ShutdownResult, Shutdownable};
+
 use mail::MonitorHandle;
 
 pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
@@ -54,6 +55,11 @@ impl<T: Observation + fmt::Debug + Send + 'static> MonitorSubsystem<T> {
         let shutdown = Arc::new(shutdown_trigger);
         let handle = MonitorHandle::new(Arc::new(mail_outbox), shutdown);
         Self { handle, task_done }
+    }
+
+    /// Returns a shallow copy of the Monitor, using a channel and a handle.
+    pub fn handle(&self) -> impl Monitor<Item = T> + Send + Sync + use<T> {
+        self.handle.clone()
     }
 }
 

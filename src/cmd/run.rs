@@ -1,12 +1,13 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::adapters::ApplicationConfig;
 use crate::subsystems::{
-    ACTION_LISTENER_SUBSYSTEM_NAME, INGRESS_SUBSYSTEM_NAME, MONITOR_SUBSYSTEM_NAME,
+    CONTROLLER_SUBSYSTEM_NAME, INGRESS_SUBSYSTEM_NAME, MONITOR_SUBSYSTEM_NAME,
     PLATFORM_SUBSYSTEM_NAME,
 };
 use crate::{
-    ActionListenerSubsystem, Cli, IngressSubsystem, MonitorSubsystem, PlatformSubsystem,
+    Cli, ControllerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem,
     adapters::{BackendClient, MultiToolBackend},
     artifacts::LambdaZip,
     config::RunSubcommand,
@@ -59,13 +60,15 @@ impl Run {
             platform,
             monitor,
         } = conf;
-        // let monitor_conf = conf.monitor().clone();
         // • Using the application configuration, we can spawn
         //   the Monitor, the Platform, and the Ingress.
         let ingress = IngressSubsystem::new(ingress);
         let monitor = MonitorSubsystem::new(monitor);
         let platform = PlatformSubsystem::new(platform);
-        let listener = ActionListenerSubsystem;
+
+        // • Grab a handle to the monitor to provide to the controller subsystem.
+        let monitor_handle = Box::new(monitor.handle());
+        let controller = ControllerSubsystem::new(Arc::from(self.backend), monitor_handle);
         //   …but before we do, let's capture the shutdown
         //   signal from the OS.
         Toplevel::new(|s| async move {
@@ -86,8 +89,8 @@ impl Run {
             ));
             // • Start the action listener subsystem.
             s.start(SubsystemBuilder::new(
-                ACTION_LISTENER_SUBSYSTEM_NAME,
-                listener.into_subsystem(),
+                CONTROLLER_SUBSYSTEM_NAME,
+                controller.into_subsystem(),
             ));
         })
         .catch_signals()

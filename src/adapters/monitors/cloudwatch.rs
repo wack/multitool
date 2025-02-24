@@ -236,65 +236,23 @@ impl Monitor for CloudWatch {
         let canary_5xx = canary_5xx_result?;
         let canary_count = canary_count_result?;
 
-        let mut observations = Vec::new();
-
         // Collate all of our control metrics
         let control_2xx = (control_4xx + control_5xx) - control_count;
-
-        // Since we need a CategoricalObservation for each instance of a response code
-        // but AWS only returns us a total count, we need to make our own
-        // list of observations, 1 per counted item
-        observations.extend(
-            std::iter::repeat(CategoricalObservation {
-                group: Group::Control,
-                outcome: ResponseStatusCode::_2XX,
-            })
-            .take(control_2xx as usize),
-        );
-
-        observations.extend(
-            std::iter::repeat(CategoricalObservation {
-                group: Group::Control,
-                outcome: ResponseStatusCode::_4XX,
-            })
-            .take(control_4xx as usize),
-        );
-
-        observations.extend(
-            std::iter::repeat(CategoricalObservation {
-                group: Group::Control,
-                outcome: ResponseStatusCode::_5XX,
-            })
-            .take(control_5xx as usize),
-        );
 
         // Collate all of our canary/experimental metrics
         let canary_2xx = (canary_4xx + canary_5xx) - canary_count;
 
-        observations.extend(
-            std::iter::repeat(CategoricalObservation {
-                group: Group::Experimental,
-                outcome: ResponseStatusCode::_2XX,
-            })
-            .take(canary_2xx as usize),
-        );
+        let mut baseline = CategoricalObservation::new(Group::Control);
+        let mut canary = CategoricalObservation::new(Group::Experimental);
 
-        observations.extend(
-            std::iter::repeat(CategoricalObservation {
-                group: Group::Experimental,
-                outcome: ResponseStatusCode::_4XX,
-            })
-            .take(canary_4xx as usize),
-        );
+        baseline.increment_by(&ResponseStatusCode::_2XX, control_2xx);
+        baseline.increment_by(&ResponseStatusCode::_4XX, control_4xx);
+        baseline.increment_by(&ResponseStatusCode::_5XX, control_5xx);
 
-        observations.extend(
-            std::iter::repeat(CategoricalObservation {
-                group: Group::Experimental,
-                outcome: ResponseStatusCode::_5XX,
-            })
-            .take(canary_5xx as usize),
-        );
+        canary.increment_by(&ResponseStatusCode::_2XX, canary_2xx);
+        canary.increment_by(&ResponseStatusCode::_4XX, canary_4xx);
+        canary.increment_by(&ResponseStatusCode::_5XX, canary_5xx);
 
-        Ok(observations)
+        Ok(vec![baseline, canary])
     }
 }
