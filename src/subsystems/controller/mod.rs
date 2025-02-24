@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bon::{bon, builder};
 use miette::{Report, Result};
 use tokio::{pin, time::interval};
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
 
 use crate::adapters::{BackendClient, BoxedMonitor, Monitor};
 use crate::stats::Observation;
 
-use monitor::MonitorController;
+use monitor::{MONITOR_CONTROLLER_SUBSYSTEM_NAME, MonitorController};
 
 /// This is the name as reported to the `TopLevelSubsystem`,
 /// presumably for logging.
@@ -33,13 +34,20 @@ impl<T: Observation> ControllerSubsystem<T> {
 #[async_trait]
 impl<T: Observation + 'static> IntoSubsystem<Report> for ControllerSubsystem<T> {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
+        let (monitor_controller, observation_stream) = MonitorController::launch(self.monitor);
         // Spawn a thread that calls the monitor on a timer.
+        subsys.start(SubsystemBuilder::new(
+            MONITOR_CONTROLLER_SUBSYSTEM_NAME,
+            monitor_controller.into_subsystem(),
+        ));
+        subsys.on_shutdown_requested().await;
+        Ok(())
+        //
         //   * Convert the results into a stream.
         //   * Consume the stream in a thread and push the results
         //     to the backend.
         // Poll the backend for new states to effect.
         //   * Spawn a thread that runs on a timer.
-        todo!()
     }
 }
 
