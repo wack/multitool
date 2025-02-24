@@ -1,15 +1,20 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bon::builder;
 use miette::{Report, Result};
 use tokio::{pin, time::interval};
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
 
-use crate::adapters::{BackendClient, BoxedMonitor, Monitor};
+use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, Monitor};
 use crate::stats::Observation;
+use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
+use crate::{IngressSubsystem, PlatformSubsystem};
 
-use monitor::MonitorController;
+use monitor::{MONITOR_CONTROLLER_SUBSYSTEM_NAME, MonitorController};
+
+use super::INGRESS_SUBSYSTEM_NAME;
 
 /// This is the name as reported to the `TopLevelSubsystem`,
 /// presumably for logging.
@@ -22,68 +27,67 @@ pub const CONTROLLER_SUBSYSTEM_NAME: &str = "controller";
 pub struct ControllerSubsystem<T: Observation> {
     backend: Arc<dyn BackendClient + 'static>,
     monitor: BoxedMonitor<T>,
+    ingress: BoxedIngress,
+    platform: BoxedPlatform,
 }
 
 impl<T: Observation> ControllerSubsystem<T> {
-    pub fn new(backend: Arc<dyn BackendClient>, monitor: BoxedMonitor<T>) -> Self {
-        Self { backend, monitor }
+    pub fn new(
+        backend: Arc<dyn BackendClient>,
+        monitor: BoxedMonitor<T>,
+        ingress: BoxedIngress,
+        platform: BoxedPlatform,
+    ) -> Self {
+        Self {
+            backend,
+            monitor,
+            ingress,
+            platform,
+        }
     }
 }
 
 #[async_trait]
-impl<T: Observation + 'static> IntoSubsystem<Report> for ControllerSubsystem<T> {
+impl<T: Observation + Clone + Send + 'static> IntoSubsystem<Report> for ControllerSubsystem<T> {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
+        let ingress_subsystem = IngressSubsystem::new(self.ingress);
+        let ingress_handle = ingress_subsystem.handle();
+
+        let platform_subsystem = PlatformSubsystem::new(self.platform);
+        let platform_handle = platform_subsystem.handle();
+
+        let monitor_controller = MonitorController::new(self.monitor);
+        let observation_stream = monitor_controller.subscribe();
+
+        // • Start the ingress subsystem.
+        subsys.start(SubsystemBuilder::new(
+            INGRESS_SUBSYSTEM_NAME,
+            ingress_subsystem.into_subsystem(),
+        ));
+
+        // • Start the platform subsystem.
+        subsys.start(SubsystemBuilder::new(
+            PLATFORM_SUBSYSTEM_NAME,
+            platform_subsystem.into_subsystem(),
+        ));
+
+        // • Start the MonitorController subsytem.
+        subsys.start(SubsystemBuilder::new(
+            MONITOR_CONTROLLER_SUBSYSTEM_NAME,
+            monitor_controller.into_subsystem(),
+        ));
+
+        subsys.wait_for_children().await;
+
         // Spawn a thread that calls the monitor on a timer.
         //   * Convert the results into a stream.
         //   * Consume the stream in a thread and push the results
         //     to the backend.
         // Poll the backend for new states to effect.
         //   * Spawn a thread that runs on a timer.
-        todo!()
+        Ok(())
     }
 }
-
-/*
-// TODO: Add a call to chunk_timeout to ensure that items are arriving after a particular
-//       amount of time.
-/// [repeat_query] runs the query on an interval and returns a stream of items.
-/// This function runs indefinitely.
-pub fn repeat_query<T: Observation>(
-    mut observer: Box<dyn Monitor<Item = T>>,
-    duration: tokio::time::Duration,
-) -> impl tokio_stream::Stream<Item = T> {
-    // • Everything happens in this stream closure, which desugars
-    //   into a background thread and a channel write at yield points.
-    async_stream::stream! {
-        // • Initialize a timer that fires every interval.
-        let timer = IntervalStream::new(interval(duration));
-        // • The timer must be pinned to use in an iterator
-        //   because we must promise that its address must not
-        //   be moved between iterations.
-        pin!(timer);
-        // Each iteration of the loop represents one unit of tiem.
-        while timer.next().await.is_some() {
-            // • We perform the query then dump the results into the stream.
-            let items = observer.query().await;
-            for item in items {
-                yield item;
-            }
-        }
-    }
-}
-*/
-
-/*
-// TODO: Honestly, this function can be inlined where used.
-/// Batch observations together into maximally sized chunks, and dump
-/// them to a stream every so often.
-pub fn batch_observations<T: Observation>(
-    obs: impl tokio_stream::Stream<Item = T>,
-    duration: tokio::time::Duration,
-) -> impl tokio_stream::Stream<Item = Vec<T>> {
-    obs.chunks_timeout(DEFAULT_BATCH_SIZE, duration)
-}
-*/
 
 /// Contains the controller for the monitor, controlling how
 /// often it gets called.

@@ -69,8 +69,8 @@ impl PlatformSubsystem {
         Self { task_done, handle }
     }
 
-    pub fn handle(&self) -> PlatformHandle {
-        self.handle.clone()
+    pub fn handle(&self) -> BoxedPlatform {
+        Box::new(self.handle.clone())
     }
 }
 

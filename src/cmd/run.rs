@@ -60,33 +60,12 @@ impl Run {
             platform,
             monitor,
         } = conf;
-        // • Using the application configuration, we can spawn
-        //   the Monitor, the Platform, and the Ingress.
-        let ingress = IngressSubsystem::new(ingress);
-        let monitor = MonitorSubsystem::new(monitor);
-        let platform = PlatformSubsystem::new(platform);
-
-        // • Grab a handle to the monitor to provide to the controller subsystem.
-        let monitor_handle = Box::new(monitor.handle());
-        let controller = ControllerSubsystem::new(Arc::from(self.backend), monitor_handle);
+        // Build the ControllerSubsystem using the boxed objects.
+        let controller =
+            ControllerSubsystem::new(Arc::from(self.backend), monitor, ingress, platform);
         //   …but before we do, let's capture the shutdown
         //   signal from the OS.
         Toplevel::new(|s| async move {
-            // • Start the monitor subsystem.
-            s.start(SubsystemBuilder::new(
-                MONITOR_SUBSYSTEM_NAME,
-                monitor.into_subsystem(),
-            ));
-            // • Start the platform subsystem.
-            s.start(SubsystemBuilder::new(
-                PLATFORM_SUBSYSTEM_NAME,
-                platform.into_subsystem(),
-            ));
-            // • Start the ingress subsystem.
-            s.start(SubsystemBuilder::new(
-                INGRESS_SUBSYSTEM_NAME,
-                ingress.into_subsystem(),
-            ));
             // • Start the action listener subsystem.
             s.start(SubsystemBuilder::new(
                 CONTROLLER_SUBSYSTEM_NAME,

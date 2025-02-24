@@ -1,4 +1,5 @@
 use serde_json::error::Category;
+use std::fmt::Debug;
 
 use super::{Categorical, group::Group, histogram::Histogram};
 use std::{fmt, marker::PhantomData};
@@ -6,7 +7,7 @@ use std::{fmt, marker::PhantomData};
 /// Marker trait. This marker trait is used to ensure concrete types satisfy
 /// the expectations of the backend. The backend accepts
 /// certain types of metrics only, like Response Codes, CPU, and Memory.
-pub trait Observation {}
+pub trait Observation: Debug {}
 
 // Implement the marker trait. CategoricalObservations are a type of observation.
 /// An [CategoricalObservation] represents a measured outcome binned into

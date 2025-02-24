@@ -5,7 +5,7 @@ pub use builder::PlatformBuilder;
 pub use lambda::LambdaPlatform;
 
 use crate::Shutdownable;
-pub type BoxedPlatform = Box<dyn Platform + Send>;
+pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
 
 #[async_trait]
 pub trait Platform: Shutdownable {

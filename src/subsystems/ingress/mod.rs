@@ -68,8 +68,8 @@ impl IngressSubsystem {
         Self { handle, task_done }
     }
 
-    pub fn handle(&self) -> IngressHandle {
-        self.handle.clone()
+    pub fn handle(&self) -> BoxedIngress {
+        Box::new(self.handle.clone())
     }
 }
 
