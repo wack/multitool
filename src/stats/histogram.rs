@@ -2,11 +2,14 @@ use std::marker::PhantomData;
 
 use super::Categorical;
 
+use std::fmt;
+
 /// [Histogram] is a data structure for tracking categorical observations.
 /// In essence, it's a map from Category to count.
 /// A [Histogram] has a fixed number of bins, each representing on of `N`
 /// categories. Each time an member of the category is observed, it is
 /// "added to the bin", incrementing the counter.
+#[derive(Clone)]
 pub struct Histogram<const N: usize, C>
 where
     C: Categorical<N>,
@@ -87,6 +90,15 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<const N: usize, C> fmt::Debug for Histogram<N, C>
+where
+    C: Categorical<N>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.bins)
     }
 }
 
