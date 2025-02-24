@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::adapters::{BoxedMonitor, Monitor};
+use crate::adapters::BoxedMonitor;
 use crate::stats::Observation;
 use async_trait::async_trait;
 use mail::MonitorMail;

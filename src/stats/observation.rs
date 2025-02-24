@@ -1,8 +1,7 @@
-use serde_json::error::Category;
 use std::fmt::Debug;
 
 use super::{Categorical, group::Group, histogram::Histogram};
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
 /// Marker trait. This marker trait is used to ensure concrete types satisfy
 /// the expectations of the backend. The backend accepts

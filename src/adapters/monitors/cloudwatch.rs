@@ -145,7 +145,7 @@ impl CloudWatch {
 #[async_trait]
 impl Shutdownable for CloudWatch {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!()
+        todo!("What should the monitor do on shutdown? Per MULTI-481, proably nothing")
     }
 }
 

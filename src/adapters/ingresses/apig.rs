@@ -97,146 +97,17 @@ impl Ingress for AwsApiGateway {
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
-        todo!()
+        todo!("Not yet implemented.")
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
-        todo!()
+        todo!("Not yet implemented.")
     }
 }
 
 #[async_trait]
 impl Shutdownable for AwsApiGateway {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!();
+        todo!("What should the APIG do abnormal shutdown?");
     }
 }
-
-/*
-#[async_trait]
-impl Ingress for AwsApiGateway {
-    async fn deploy(&mut self) -> Result<()> {
-        todo!();
-// First, we need to deploy the new version of the lambda
-
-// Parse the bytes into the format AWS wants
-let code = Blob::from(self.lambda_artifact.clone());
-
-// Turn it into an uploadable zip file
-let function_code = FunctionCode::builder().zip_file(code).build();
-let zip_file = function_code
-    .zip_file()
-    .ok_or(miette!("Couldn't zip lambda code"))?;
-
-// Upload it to Lambda
-let res = self
-    .lambda_client
-    .update_function_code()
-    .function_name(&self.lambda_name)
-    .zip_file(zip_file.clone())
-    .send()
-    .await
-    .into_diagnostic()?;
-
-let lambda_arn = res
-    .function_arn()
-    .ok_or(miette!("Couldn't get ARN of deployed lambda"))?;
-
-let version = res
-    .version()
-    .ok_or(miette!("Couldn't get version of deployed lambda"))?;
-
-let api = self.get_api_id_by_name(&self.gateway_name).await?;
-let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
-
-// Next, we need to create a new deployment, pointing at our
-// new lambda version with canary settings
-self.apig_client
-    .put_integration()
-    .rest_api_id(api_id)
-    .uri(format!("{}:{}", lambda_arn, version))
-    .send()
-    .await
-    .into_diagnostic()?;
-
-// Create a deployment with canary settings to deploy our new lambda
-self.apig_client
-    .create_deployment()
-    .rest_api_id(api_id)
-    .stage_name(&self.stage_name)
-    .canary_settings(
-        DeploymentCanarySettings::builder()
-            // This is set to 0 explicitly here since the first step of the pipeline
-            // is to increase traffic
-            .percent_traffic(0.0)
-            .build(),
-    )
-    .send()
-    .await
-    .into_diagnostic()?;
-
-Ok(())
-//    }
-    async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
-        todo!();
-    }
-
-    async fn rollback_canary(&mut self) -> Result<()> {
-        todo!();
-        let api = self.get_api_id_by_name(&self.gateway_name).await?;
-        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
-
-        // Updates the stage to delete any canary settings from the API Gateway
-        let patch_op = PatchOperation::builder()
-            .op(Op::Remove)
-            .path("/canarySettings")
-            .build();
-
-        self.apig_client
-            .update_stage()
-            .rest_api_id(api_id)
-            .stage_name(&self.stage_name)
-            .patch_operations(patch_op)
-            .send()
-            .await
-            .into_diagnostic()?;
-
-        Ok(())
-
-    }
-
-    async fn promote_canary(&mut self) -> Result<()> {
-        todo!();
-        let api = self.get_api_id_by_name(&self.gateway_name).await?;
-        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
-
-        // Overwrite the main deployment's ID with the canary's
-        let replace_deployment_op = PatchOperation::builder()
-            .op(Op::Copy)
-            .from("/canarySettings/deploymentId")
-            .path("/deploymentId")
-            .build();
-
-        // Deletes all canary settings from the API Gateway so we're ready for the next
-        // canary deployment
-        let delete_canary_op = PatchOperation::builder()
-            .op(Op::Remove)
-            .path("/canarySettings")
-            .build();
-
-        // Send request to update stage
-        self.apig_client
-            .update_stage()
-            .rest_api_id(api_id)
-            .stage_name(&self.stage_name)
-            .patch_operations(replace_deployment_op)
-            .patch_operations(delete_canary_op)
-            .send()
-            .await
-            .into_diagnostic()?;
-
-        Ok(())
-
-    }
-}
-        */

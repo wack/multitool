@@ -1,13 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bon::builder;
 use miette::{Report, Result};
-use tokio::{pin, time::interval};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
-use tokio_stream::{StreamExt, wrappers::IntervalStream};
 
-use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, Monitor};
+use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform};
 use crate::stats::Observation;
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
 use crate::{IngressSubsystem, PlatformSubsystem};
