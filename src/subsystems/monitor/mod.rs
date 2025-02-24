@@ -58,8 +58,8 @@ impl<T: Observation + fmt::Debug + Send + 'static> MonitorSubsystem<T> {
     }
 
     /// Returns a shallow copy of the Monitor, using a channel and a handle.
-    pub fn handle(&self) -> impl Monitor<Item = T> + Send + Sync + use<T> {
-        self.handle.clone()
+    pub fn handle(&self) -> BoxedMonitor<T> {
+        Box::new(self.handle.clone())
     }
 }
 
