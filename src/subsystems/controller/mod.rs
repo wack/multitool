@@ -34,12 +34,14 @@ impl<T: Observation> ControllerSubsystem<T> {
 #[async_trait]
 impl<T: Observation + 'static> IntoSubsystem<Report> for ControllerSubsystem<T> {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
-        let (monitor_controller, observation_stream) = MonitorController::launch(self.monitor);
+        // let (monitor_controller, observation_stream) = MonitorController::launch(self.monitor);
         // Spawn a thread that calls the monitor on a timer.
+        /*
         subsys.start(SubsystemBuilder::new(
             MONITOR_CONTROLLER_SUBSYSTEM_NAME,
             monitor_controller.into_subsystem(),
         ));
+        */
         subsys.on_shutdown_requested().await;
         Ok(())
         //
@@ -108,3 +110,23 @@ mod tests {
 
     assert_impl_all!(ControllerSubsystem<CategoricalObservation<5, ResponseStatusCode>>: IntoSubsystem<Report>);
 }
+
+///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+
+// DESIGN:
+// Controller:
+//   Constructed with each of BoxedIngress/Monitor/etc passed in.
+//   Might want to use Bon on the constructor.
+//
+// Controller:
+//   launch_monitor_controller: AsyncFnOnce(subsystem_handle)
+//   launch_ingress_subsystem: AsyncFnOnce(subsystem_handle)
+//   launch_platform_subsystem: AsyncFnOnce(subsystem_handle)
+//   Store the event stream from the MonitorController.
+//
