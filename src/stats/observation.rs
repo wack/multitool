@@ -36,11 +36,6 @@ impl<const N: usize, Cat: Categorical<N>> CategoricalObservation<N, Cat> {
         }
     }
 
-    /// Add one to the provided bin.
-    fn increment(&mut self, category: &Cat) {
-        self.increment_by(category, 1);
-    }
-
     /// Increase the stored count for the given category by the given number.
     pub fn increment_by(&mut self, category: &Cat, count: u32) {
         self.histogram.increment_by(category, count);

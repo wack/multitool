@@ -65,7 +65,10 @@ impl Run {
         let ingress = IngressSubsystem::new(ingress);
         let monitor = MonitorSubsystem::new(monitor);
         let platform = PlatformSubsystem::new(platform);
-        let controller = ControllerSubsystem::new(Arc::from(self.backend));
+
+        // • Grab a handle to the monitor to provide to the controller subsystem.
+        let monitor_handle = Box::new(monitor.handle());
+        let controller = ControllerSubsystem::new(Arc::from(self.backend), monitor_handle);
         //   …but before we do, let's capture the shutdown
         //   signal from the OS.
         Toplevel::new(|s| async move {

@@ -6,36 +6,32 @@ use tokio::{pin, time::interval};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
 
-use crate::adapters::{BackendClient, Monitor};
+use crate::adapters::{BackendClient, BoxedMonitor, Monitor};
 use crate::stats::Observation;
 
-/// The maximum number of observations that can be recevied before we
-/// recompute statistical significance.
-/// If this number is too low, we'll be performing compute-intensive
-/// statical tests very often. If this number is too high, we could
-/// be waiting too long before computing, which could permit us to promote more eagerly.
-const DEFAULT_BATCH_SIZE: usize = 512;
-
-/// The [ControllerSubsystem] is responsible for talking to the backend.
-/// It sends new monitoring observations, asks for instructions to perform
-/// on cloud resources, and reports the state of those instructions back
-/// to the backend.
-pub struct ControllerSubsystem {
-    backend: Arc<dyn BackendClient + 'static>,
-}
-
-impl ControllerSubsystem {
-    pub fn new(backend: Arc<dyn BackendClient>) -> Self {
-        Self { backend }
-    }
-}
+use monitor::MonitorController;
 
 /// This is the name as reported to the `TopLevelSubsystem`,
 /// presumably for logging.
 pub const CONTROLLER_SUBSYSTEM_NAME: &str = "controller";
 
+/// The [ControllerSubsystem] is responsible for talking to the backend.
+/// It sends new monitoring observations, asks for instructions to perform
+/// on cloud resources, and reports the state of those instructions back
+/// to the backend.
+pub struct ControllerSubsystem<T: Observation> {
+    backend: Arc<dyn BackendClient + 'static>,
+    monitor: BoxedMonitor<T>,
+}
+
+impl<T: Observation> ControllerSubsystem<T> {
+    pub fn new(backend: Arc<dyn BackendClient>, monitor: BoxedMonitor<T>) -> Self {
+        Self { backend, monitor }
+    }
+}
+
 #[async_trait]
-impl IntoSubsystem<Report> for ControllerSubsystem {
+impl<T: Observation + 'static> IntoSubsystem<Report> for ControllerSubsystem<T> {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
         // Spawn a thread that calls the monitor on a timer.
         //   * Convert the results into a stream.
@@ -75,7 +71,9 @@ pub fn repeat_query<T: Observation>(
         }
     }
 }
+*/
 
+/*
 // TODO: Honestly, this function can be inlined where used.
 /// Batch observations together into maximally sized chunks, and dump
 /// them to a stream every so often.
@@ -87,12 +85,18 @@ pub fn batch_observations<T: Observation>(
 }
 */
 
+/// Contains the controller for the monitor, controlling how
+/// often it gets called.
+mod monitor;
+
 #[cfg(test)]
 mod tests {
+    use crate::{metrics::ResponseStatusCode, stats::CategoricalObservation};
+
     use super::ControllerSubsystem;
     use miette::Report;
     use static_assertions::assert_impl_all;
     use tokio_graceful_shutdown::IntoSubsystem;
 
-    assert_impl_all!(ControllerSubsystem: IntoSubsystem<Report>);
+    assert_impl_all!(ControllerSubsystem<CategoricalObservation<5, ResponseStatusCode>>: IntoSubsystem<Report>);
 }

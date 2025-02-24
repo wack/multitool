@@ -5,7 +5,7 @@ use crate::{Shutdownable, stats::Observation};
 
 pub use cloudwatch::CloudWatch;
 
-pub type BoxedMonitor<T> = Box<dyn Monitor<Item = T> + Send>;
+pub type BoxedMonitor<T> = Box<dyn Monitor<Item = T> + Send + Sync>;
 
 #[async_trait]
 pub trait Monitor: Shutdownable {
