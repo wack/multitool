@@ -1,16 +1,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use mail::IngressMail;
-use miette::{IntoDiagnostic, Report, Result};
-use tokio::select;
+use mail::{IngressMail, PromoteParams, RollbackParams, TrafficParams};
+use miette::{Report, Result};
 use tokio::sync::mpsc::channel;
-use tokio::task::JoinHandle;
+use tokio::{select, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::adapters::BoxedIngress;
-
-use super::{ShutdownResult, Shutdownable};
 
 use mail::IngressHandle;
 
@@ -22,66 +19,71 @@ pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
 const INGRESS_MAILBOX_SIZE: usize = 1 << 4;
 
 pub struct IngressSubsystem {
-    task_done: JoinHandle<ShutdownResult>,
+    ingress: BoxedIngress,
     handle: IngressHandle,
+    mailbox: Receiver<IngressMail>,
+    shutdown: Receiver<()>,
 }
 
 impl IngressSubsystem {
-    pub fn new(mut ingress: BoxedIngress) -> Self {
-        let (shutdown_trigger, mut shutdown_signal) = channel(1);
-        let (mail_outbox, mut mail_inbox) = channel(INGRESS_MAILBOX_SIZE);
-        let task_done = tokio::spawn(async move {
-            loop {
-                select! {
-                    _ = shutdown_signal.recv() => {
-                        return ingress.shutdown().await;
-                    }
-                    mail = mail_inbox.recv() => {
-                        match mail {
-                            Some(mail) => {
-                                match mail {
-                                    IngressMail::RollbackCanary(params) => {
-                                        let result = ingress.rollback_canary().await;
-                                        params.outbox.send(result).unwrap();
-                                    }
-                                    IngressMail::PromoteCanary(params) => {
-                                        let result = ingress.promote_canary().await;
-                                        params.outbox.send(result).unwrap();
-                                    }
-                                    IngressMail::SetCanaryTraffic(params) => {
-                                        let percent = params.percent;
-                                        let result = ingress.set_canary_traffic(percent).await;
-                                        params.outbox.send(result).unwrap();
-                                    }
-                                }
-                            },
-                            _ => {
-                            return ingress.shutdown().await;
-                            }
-                        }
-                    }
-                }
-            }
-        });
+    pub fn new(ingress: BoxedIngress) -> Self {
+        let (shutdown_trigger, shutdown_signal) = channel(1);
+        let (mail_outbox, mailbox) = channel(INGRESS_MAILBOX_SIZE);
         let shutdown = Arc::new(shutdown_trigger);
         let handle = IngressHandle::new(Arc::new(mail_outbox), shutdown);
-        Self { handle, task_done }
+        Self {
+            handle,
+            ingress,
+            mailbox,
+            shutdown: shutdown_signal,
+        }
     }
 
     pub fn handle(&self) -> BoxedIngress {
         Box::new(self.handle.clone())
+    }
+
+    async fn handle_rollback(&mut self, params: RollbackParams) {
+        let result = self.ingress.rollback_canary().await;
+        params.outbox.send(result).unwrap();
+    }
+
+    async fn handle_promote(&mut self, params: PromoteParams) {
+        let result = self.ingress.promote_canary().await;
+        params.outbox.send(result).unwrap();
+    }
+
+    async fn handle_set_traffic(&mut self, params: TrafficParams) {
+        let percent = params.percent;
+        let result = self.ingress.set_canary_traffic(percent).await;
+        params.outbox.send(result).unwrap();
     }
 }
 
 #[async_trait]
 impl IntoSubsystem<Report> for IngressSubsystem {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
-        subsys.on_shutdown_requested().await;
-        // Propagate the shutdown signal.
-        let shutdown_result = self.handle.shutdown().await;
-        // Wait for the thread to be shutdown.
-        let task_result = self.task_done.await.into_diagnostic();
-        shutdown_result.and(task_result?)
+        loop {
+            select! {
+                _ = subsys.on_shutdown_requested() => {
+                    return self.ingress.shutdown().await;
+                }
+                _ = self.shutdown.recv() => {
+                    subsys.request_shutdown();
+                }
+                mail = self.mailbox.recv() => {
+                    if let Some(mail) = mail {
+                        match mail {
+                            IngressMail::RollbackCanary(params) => self.handle_rollback(params).await,
+                            IngressMail::PromoteCanary(params) => self.handle_promote(params).await,
+                            IngressMail::SetCanaryTraffic(params) => self.handle_set_traffic(params).await,
+                        }
+                    } else {
+                        subsys.request_shutdown();
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -24,8 +24,8 @@ mod mail;
 /// The PlatformSubsystem handles sychronizing access to the
 /// `[BoxedPlatform]` using message-passing and channels.
 pub struct PlatformSubsystem {
-    handle: PlatformHandle,
     platform: BoxedPlatform,
+    handle: PlatformHandle,
     mailbox: Receiver<PlatformMail>,
     shutdown: Receiver<()>,
 }
@@ -92,6 +92,8 @@ impl IntoSubsystem<Report> for PlatformSubsystem {
                             PlatformMail::YankCanary(params) => self.handle_yank(params).await,
                             PlatformMail::PromoteDeployment(params) => self.handle_promote(params).await,
                         }
+                    } else {
+                        subsys.request_shutdown()
                     }
                 }
             }
