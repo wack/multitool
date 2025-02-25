@@ -1,13 +1,12 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use bon::{bon, builder};
+use futures_util::TryStreamExt;
 use miette::{Report, Result};
 use tokio::{
     pin, select,
-    sync::{
-        broadcast::{self, Receiver, Sender},
-        mpsc,
-    },
+    sync::mpsc::{self, Receiver, Sender},
     time::interval,
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
@@ -19,81 +18,156 @@ use crate::{
 };
 
 /// The maximum number of observations that can be recevied before we
-/// recompute statistical significance.
+/// emit the results to the backend.
 /// If this number is too low, we'll be performing compute-intensive
-/// statical tests very often. If this number is too high, we could
-/// be waiting too long before computing, which could permit us to promote more eagerly.
+/// statical tests very often and sending many requests over the wire.
+/// If this number is too high, we could be waiting too long before
+/// computing, which could permit us to promote more eagerly.
 const DEFAULT_MAX_BATCH_SIZE: usize = 512;
-
-const DEFAULT_INTERVAL: Duration = Duration::from_secs(60);
+/// The frequency with which we poll the `Monitor` for new results.
+/// For AWS Cloudwatch, they update their autocollcted metrics every
+/// minute. So polling every 30s cuts down on the time between
+/// when the data is uploaded and when we receive it.
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(30);
+/// The frequency with which we emit data from the controller,
+/// (usually to go to the backend).
+const DEFAULT_EMIT_INTERVAL: Duration = Duration::from_secs(60);
 
 pub const MONITOR_CONTROLLER_SUBSYSTEM_NAME: &str = "controller/monitor";
 
-pub struct MonitorController<T: Observation> {
+/// The `MonitorController` is responsible for scheduling calls
+/// to the `Monitor` on a timer, and batching the results. This
+/// decouples how often we *gather* metrics from how often to
+/// *store* them.
+///
+/// Its a "controller" in the sense of PID controller, not in the sense
+/// of Model-View-Controller.
+pub struct MonitorController<T>
+where
+    T: Observation,
+{
     monitor: BoxedMonitor<T>,
-    sender: Sender<T>,
+    /// This field stores the stream of outputs.
+    /// The stream can only be given to one caller. The first
+    /// call to `Self::stream` will return the stream, and all
+    /// subsequent calls will return None.
+    recv: Option<Receiver<Vec<T>>>,
+    sender: Sender<Vec<T>>,
+    poll_interval: Duration,
+    emit_interval: Duration,
+    on_error: Box<dyn Fn(&miette::Report) + Send + Sync>,
 }
 
-impl<T: Observation + Clone> MonitorController<T> {
-    pub fn new(monitor: BoxedMonitor<T>) -> Self {
-        let (sender, _) = broadcast::channel(DEFAULT_MAX_BATCH_SIZE);
-        Self { monitor, sender }
+#[bon]
+impl<T> MonitorController<T>
+where
+    T: Observation + Clone,
+{
+    #[builder]
+    pub fn new(
+        monitor: BoxedMonitor<T>,
+        poll_interval: Option<Duration>,
+        emit_interval: Option<Duration>,
+    ) -> Self {
+        let (sender, receiver) = mpsc::channel(DEFAULT_MAX_BATCH_SIZE);
+        Self {
+            monitor,
+            sender,
+            recv: Some(receiver),
+            poll_interval: poll_interval.unwrap_or(DEFAULT_POLL_INTERVAL),
+            emit_interval: emit_interval.unwrap_or(DEFAULT_EMIT_INTERVAL),
+            on_error: Box::new(log_error),
+        }
     }
 
-    pub fn subscribe(&self) -> Receiver<T> {
-        self.sender.subscribe()
+    /// This function returns the stream of values the first time
+    /// its called. Subsequent calls return None.
+    pub fn stream(&mut self) -> Option<impl Stream<Item = Vec<T>> + use<T>> {
+        self.recv.take().map(|mut receiver| {
+            async_stream::stream! {
+                while let Some(item) = receiver.recv().await {
+                    yield item;
+                }
+            }
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn set_error_hook<F>(&mut self, func: F)
+    where
+        F: Fn(&miette::Report) + Send + Sync + 'static,
+    {
+        self.on_error = Box::new(func)
     }
 }
 
 #[async_trait]
-impl<T: Observation + Send + 'static> IntoSubsystem<Report> for MonitorController<T> {
-    async fn run(self, subsys: SubsystemHandle) -> Result<()> {
+impl<T> IntoSubsystem<Report> for MonitorController<T>
+where
+    T: Observation + Clone + Send + 'static,
+{
+    async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
+        // • Build the `MonitorSubsystem`. Don't launch it until
+        //   we take a handle to it.
         let monitor_subsystem = MonitorSubsystem::new(self.monitor);
+        // • Capture a handle to the subsystem so we can call `Monitor::query`.
         let handle = monitor_subsystem.handle();
-        let (shutdown_sender, mut shutdown_receiver) = mpsc::channel(1);
 
-        // • Start the monitor subsystem.
+        // • Launch the subsystem.
         subsys.start(SubsystemBuilder::new(
             MONITOR_SUBSYSTEM_NAME,
             monitor_subsystem.into_subsystem(),
         ));
 
-        tokio::spawn(async move {
-            let events = repeat_query(handle, DEFAULT_INTERVAL);
-            pin!(events);
-            loop {
-                select! {
-                    _ = shutdown_receiver.recv() => {
-                        return;
+        // Now, we can periodically poll the monitor for
+        // new data.
+        // • First, schedule the Monitor to be queried every so often.
+        let query_stream = repeat_query(handle, self.poll_interval)
+            .inspect_err(|e| (self.on_error)(e))
+            .filter_map(Result::ok);
+        // • Next, aggregate query results and emit them every so often.
+        let chunked_stream =
+            query_stream.chunks_timeout(DEFAULT_MAX_BATCH_SIZE, self.emit_interval);
+        // Now, chunked_stream will emit batches of observations
+        // every `emit_interval`. We can ship those results up
+        // to the caller now.
+        pin!(chunked_stream);
+        loop {
+            select! {
+                _ = subsys.on_shutdown_requested() => {
+                    // If we've received the shutdown signal,
+                    // we don't have anything to do except ensure
+                    // our children have shutdown, guaranteeing
+                    // the monitor is shut down.
+                    subsys.wait_for_children().await;
+                    return Ok(());
+                }
+                next = chunked_stream.next() => {
+                    if let Some(batch) = next {
+                        // We received a new batch of observations.
+                        // Let's emit them to our output stream.
+                        self.sender.send(batch).await.unwrap();
+                    } else {
+                        // The stream has been closed. Shut down.
+                        subsys.request_local_shutdown();
                     }
-                    event = events.next() => {
-                        match event {
-                            None => break,
-                            Some(e) => {
-                                self.sender.send(e).unwrap();
-                            },
-                        }
-                    }
+
                 }
             }
-        });
-
-        subsys.on_shutdown_requested().await;
-        shutdown_sender.send(()).await.unwrap();
-
-        subsys.wait_for_children().await;
-        Ok(())
+        }
     }
 }
 
-// TODO: Add a call to chunk_timeout to ensure that items are arriving after a particular
-//       amount of time.
+fn log_error(err: &Report) {
+    tracing::error!("Error while collecting monitoring data: {err}");
+}
+
 /// [repeat_query] runs the query on an interval and returns a stream of items.
-/// This function runs indefinitely.
-pub fn repeat_query<T: Observation>(
-    mut observer: BoxedMonitor<T>,
+/// This function runs indefinitely, as long as its polled.
+fn repeat_query<T: Observation>(
+    mut monitor: BoxedMonitor<T>,
     duration: tokio::time::Duration,
-) -> impl Stream<Item = T> {
+) -> impl Stream<Item = Result<T>> {
     // • Everything happens in this stream closure, which desugars
     //   into a background thread and a channel write at yield points.
     async_stream::stream! {
@@ -106,28 +180,14 @@ pub fn repeat_query<T: Observation>(
         // Each iteration of the loop represents one unit of tiem.
         while timer.next().await.is_some() {
             // • We perform the query then dump the results into the stream.
-            let items = match observer.query().await {
-                Err(err) => {
-                    println!("Error: {}", err);
-                    continue;
+            match monitor.query().await {
+                Ok(items) => {
+                    for item in items {
+                        yield Ok(item);
+                    }
                 },
-                Ok(items) => items,
-            };
-            for item in items {
-                yield item;
+                Err(err) => yield Err(err),
             }
         }
     }
 }
-
-/*
-// TODO: Honestly, this function can be inlined where used.
-/// Batch observations together into maximally sized chunks, and dump
-/// them to a stream every so often.
-pub fn batch_observations<T: Observation>(
-    obs: impl tokio_stream::Stream<Item = T>,
-    duration: tokio::time::Duration,
-) -> impl tokio_stream::Stream<Item = Vec<T>> {
-    obs.chunks_timeout(DEFAULT_BATCH_SIZE, duration)
-}
-*/

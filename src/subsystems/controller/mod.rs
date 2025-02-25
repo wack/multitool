@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use miette::{Report, Result};
+use miette::{Report, Result, bail};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 
 use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform};
@@ -53,8 +53,15 @@ impl<T: Observation + Clone + Send + 'static> IntoSubsystem<Report> for Controll
         let platform_subsystem = PlatformSubsystem::new(self.platform);
         let platform_handle = platform_subsystem.handle();
 
-        let monitor_controller = MonitorController::new(self.monitor);
-        let observation_stream = monitor_controller.subscribe();
+        let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
+        let observation_stream = match monitor_controller.stream() {
+            Some(stream) => stream,
+            None => {
+                return bail!(
+                    "Failed to take monitoring stream. This is an internal error and should be reported as a bug."
+                );
+            }
+        };
 
         // • Start the ingress subsystem.
         subsys.start(SubsystemBuilder::new(
