@@ -48,6 +48,10 @@ impl BackendClient for MultiToolBackend {
 
         Ok(Session::User(creds))
     }
+
+    async fn upload_observations(&self, _: Vec<()>) -> Result<()> {
+        todo!();
+    }
 }
 
 impl MultiToolBackend {

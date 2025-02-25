@@ -28,6 +28,9 @@ pub trait BackendClient: Send + Sync {
     /// This fuction logs the user into the backend by exchanging these credentials
     /// with the backend server.
     async fn exchange_creds(&self, email: &str, password: &str) -> Result<Session>;
+
+    /// Upload a batch of observations to the backend.
+    async fn upload_observations(&self, data: Vec<()>) -> Result<()>;
 }
 
 pub struct ApplicationConfig {

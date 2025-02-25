@@ -73,7 +73,13 @@ impl<T: Observation> IntoSubsystem<Report> for RelaySubsystem<T> {
                 //   we need to select on the observation stream.
                 //   When a new observation arrives, we send it to the backend.
                 elem = observations.next() => {
-                    todo!()
+                    if let Some(batch) = elem {
+                        // self.backend.upload_observations(batch).await?;
+                        self.backend.upload_observations(vec![]).await?;
+                    } else {
+                        // The stream has been closed, so we should shutdown.
+                        subsys.request_shutdown();
+                    }
                 }
             }
         }
