@@ -2,12 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::adapters::ApplicationConfig;
-use crate::subsystems::{
-    CONTROLLER_SUBSYSTEM_NAME, INGRESS_SUBSYSTEM_NAME, MONITOR_SUBSYSTEM_NAME,
-    PLATFORM_SUBSYSTEM_NAME,
-};
+use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
-    Cli, ControllerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem,
+    Cli, ControllerSubsystem,
     adapters::{BackendClient, MultiToolBackend},
     artifacts::LambdaZip,
     config::RunSubcommand,

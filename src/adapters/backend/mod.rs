@@ -3,7 +3,6 @@ use miette::Result;
 
 pub use client::MultiToolBackend;
 pub use config::BackendConfig;
-use derive_getters::Getters;
 
 use crate::{
     artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation,
@@ -31,7 +30,6 @@ pub trait BackendClient: Send + Sync {
     async fn exchange_creds(&self, email: &str, password: &str) -> Result<Session>;
 }
 
-#[derive(Getters)]
 pub struct ApplicationConfig {
     pub platform: BoxedPlatform,
     pub ingress: BoxedIngress,

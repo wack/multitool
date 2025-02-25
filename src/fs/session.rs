@@ -9,7 +9,7 @@ use super::{DirectoryType, StaticFile};
 /// The session information is used to make authenticated HTTP requests
 /// to the registry webserver.
 #[derive(Serialize, Deserialize)]
-pub(crate) enum Session {
+pub enum Session {
     User(UserCreds),
 }
 

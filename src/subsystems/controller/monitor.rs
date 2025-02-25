@@ -6,7 +6,7 @@ use tokio::{
     pin, select,
     sync::{
         broadcast::{self, Receiver, Sender},
-        mpsc, watch,
+        mpsc,
     },
     time::interval,
 };

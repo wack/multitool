@@ -59,11 +59,11 @@ impl Platform for LambdaPlatform {
     }
 
     async fn yank_canary(&mut self) -> Result<()> {
-        todo!()
+        todo!("I'm not sure we ever yank the canary from the platform currently.")
     }
 
     async fn promote_deployment(&mut self) -> Result<()> {
-        todo!()
+        todo!("I don't think Lambdas promote until we support Lambda Aliases.")
     }
 }
 
