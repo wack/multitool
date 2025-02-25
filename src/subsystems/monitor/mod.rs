@@ -4,14 +4,13 @@ use std::sync::Arc;
 use crate::adapters::BoxedMonitor;
 use crate::stats::Observation;
 use async_trait::async_trait;
-use mail::MonitorMail;
-use miette::{IntoDiagnostic as _, Report, Result};
-use tokio::{select, sync::mpsc::channel, task::JoinHandle};
+use mail::{MonitorHandle, MonitorMail, QueryParams};
+use miette::{Report, Result};
+use tokio::{
+    select,
+    sync::mpsc::{Receiver, channel},
+};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
-
-use super::{ShutdownResult, Shutdownable};
-
-use mail::MonitorHandle;
 
 pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
 /// If you're going to pick an arbitrary number, you could do worse
@@ -19,59 +18,59 @@ pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
 const MONITOR_MAILBOX_SIZE: usize = 1 << 4;
 
 pub struct MonitorSubsystem<T: Observation> {
-    task_done: JoinHandle<ShutdownResult>,
+    monitor: BoxedMonitor<T>,
     handle: MonitorHandle<T>,
+    mailbox: Receiver<MonitorMail<T>>,
+    shutdown: Receiver<()>,
 }
 
 impl<T: Observation + fmt::Debug + Send + 'static> MonitorSubsystem<T> {
-    pub fn new(mut monitor: BoxedMonitor<T>) -> Self {
-        let (shutdown_trigger, mut shutdown_signal) = channel(1);
-
-        let (mail_outbox, mut mail_inbox) = channel(MONITOR_MAILBOX_SIZE);
-        let task_done = tokio::spawn(async move {
-            loop {
-                select! {
-                    _ = shutdown_signal.recv() => {
-                        return monitor.shutdown().await;
-                    }
-                    mail = mail_inbox.recv() => {
-                        match mail {
-                            Some(mail) => {
-                                match mail {
-                                    MonitorMail::Query(params) => {
-                                        let result = monitor.query().await;
-                                        params.outbox.send(result).unwrap();
-                                    }
-                                }
-                            },
-                            _ => {
-                                return monitor.shutdown().await;
-                            }
-                        }
-                    }
-                }
-            }
-        });
+    pub fn new(monitor: BoxedMonitor<T>) -> Self {
+        let (shutdown_trigger, shutdown_signal) = channel(1);
+        let (mail_outbox, mailbox) = channel(MONITOR_MAILBOX_SIZE);
         let shutdown = Arc::new(shutdown_trigger);
         let handle = MonitorHandle::new(Arc::new(mail_outbox), shutdown);
-        Self { handle, task_done }
+        Self {
+            monitor,
+            handle,
+            mailbox,
+            shutdown: shutdown_signal,
+        }
     }
 
     /// Returns a shallow copy of the Monitor, using a channel and a handle.
     pub fn handle(&self) -> BoxedMonitor<T> {
         Box::new(self.handle.clone())
     }
+
+    async fn handle_query(&mut self, params: QueryParams<T>) {
+        let result = self.monitor.query().await;
+        params.outbox.send(result).unwrap();
+    }
 }
 
 #[async_trait]
 impl<T: Observation + Send + 'static> IntoSubsystem<Report> for MonitorSubsystem<T> {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
-        subsys.on_shutdown_requested().await;
-        // Propagate the shutdown signal.
-        let shutdown_result = self.handle.shutdown().await;
-        // Wait for the thread to be shutdown.
-        let task_result = self.task_done.await.into_diagnostic();
-        shutdown_result.and(task_result?)
+        loop {
+            select! {
+                _ = subsys.on_shutdown_requested() => {
+                    return self.monitor.shutdown().await;
+                }
+                _ = self.shutdown.recv() => {
+                    return self.monitor.shutdown().await;
+                }
+                mail = self.mailbox.recv() => {
+                    if let Some(mail) = mail {
+                        match mail {
+                            MonitorMail::Query(params) => self.handle_query(params).await,
+                        }
+                    } else {
+                        subsys.request_shutdown();
+                    }
+                }
+            }
+        }
     }
 }
 

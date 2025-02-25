@@ -1698,6 +1698,7 @@ dependencies = [
  "tokio-graceful-shutdown",
  "tokio-stream",
  "toml",
+ "tracing",
  "uuid",
 ]
 
