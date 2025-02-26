@@ -4,7 +4,10 @@ use openapi::apis::configuration::Configuration;
 
 use crate::Cli;
 
-pub struct BackendConfig {
+#[derive(Clone)]
+pub(super) struct BackendConfig {
+    // TODO: Add configuration for a timeout.
+    // TODO: Add a way to update the access token.
     conf: Configuration,
 }
 

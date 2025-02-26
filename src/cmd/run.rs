@@ -4,10 +4,7 @@ use std::sync::Arc;
 use crate::adapters::ApplicationConfig;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
-    Cli, ControllerSubsystem,
-    adapters::{BackendClient, MultiToolBackend},
-    artifacts::LambdaZip,
-    config::RunSubcommand,
+    Cli, ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
 use miette::Result;
 use tokio::time::Duration;
@@ -25,12 +22,12 @@ pub struct Run {
     artifact_path: PathBuf,
     workspace: String,
     application: String,
-    backend: Box<dyn BackendClient>,
+    backend: BackendClient,
 }
 
 impl Run {
     pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Self {
-        let backend = Box::new(MultiToolBackend::new(cli));
+        let backend = BackendClient::new(cli);
         Self {
             terminal,
             backend,
@@ -58,8 +55,7 @@ impl Run {
             monitor,
         } = conf;
         // Build the ControllerSubsystem using the boxed objects.
-        let controller =
-            ControllerSubsystem::new(Arc::from(self.backend), monitor, ingress, platform);
+        let controller = ControllerSubsystem::new(self.backend, monitor, ingress, platform);
         //   …but before we do, let's capture the shutdown
         //   signal from the OS.
         Toplevel::new(|s| async move {

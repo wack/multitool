@@ -20,7 +20,7 @@ pub struct RelaySubsystem<T: Observation + Send + 'static> {
     /// so it can send monitoring data to the backend,
     /// update the backend when a new state is effected,
     /// and poll for new states to apply.
-    backend: Arc<dyn BackendClient + 'static>,
+    backend: BackendClient,
     // These observations come from the MonitorSubsystem.
     // They must be sent to the backend whenever available.
     // Pin<Box<Stream<Item=T: Observation>>
@@ -41,7 +41,7 @@ pub struct RelaySubsystem<T: Observation + Send + 'static> {
 impl<T: Observation + Send + 'static> RelaySubsystem<T> {
     #[builder]
     pub fn new(
-        backend: Arc<dyn BackendClient + 'static>,
+        backend: BackendClient,
         observations: Receiver<Vec<T>>,
         platform: BoxedPlatform,
         ingress: BoxedIngress,

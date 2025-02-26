@@ -1,4 +1,4 @@
-pub use backend::{ApplicationConfig, BackendClient, MultiToolBackend};
+pub use backend::{ApplicationConfig, BackendClient};
 
 pub use ingresses::*;
 pub use monitors::*;

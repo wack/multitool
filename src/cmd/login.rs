@@ -1,5 +1,5 @@
 use crate::Cli;
-use crate::adapters::{BackendClient, MultiToolBackend};
+use crate::adapters::BackendClient;
 use miette::Result;
 
 use crate::{Terminal, config::LoginSubcommand, fs::FileSystem};
@@ -8,12 +8,12 @@ use crate::{Terminal, config::LoginSubcommand, fs::FileSystem};
 pub struct Login {
     terminal: Terminal,
     flags: LoginSubcommand,
-    backend: Box<dyn BackendClient>,
+    backend: BackendClient,
 }
 
 impl Login {
     pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Self {
-        let backend = Box::new(MultiToolBackend::new(cli));
+        let backend = BackendClient::new(cli);
         Self {
             terminal,
             flags,
