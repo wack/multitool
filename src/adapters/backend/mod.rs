@@ -53,6 +53,9 @@ impl BackendClient {
         )
     }
 
+    // TODO: The deployment id won't be a u64 for long. It should be strongly typed.
+    async fn poll_deployment_state(&self, deployment_id: u64) -> Result<Vec<()>>;
+
     /// This fuction logs the user into the backend by exchanging these credentials
     /// with the backend server.
     pub async fn exchange_creds(&self, email: &str, password: &str) -> Result<Session> {

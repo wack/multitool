@@ -82,7 +82,7 @@ where
 
     /// This function returns a channel receiver of values the first time
     /// its called. Subsequent calls return None.
-    pub fn stream(&mut self) -> Option<Receiver<Vec<T>>> {
+    pub fn try_stream(&mut self) -> Option<Receiver<Vec<T>>> {
         self.recv.take()
         // TODO: This block of code produces an Unpin error at the caller
         //       when using a Stream instead of a receiver, but its

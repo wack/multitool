@@ -56,7 +56,7 @@ impl<T: Observation + Clone + Send + Sync + Unpin + 'static> IntoSubsystem<Repor
         let platform_handle = platform_subsystem.handle();
 
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
-        let observation_stream = match monitor_controller.stream() {
+        let observation_stream = match monitor_controller.try_stream() {
             Some(stream) => stream,
             None => {
                 bail!(
