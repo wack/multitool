@@ -11,7 +11,7 @@ use crate::{IngressSubsystem, PlatformSubsystem};
 
 use monitor::{MONITOR_CONTROLLER_SUBSYSTEM_NAME, MonitorController};
 
-use super::INGRESS_SUBSYSTEM_NAME;
+use super::{INGRESS_SUBSYSTEM_NAME, RELAY_SUBSYSTEM_NAME, RelaySubsystem};
 
 /// This is the name as reported to the `TopLevelSubsystem`,
 /// presumably for logging.
@@ -45,7 +45,9 @@ impl<T: Observation> ControllerSubsystem<T> {
 }
 
 #[async_trait]
-impl<T: Observation + Clone + Send + 'static> IntoSubsystem<Report> for ControllerSubsystem<T> {
+impl<T: Observation + Clone + Send + Sync + Unpin + 'static> IntoSubsystem<Report>
+    for ControllerSubsystem<T>
+{
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
         let ingress_subsystem = IngressSubsystem::new(self.ingress);
         let ingress_handle = ingress_subsystem.handle();
@@ -57,11 +59,18 @@ impl<T: Observation + Clone + Send + 'static> IntoSubsystem<Report> for Controll
         let observation_stream = match monitor_controller.stream() {
             Some(stream) => stream,
             None => {
-                return bail!(
+                bail!(
                     "Failed to take monitoring stream. This is an internal error and should be reported as a bug."
                 );
             }
         };
+
+        let relay_subsystem = RelaySubsystem::builder()
+            .backend(self.backend)
+            .observations(observation_stream)
+            .platform(platform_handle)
+            .ingress(ingress_handle)
+            .build();
 
         // • Start the ingress subsystem.
         subsys.start(SubsystemBuilder::new(
@@ -81,14 +90,13 @@ impl<T: Observation + Clone + Send + 'static> IntoSubsystem<Report> for Controll
             monitor_controller.into_subsystem(),
         ));
 
-        subsys.wait_for_children().await;
+        // • Start the relay subsystem.
+        subsys.start(SubsystemBuilder::new(
+            RELAY_SUBSYSTEM_NAME,
+            relay_subsystem.into_subsystem(),
+        ));
 
-        // Spawn a thread that calls the monitor on a timer.
-        //   * Convert the results into a stream.
-        //   * Consume the stream in a thread and push the results
-        //     to the backend.
-        // Poll the backend for new states to effect.
-        //   * Spawn a thread that runs on a timer.
+        subsys.wait_for_children().await;
         Ok(())
     }
 }

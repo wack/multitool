@@ -80,16 +80,21 @@ where
         }
     }
 
-    /// This function returns the stream of values the first time
+    /// This function returns a channel receiver of values the first time
     /// its called. Subsequent calls return None.
-    pub fn stream(&mut self) -> Option<impl Stream<Item = Vec<T>> + use<T>> {
-        self.recv.take().map(|mut receiver| {
-            async_stream::stream! {
-                while let Some(item) = receiver.recv().await {
-                    yield item;
-                }
-            }
-        })
+    pub fn stream(&mut self) -> Option<Receiver<Vec<T>>> {
+        self.recv.take()
+        // TODO: This block of code produces an Unpin error at the caller
+        //       when using a Stream instead of a receiver, but its
+        //       a more idiomatic API. If we can work through the error,
+        //       it would be better than returning a receiver.
+        // self.recv.take().map(|mut receiver| {
+        //     async_stream::stream! {
+        //         while let Some(item) = receiver.recv().await {
+        //             yield item;
+        //         }
+        //     }
+        // })
     }
 
     #[allow(dead_code)]
