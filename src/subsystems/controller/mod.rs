@@ -22,7 +22,7 @@ pub const CONTROLLER_SUBSYSTEM_NAME: &str = "controller";
 /// on cloud resources, and reports the state of those instructions back
 /// to the backend.
 pub struct ControllerSubsystem<T: Observation> {
-    backend: Arc<dyn BackendClient + 'static>,
+    backend: BackendClient,
     monitor: BoxedMonitor<T>,
     ingress: BoxedIngress,
     platform: BoxedPlatform,
@@ -30,7 +30,7 @@ pub struct ControllerSubsystem<T: Observation> {
 
 impl<T: Observation> ControllerSubsystem<T> {
     pub fn new(
-        backend: Arc<dyn BackendClient>,
+        backend: BackendClient,
         monitor: BoxedMonitor<T>,
         ingress: BoxedIngress,
         platform: BoxedPlatform,
