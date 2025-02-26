@@ -19,9 +19,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// states every so often. It writes new states
 /// to a channel for the Relay subsystem to handle.
 pub struct StatePoller {
-    // TODO: We can get rid of the Arc if we make BackendClient
-    // cloneable, and then use the BoxedClone trick to box it.
-    client: Arc<dyn BackendClient>,
+    client: BackendClient,
     sender: Sender<DeploymentState>,
     /// How often we poll the backend for new states.
     poll_interval: Duration,
@@ -33,7 +31,7 @@ pub struct StatePoller {
 
 #[async_trait]
 impl IntoSubsystem<Report> for StatePoller {
-    async fn run(self, subsys: SubsystemHandle) -> Result<()> {
+    async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         // • Create a timer using our poll interval.
         // • Loop over the timer, selecting on the shutdown
         //   signal and the next tick.
@@ -65,9 +63,8 @@ impl IntoSubsystem<Report> for StatePoller {
 #[bon]
 impl StatePoller {
     #[builder]
-    pub fn new(client: Arc<dyn BackendClient>, poll_interval: Option<Duration>) -> Self {
+    pub fn new(client: BackendClient, poll_interval: Option<Duration>) -> Self {
         let (sender, recv) = mpsc::channel(16);
-
         Self {
             client,
             sender,

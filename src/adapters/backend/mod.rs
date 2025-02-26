@@ -53,9 +53,6 @@ impl BackendClient {
         )
     }
 
-    // TODO: The deployment id won't be a u64 for long. It should be strongly typed.
-    async fn poll_deployment_state(&self, deployment_id: u64) -> Result<Vec<()>>;
-
     /// This fuction logs the user into the backend by exchanging these credentials
     /// with the backend server.
     pub async fn exchange_creds(&self, email: &str, password: &str) -> Result<Session> {
@@ -71,8 +68,18 @@ impl BackendClient {
     }
 
     /// Upload a batch of observations to the backend.
+    // TODO: We need to add the context for the deployment id,
+    //       WorkspaceId, and ApplicationId.
+    //       We can probably use Bon to make htis cleaner.
     pub async fn upload_observations(&self, data: Vec<()>) -> Result<()> {
         todo!();
+    }
+
+    // TODO: We also need to set the current context
+    //       for WorkspaceId and ApplicationId.
+    // TODO: We can probably use Bon to make this cleaner.
+    pub async fn poll_deployment_state(&self, deployment_id: u64) -> Result<Vec<()>> {
+        todo!()
     }
 
     /// Return information about the workspace given its name.
