@@ -1,11 +1,10 @@
-use std::{pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use bon::{bon, builder};
+use bon::bon;
 use miette::{Report, Result};
-use tokio::{pin, select};
+use tokio::{pin, select, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
-use tokio_stream::{Stream, StreamExt as _};
 
 use crate::{
     adapters::{BackendClient, BoxedIngress, BoxedPlatform},
@@ -16,7 +15,7 @@ pub const RELAY_SUBSYSTEM_NAME: &str = "relay";
 
 /// The RelaySubsystem is responsible for sending messages
 /// to and from the backend.
-pub struct RelaySubsystem<T: Observation + 'static> {
+pub struct RelaySubsystem<T: Observation + Send + 'static> {
     /// The relay subsystem needs a backend client
     /// so it can send monitoring data to the backend,
     /// update the backend when a new state is effected,
@@ -26,7 +25,7 @@ pub struct RelaySubsystem<T: Observation + 'static> {
     // They must be sent to the backend whenever available.
     // Pin<Box<Stream<Item=T: Observation>>
     // NB: This should probably happen in its own thread.
-    observations: Box<dyn Stream<Item = Vec<T>> + Send + Sync + Unpin>,
+    observations: Receiver<Vec<T>>,
     // Every so often, we need to poll the backend for
     // instructions. These instructions come in the form
     // of state.
@@ -39,11 +38,11 @@ pub struct RelaySubsystem<T: Observation + 'static> {
 }
 
 #[bon]
-impl<T: Observation + 'static> RelaySubsystem<T> {
+impl<T: Observation + Send + 'static> RelaySubsystem<T> {
     #[builder]
     pub fn new(
         backend: Arc<dyn BackendClient + 'static>,
-        observations: Pin<Box<dyn Stream<Item = Vec<T>> + Send + Sync + Unpin>>,
+        observations: Receiver<Vec<T>>,
         platform: BoxedPlatform,
         ingress: BoxedIngress,
     ) -> Self {
@@ -57,7 +56,7 @@ impl<T: Observation + 'static> RelaySubsystem<T> {
 }
 
 #[async_trait]
-impl<T: Observation> IntoSubsystem<Report> for RelaySubsystem<T> {
+impl<T: Observation + Send + Sync> IntoSubsystem<Report> for RelaySubsystem<T> {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
         let observations = self.observations;
         pin!(observations);
@@ -72,7 +71,7 @@ impl<T: Observation> IntoSubsystem<Report> for RelaySubsystem<T> {
                 // • When we start the RelaySubsystem,
                 //   we need to select on the observation stream.
                 //   When a new observation arrives, we send it to the backend.
-                elem = observations.next() => {
+                elem = observations.recv() => {
                     if let Some(batch) = elem {
                         // self.backend.upload_observations(batch).await?;
                         self.backend.upload_observations(vec![]).await?;
@@ -83,10 +82,8 @@ impl<T: Observation> IntoSubsystem<Report> for RelaySubsystem<T> {
                 }
             }
         }
-
         // • We also need to poll the backend for new states.
         //   Each new state results in a sequence of calls to the Platform
         //   and Ingress. Once those complete, we send an update to the backend.
-        todo!()
     }
 }

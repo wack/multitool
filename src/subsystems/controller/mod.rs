@@ -57,7 +57,7 @@ impl<T: Observation + Clone + Send + Sync + Unpin + 'static> IntoSubsystem<Repor
 
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
         let observation_stream = match monitor_controller.stream() {
-            Some(stream) => Box::pin(stream),
+            Some(stream) => stream,
             None => {
                 bail!(
                     "Failed to take monitoring stream. This is an internal error and should be reported as a bug."
