@@ -1,0 +1,29 @@
+name: "On Merge"
+
+on:
+  # Use a merge queue to gate the creation and storage
+  # of these Docker images.
+  merge_group:
+  # Allow this job to be executed manually from the GH UI.
+  workflow_dispatch:
+
+jobs:
+  pr-ready:
+    if: always()
+    name: "⚡ PR Ready"
+    runs-on: ubuntu-22.04
+    needs:
+    - "build"
+    steps:
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')  || contains(needs.*.result, 'skipped') }}
+        run: |
+          echo "One or more dependent jobs failed, was skipped, or was cancelled. All jobs must pass for the PR to be ready."
+          exit 1
+      - run: echo "OK"
+    
+  # This job installs Cargo Make and Cargo Nextest before running
+  # the CI workflow using Cargo Make. Most of the time, it should
+  # restore Cargo Make and other dependencies from cache.
+  build:
+    name: Validate Rust Build
+    uses: "wack/gh-actions/.github/workflows/validate.yml@trunk"

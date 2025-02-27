@@ -1,4 +1,4 @@
-use openapi::models::LoginSuccess;
+use multitool_sdk::models::LoginSuccess;
 use serde::{Deserialize, Serialize};
 
 use super::{DirectoryType, StaticFile};
@@ -26,26 +26,11 @@ pub struct UserCreds {
     // expiry: chrono::Datetime<Utc>
 }
 
-/// Add a convertion from the response type into our internal type.
-impl From<LoginSuccess> for UserCreds {
-    fn from(login: LoginSuccess) -> Self {
-        UserCreds {
-            email: login.email,
-            jwt: login.jwt,
-        }
+impl UserCreds {
+    pub fn new(email: String, jwt: String) -> Self {
+        Self { email, jwt }
     }
 }
-
-/*
-impl From<UserCreateSuccess> for UserCreds {
-    fn from(user_create: UserCreateSuccess) -> Self {
-        UserCreds {
-            email: user_create.email,
-            jwt: user_create.jwt,
-        }
-    }
-}
-*/
 
 impl StaticFile for Session {
     /// Session information is by nature ephemeral. It can be safely
