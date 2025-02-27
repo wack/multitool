@@ -1,37 +1,52 @@
-use miette::{IntoDiagnostic, Result, bail};
-use openapi::apis::applications_api::{get_application, list_applications};
-use openapi::apis::users_api::login;
-use openapi::apis::workspaces_api::list_workspaces;
-use openapi::models::{ApplicationDetails, LoginRequest, WorkspaceSummary};
-use uuid::Uuid;
+use std::ops::Deref;
+use std::sync::Arc;
 
 use super::{BoxedIngress, BoxedMonitor, BoxedPlatform};
 use crate::Cli;
 use crate::fs::UserCreds;
-
-use config::BackendConfig;
+use miette::{IntoDiagnostic, Result, bail};
+use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
+use multitool_sdk::models::{ApplicationDetails, LoginRequest, LoginSuccess, WorkspaceSummary};
+use uuid::Uuid;
 
 use crate::{
     artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation,
 };
 
-mod config;
+// WARNING: This code seriously needs to be cleaned up.
+// I wrote this in a sloppy fit while trying to yak shave
+// about a million other things.
 
 /// The BackendClient sends requests to the MultiTool SaaS
 /// backend. It wraps our generated HTTP bindings.
-#[derive(Clone)]
 pub struct BackendClient {
     /// We keep a copy of the OpenAPI config, which is used
     /// in each request.
-    conf: BackendConfig,
+    conf: Configuration,
+    client: ApiClient,
     // TODO: Add a method for updating the access token.
+}
+
+impl Clone for BackendClient {
+    fn clone(&self) -> Self {
+        let conf = self.conf.clone();
+        Self {
+            conf: conf.clone(),
+            client: ApiClient::new(Arc::new(conf)),
+        }
+    }
 }
 
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
     pub fn new(cli: &Cli) -> Self {
         let conf = BackendConfig::from(cli);
-        Self { conf }
+        let raw_conf: Configuration = conf.clone().into();
+        let client = ApiClient::new(Arc::new(raw_conf.clone()));
+        Self {
+            conf: raw_conf,
+            client,
+        }
     }
 
     /// Given the workspace name and the application name, fetch
@@ -62,7 +77,13 @@ impl BackendClient {
             email: email.to_owned(),
             password: password.to_owned(),
         };
-        let creds: UserCreds = login(&self.conf, req).await.into_diagnostic()?.into();
+        let creds: UserCreds = self
+            .client
+            .users_api()
+            .login(req)
+            .await
+            .into_diagnostic()?
+            .into();
 
         Ok(Session::User(creds))
     }
@@ -74,10 +95,17 @@ impl BackendClient {
 
     /// Return information about the workspace given its name.
     async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
-        let mut workspaces = list_workspaces(&self.conf, Some(name))
+        // let mut workspaces = list_workspaces(&self.conf, Some(name))
+        let mut workspaces: Vec<_> = self
+            .client
+            .workspaces_api()
+            .list_workspaces()
             .await
             .into_diagnostic()?
-            .workspaces;
+            .workspaces
+            .into_iter()
+            .filter(|workspace| workspace.display_name == name)
+            .collect();
 
         if workspaces.len() > 1 {
             bail!("More than one workspace with the given name found.");
@@ -89,6 +117,8 @@ impl BackendClient {
         }
     }
 
+    // TODO: Use a query parameter instead to return fewer results
+    //       isntead of having to filter by name.
     /// Given the id of the workspace containing the application, and the application's
     /// name, fetch the application's information.
     async fn get_application_by_name(
@@ -96,14 +126,16 @@ impl BackendClient {
         workspace_id: Uuid,
         name: &str,
     ) -> Result<ApplicationDetails> {
-        let mut applications: Vec<_> =
-            list_applications(&self.conf, workspace_id.to_string().as_ref())
-                .await
-                .into_diagnostic()?
-                .applications
-                .into_iter()
-                .filter(|elem| elem.display_name == name)
-                .collect();
+        let mut applications: Vec<_> = self
+            .client
+            .applications_api()
+            .list_applications(workspace_id.to_string().as_ref())
+            .await
+            .into_diagnostic()?
+            .applications
+            .into_iter()
+            .filter(|elem| elem.display_name == name)
+            .collect();
 
         let application = if applications.len() > 1 {
             bail!("More than one application with the given name found.");
@@ -114,13 +146,15 @@ impl BackendClient {
             applications.pop().unwrap()
         };
 
-        get_application(
-            &self.conf,
-            workspace_id.to_string().as_ref(),
-            application.id.to_string().as_ref(),
-        )
-        .await
-        .into_diagnostic()
+        self.client
+            .applications_api()
+            .get_application(
+                workspace_id.to_string().as_ref(),
+                application.id.to_string().as_ref(),
+            )
+            .await
+            .map(|success| *success.application)
+            .into_diagnostic()
     }
 }
 
@@ -130,6 +164,56 @@ pub struct ApplicationConfig {
     pub platform: BoxedPlatform,
     pub ingress: BoxedIngress,
     pub monitor: BoxedMonitor<CategoricalObservation<5, ResponseStatusCode>>,
+}
+
+#[derive(Clone)]
+pub(super) struct BackendConfig {
+    // TODO: Add configuration for a timeout.
+    // TODO: Add a way to update the access token.
+    conf: Configuration,
+}
+
+impl From<&Cli> for BackendConfig {
+    fn from(cli: &Cli) -> Self {
+        Self::new(cli.origin())
+    }
+}
+
+impl BackendConfig {
+    pub fn new<T: AsRef<str>>(origin: Option<T>) -> Self {
+        // • Convert the Option<T> to a String.
+        let origin = origin.map(|val| val.as_ref().to_owned());
+        // • Set up the default configuration values.
+        let mut conf = Configuration {
+            ..Configuration::default()
+        };
+        // • Override the default origin.
+        if let Some(origin) = origin {
+            conf.base_path = origin;
+        }
+        Self { conf }
+    }
+}
+
+impl From<BackendConfig> for Configuration {
+    fn from(value: BackendConfig) -> Self {
+        value.conf
+    }
+}
+
+impl Deref for BackendConfig {
+    type Target = Configuration;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conf
+    }
+}
+
+/// Add a convertion from the response type into our internal type.
+impl From<LoginSuccess> for UserCreds {
+    fn from(login: LoginSuccess) -> Self {
+        UserCreds::new(login.user.email, login.user.jwt)
+    }
 }
 
 #[cfg(test)]
