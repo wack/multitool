@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{DirectoryType, StaticFile};
@@ -17,17 +18,17 @@ pub enum Session {
 #[derive(Serialize, Deserialize)]
 pub struct UserCreds {
     /// The email of the user who logged in.
-    email: String,
+    pub email: String,
     /// The user's JWT, which is required for making HTTP requests
     /// to certain backend routes.
-    jwt: String,
-    // TODO(@RM): Add an expiration time to the result of login.
-    // expiry: chrono::Datetime<Utc>
+    pub jwt: String,
+    /// The expiry date of the JWT.
+    pub expiry: DateTime<Utc>,
 }
 
 impl UserCreds {
-    pub fn new(email: String, jwt: String) -> Self {
-        Self { email, jwt }
+    pub fn new(email: String, jwt: String, expiry: DateTime<Utc>) -> Self {
+        Self { email, jwt, expiry }
     }
 }
 

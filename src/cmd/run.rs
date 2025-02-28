@@ -26,7 +26,7 @@ pub struct Run {
 
 impl Run {
     pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Self {
-        let backend = BackendClient::new(cli);
+        let backend = BackendClient::new(cli).unwrap();
         Self {
             terminal,
             backend,

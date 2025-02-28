@@ -6,8 +6,9 @@ use super::{
     StatusCode,
 };
 use crate::Cli;
-use crate::fs::UserCreds;
+use crate::fs::{FileSystem, UserCreds};
 use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
+use chrono::{DateTime, Utc};
 use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
@@ -32,6 +33,7 @@ pub struct BackendClient {
     /// in each request.
     conf: Configuration,
     client: ApiClient,
+    jwt: Option<String>,
     // TODO: Add a method for updating the access token.
 }
 
@@ -41,20 +43,38 @@ impl Clone for BackendClient {
         Self {
             conf: conf.clone(),
             client: ApiClient::new(Arc::new(conf)),
+            jwt: self.jwt.clone(),
         }
     }
 }
 
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
-    pub fn new(cli: &Cli) -> Self {
-        let conf = BackendConfig::from(cli);
+    pub fn new(cli: &Cli) -> Result<Self> {
+        let fs = FileSystem::new().unwrap();
+
+        // Load the user's session information from the filesystem.
+        // TODO: How do we load the session file?
+        let creds: UserCreds = fs.load_file().ok().map(|session| session.user);
+
+        if creds.expiry >= Utc::now() {
+            bail!("Login token expired, please login again with \'multitool login\'.");
+        }
+
+        let conf = BackendConfig::new(cli.origin(), Some(creds.jwt));
+
         let raw_conf: Configuration = conf.clone().into();
+
         let client = ApiClient::new(Arc::new(raw_conf.clone()));
-        Self {
+        Ok(Self {
             conf: raw_conf,
             client,
-        }
+            jwt: Some(creds.jwt),
+        })
+    }
+
+    pub fn is_authenicated(&self) -> bool {
+        self.jwt.is_some()
     }
 
     pub(crate) async fn lock_state(
@@ -212,6 +232,9 @@ impl BackendClient {
 
     /// Return information about the workspace given its name.
     async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
+        if !self.is_authenicated() {
+            bail!("Please login before running this command.");
+        }
         // let mut workspaces = list_workspaces(&self.conf, Some(name))
         let mut workspaces: Vec<_> = self
             .client
@@ -243,6 +266,10 @@ impl BackendClient {
         workspace_id: Uuid,
         name: &str,
     ) -> Result<ApplicationDetails> {
+        if !self.is_authenicated() {
+            bail!("Please login before running this command.");
+        }
+
         let mut applications: Vec<_> = self
             .client
             .applications_api()
@@ -290,24 +317,16 @@ pub(super) struct BackendConfig {
     conf: Configuration,
 }
 
-impl From<&Cli> for BackendConfig {
-    fn from(cli: &Cli) -> Self {
-        Self::new(cli.origin())
-    }
-}
-
 impl BackendConfig {
-    pub fn new<T: AsRef<str>>(origin: Option<T>) -> Self {
+    pub fn new<T: AsRef<str>>(origin: Option<T>, jwt: Option<String>) -> Self {
         // • Convert the Option<T> to a String.
         let origin = origin.map(|val| val.as_ref().to_owned());
         // • Set up the default configuration values.
-        let mut conf = Configuration {
+        let conf = Configuration {
+            base_path: origin.unwrap(),
+            bearer_access_token: jwt,
             ..Configuration::default()
         };
-        // • Override the default origin.
-        if let Some(origin) = origin {
-            conf.base_path = origin;
-        }
         Self { conf }
     }
 }
@@ -329,7 +348,13 @@ impl Deref for BackendConfig {
 /// Add a convertion from the response type into our internal type.
 impl From<LoginSuccess> for UserCreds {
     fn from(login: LoginSuccess) -> Self {
-        UserCreds::new(login.user.email, login.user.jwt)
+        UserCreds::new(
+            login.user.email,
+            login.user.jwt,
+            DateTime::parse_from_rfc2822(&login.user.expires_at)
+                .expect("Failed to parse JWT expiry date.")
+                .into(),
+        )
     }
 }
 

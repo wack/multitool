@@ -13,7 +13,7 @@ pub struct Login {
 
 impl Login {
     pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Self {
-        let backend = BackendClient::new(cli);
+        let backend = BackendClient::new(cli).unwrap();
         Self {
             terminal,
             flags,

@@ -18,7 +18,7 @@ aws-sdk-apigateway = "1.50.0"
 aws-sdk-cloudwatch = "1.54.0"
 aws-sdk-lambda = "1.56.0"
 aws-smithy-types = "1.2.9"
-bigdecimal = { version = "0.4.7", features = [ "serde-json" ] }
+bigdecimal = { version = "0.4.7", features = ["serde-json"] }
 bon = "3.3.2"
 chrono = "0.4.38"
 clap = { version = "4.3", features = ["derive", "env"] }
@@ -34,6 +34,7 @@ mockall = "0.13.1"
 multitool-sdk = { git = "https://github.com/wack/multitool-rust-sdk.git", branch = "trunk" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_with = { version = "3.12", features = ["chrono"] }
 thiserror = "2.0"
 tokio = { version = "1.37.0", features = ["full"] }
 tokio-graceful-shutdown = "0.16.0"
