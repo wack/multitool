@@ -13,6 +13,8 @@ use crate::{
     artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation,
 };
 
+pub (crate) use deploy_meta::*;
+
 // WARNING: This code seriously needs to be cleaned up.
 // I wrote this in a sloppy fit while trying to yak shave
 // about a million other things.
@@ -47,6 +49,29 @@ impl BackendClient {
             conf: raw_conf,
             client,
         }
+    }
+
+    pub async fn lock_state(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<StateLock> {
+        // make a request to the backend to lock this particular
+        // state, then return the lease expiration time.
+        todo!()
+    }
+
+    pub async fn refresh_lease(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<StateLock> {
+        // make a request to the backend to lock this particular
+        // state, then return the lease expiration time.
+        todo!()
+    }
+
+    /// Release the lock on this state without completing it.
+    pub async fn abandon_state(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<()> {
+        todo!()
+    }
+
+    pub async fn mark_state_completed(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<()> {
+        // This state has been effected, so the lock
+        // can be released.
+        todo!()
     }
 
     /// Given the workspace name and the application name, fetch
@@ -215,6 +240,8 @@ impl From<LoginSuccess> for UserCreds {
         UserCreds::new(login.user.email, login.user.jwt)
     }
 }
+
+mod deploy_meta;
 
 #[cfg(test)]
 mod tests {
