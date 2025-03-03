@@ -33,7 +33,7 @@ pub struct BackendClient {
     /// in each request.
     conf: Configuration,
     client: ApiClient,
-    jwt: Option<String>,
+    session: Option<Session>,
     // TODO: Add a method for updating the access token.
 }
 
@@ -43,7 +43,7 @@ impl Clone for BackendClient {
         Self {
             conf: conf.clone(),
             client: ApiClient::new(Arc::new(conf)),
-            jwt: self.jwt.clone(),
+            session: self.session.clone(),
         }
     }
 }
@@ -54,14 +54,11 @@ impl BackendClient {
         let fs = FileSystem::new().unwrap();
 
         // Load the user's session information from the filesystem.
-        let session = fs.load_file(SessionFile).map(|session| session)?;
+        let session = fs.load_file(SessionFile).map(|session| session);
+
         let creds = match session {
             Session::User(creds) => creds,
         };
-
-        if creds.expiry >= Utc::now() {
-            bail!("Login token expired, please login again with \'multitool login\'.");
-        }
 
         let conf = BackendConfig::new(cli.origin(), Some(creds.jwt.clone()));
 
@@ -71,12 +68,12 @@ impl BackendClient {
         Ok(Self {
             conf: raw_conf,
             client,
-            jwt: Some(creds.jwt),
+            session: Some(session),
         })
     }
 
     pub fn is_authenicated(&self) -> bool {
-        self.jwt.is_some()
+        self.session.is_some()
     }
 
     pub(crate) async fn lock_state(
