@@ -1,27 +1,36 @@
 use async_trait::async_trait;
-use multitool_sdk::models::{self, ApplicationConfig, WebServiceConfig};
+use multitool_sdk::models::{self, ApplicationConfig, IngressConfig, WebServiceConfig};
 
-use crate::adapters::AwsApiGateway;
+use crate::adapters::ingresses::apig::AwsApiGateway;
 
 use super::BoxedIngress;
 
+/// Private trait we use locally to unify the API of the many
+/// helper structs.&
+/// This is basically the Visitor pattern, walking the config
+/// like a tree and incrementing building the data structure
+/// as we touch each node.
 #[async_trait]
-pub trait IngressBuilder {
+trait Builder {
     async fn build(&self) -> BoxedIngress;
 }
 
-struct ApplicationIngressBuilder {
-    config: ApplicationConfig,
+pub(crate) struct IngressBuilder {
+    config: IngressConfig,
 }
 
-impl ApplicationIngressBuilder {
-    fn new(config: ApplicationConfig) -> Self {
+impl IngressBuilder {
+    pub(crate) fn new(config: IngressConfig) -> Self {
         Self { config }
+    }
+
+    pub async fn build(&self) -> BoxedIngress {
+        Builder::build(self).await
     }
 }
 
 #[async_trait]
-impl IngressBuilder for ApplicationIngressBuilder {
+impl Builder for IngressBuilder {
     async fn build(&self) -> BoxedIngress {
         todo!("Not implemented since we change the API.");
         // let ApplicationConfig::ApplicationConfigOneOf(appconfig) = self.config.clone();
@@ -40,7 +49,7 @@ struct WebServiceIngressBuilder {
 }
 
 #[async_trait]
-impl IngressBuilder for WebServiceIngressBuilder {
+impl Builder for WebServiceIngressBuilder {
     async fn build(&self) -> BoxedIngress {
         todo!("Not implemented since we changed the API.");
         // match *self.config.aws.ingress {
@@ -65,7 +74,7 @@ impl AwsIngressBuilder {
 }
 
 #[async_trait]
-impl IngressBuilder for AwsIngressBuilder {
+impl Builder for AwsIngressBuilder {
     async fn build(&self) -> BoxedIngress {
         todo!("Not implemented since we changed the API.")
         // let gateway_name = self.config.rest_api_gateway_config.gateway_name.clone();
@@ -93,44 +102,31 @@ impl WebServiceIngressBuilder {
 mod tests {
     use crate::adapters::BoxedIngress;
     use miette::{IntoDiagnostic, Result};
-    use multitool_sdk::models::ApplicationConfig;
+    use multitool_sdk::models::IngressConfig;
     use serde_json::{Value, json};
 
-    use super::{ApplicationIngressBuilder, IngressBuilder};
+    use super::IngressBuilder;
 
-    fn application_json() -> Value {
+    fn ingress_json() -> Value {
         json!({
-        "web_service": {
-          "aws": {
-            "region": "us-east-2",
-            "ingress": {
-              "rest_api_gateway_config": {
-                "gateway_name": "multitool-gateway",
-                "stage_name": "dev",
-                "resource_path": "/",
-                "resource_method": "ANY"
-              }
-            },
-            "platform": {
-              "lambda": {
-                "name": "multitool-lambda"
-              }
-            },
-            "monitor": "cloudwatch_metrics"
+          "rest_api_gateway_config": {
+            "gateway_name": "multitool-gateway",
+            "stage_name": "dev",
+            "resource_path": "/",
+            "resource_method": "ANY"
           }
-        }})
+        })
     }
 
     #[tokio::test]
     #[ignore = "Not implemented since we changed the API."]
     async fn parse_app_config() -> Result<()> {
         // • Get the JSON describing this configuration.
-        let config_json = serde_json::to_string(&application_json()).into_diagnostic()?;
+        let config_json = serde_json::to_string(&ingress_json()).into_diagnostic()?;
         // • Marshal it into a type.
-        let config_object: ApplicationConfig =
-            serde_json::from_str(&config_json).into_diagnostic()?;
+        let config_object: IngressConfig = serde_json::from_str(&config_json).into_diagnostic()?;
         // • Try to parse it into a domain type.
-        let _: BoxedIngress = ApplicationIngressBuilder::new(config_object).build().await;
+        let _: BoxedIngress = IngressBuilder::new(config_object).build().await;
         Ok(())
     }
 }

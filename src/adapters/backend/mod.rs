@@ -1,7 +1,9 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use super::{BoxedIngress, BoxedMonitor, BoxedPlatform};
+use super::{
+    BoxedIngress, BoxedMonitor, BoxedPlatform, IngressBuilder, MonitorBuilder, PlatformBuilder,
+};
 use crate::Cli;
 use crate::fs::UserCreds;
 use miette::{IntoDiagnostic, Result, bail};
@@ -117,18 +119,23 @@ impl BackendClient {
     pub async fn fetch_config(
         &self,
         workspace: &str,
-        application: &str,
+        application_name: &str,
         artifact: LambdaZip,
     ) -> Result<ApplicationConfig> {
         // • First, we have to exchange the workspace name for it's id.
         let workspace = self.get_workspace_by_name(workspace).await?;
         // • Then, we can do the same with the application name.
-        let _application = self
-            .get_application_by_name(workspace.id, application)
+        let application = self
+            .get_application_by_name(workspace.id, application_name)
             .await?;
-        todo!(
-            "I haven't bothered implementing the code to configure the Ingress from the configuration data"
-        )
+        let ingress_conf = *application.ingress;
+        let platform_conf = *application.platform;
+        let monitor_conf = *application.monitor;
+        Ok(ApplicationConfig {
+            platform: PlatformBuilder::new(platform_conf, artifact).build().await,
+            ingress: IngressBuilder::new(ingress_conf).build().await,
+            monitor: MonitorBuilder::new(monitor_conf).build().await,
+        })
     }
 
     /// This fuction logs the user into the backend by exchanging these credentials
