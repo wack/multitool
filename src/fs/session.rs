@@ -32,12 +32,13 @@ impl UserCreds {
     }
 }
 
-impl StaticFile for Session {
+pub struct SessionFile;
+
+impl StaticFile for SessionFile {
     /// Session information is by nature ephemeral. It can be safely
     /// deleted. That's why its considered cache.
     const DIR: DirectoryType = DirectoryType::Cache;
     const NAME: &'static str = "session";
     const EXTENSION: &'static str = "json";
-
-    type Data = Self;
+    type Data = Session;
 }

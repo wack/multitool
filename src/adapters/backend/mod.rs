@@ -6,7 +6,7 @@ use super::{
     StatusCode,
 };
 use crate::Cli;
-use crate::fs::{FileSystem, UserCreds};
+use crate::fs::{FileSystem, SessionFile, UserCreds};
 use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
 use chrono::{DateTime, Utc};
 use miette::miette;
@@ -54,14 +54,16 @@ impl BackendClient {
         let fs = FileSystem::new().unwrap();
 
         // Load the user's session information from the filesystem.
-        // TODO: How do we load the session file?
-        let creds: UserCreds = fs.load_file().ok().map(|session| session.user);
+        let session = fs.load_file(SessionFile).map(|session| session)?;
+        let creds = match session {
+            Session::User(creds) => creds,
+        };
 
         if creds.expiry >= Utc::now() {
             bail!("Login token expired, please login again with \'multitool login\'.");
         }
 
-        let conf = BackendConfig::new(cli.origin(), Some(creds.jwt));
+        let conf = BackendConfig::new(cli.origin(), Some(creds.jwt.clone()));
 
         let raw_conf: Configuration = conf.clone().into();
 

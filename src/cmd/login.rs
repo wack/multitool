@@ -1,5 +1,5 @@
-use crate::Cli;
 use crate::adapters::BackendClient;
+use crate::{Cli, fs::SessionFile};
 use miette::Result;
 
 use crate::{Terminal, config::LoginSubcommand, fs::FileSystem};
@@ -40,7 +40,7 @@ impl Login {
         let creds = self.backend.exchange_creds(&email, &password).await?;
 
         // • Save the auth credentials to disk.
-        fs.save_file(&creds, &creds)?;
+        fs.save_file(&SessionFile, &creds)?;
 
         // • Print a success message.
         self.terminal.login_successful()
