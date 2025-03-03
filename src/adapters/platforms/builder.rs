@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use multitool_sdk::models::{self, ApplicationConfig, PlatformConfig, WebServiceConfig};
+use multitool_sdk::models::{PlatformConfig, PlatformConfigOneOfAwsLambda};
 
 use crate::artifacts::LambdaZip;
 
-use super::BoxedPlatform;
+use super::{BoxedPlatform, lambda::LambdaPlatform};
 
 #[async_trait]
 trait Builder {
@@ -28,98 +28,76 @@ impl PlatformBuilder {
 #[async_trait]
 impl Builder for PlatformBuilder {
     async fn build(self) -> BoxedPlatform {
-        todo!("Not implemented since we changed the API.");
-        // let ApplicationConfig::ApplicationConfigOneOf(appconfig) = self.config.clone();
-        // match *appconfig.web_service {
-        //     WebServiceConfig::WebServiceConfigOneOf(web_service_config) => {
-        //         WebServicePlatformBuilder::new(*web_service_config, self.artifact)
-        //             .build()
-        //             .await
-        //     }
-        // }
+        match self.config {
+            PlatformConfig::PlatformConfigOneOf(platform_conf) => {
+                AwsLambdaPlatformBuilder::new(*platform_conf.aws_lambda, self.artifact)
+                    .build()
+                    .await
+            }
+        }
     }
 }
 
-struct WebServicePlatformBuilder {
-    // config: models::WebServiceConfigOneOf,
+struct AwsLambdaPlatformBuilder {
+    config: PlatformConfigOneOfAwsLambda,
     artifact: LambdaZip,
 }
 
-#[async_trait]
-impl Builder for WebServicePlatformBuilder {
-    async fn build(self) -> BoxedPlatform {
-        todo!("Not implemented since we changed the API.");
-        // match *self.config.aws.platform {
-        //     models::AwsPlatformConfig::AwsPlatformConfigOneOf(ref aws_platform) => {
-        //         AwsPlatformBuilder::new(
-        //             self.config.aws.region.clone(),
-        //             *aws_platform.clone(),
-        //             self.artifact,
-        //         )
-        //         .build()
-        //         .await
-        //     }
-        // }
+impl AwsLambdaPlatformBuilder {
+    fn new(config: PlatformConfigOneOfAwsLambda, artifact: LambdaZip) -> Self {
+        Self { config, artifact }
     }
 }
 
-struct AwsPlatformBuilder {
-    // config: AwsPlatformConfigOneOf,
-    region: String,
-    artifact: LambdaZip,
-}
-
-impl AwsPlatformBuilder {
-    // fn new(region: String, config: AwsPlatformConfigOneOf, artifact: LambdaZip) -> Self {
-    //     Self {
-    //         config,
-    //         region,
-    //         artifact,
-    //     }
-    // }
-}
-
 #[async_trait]
-impl Builder for AwsPlatformBuilder {
+impl Builder for AwsLambdaPlatformBuilder {
     async fn build(self) -> BoxedPlatform {
-        todo!("Not implemented since we changed the API.");
-        // let lambda_name = self.config.lambda.name.clone();
-        // let platform = LambdaPlatform::builder()
-        //     .region(self.region.clone())
-        //     .name(lambda_name)
-        //     .artifact(self.artifact)
-        //     .build()
-        //     .await;
-        // Box::new(platform)
+        let lambda = LambdaPlatform::builder()
+            .name(self.config.name)
+            .region(self.config.region)
+            .artifact(self.artifact)
+            .build()
+            .await;
+        Box::new(lambda)
     }
-}
-
-impl WebServicePlatformBuilder {
-    // fn new(config: models::WebServiceConfigOneOf, artifact: LambdaZip) -> Self {
-    //     Self { config, artifact }
-    // }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{adapters::BoxedPlatform, artifacts::LambdaZip};
     use miette::{IntoDiagnostic, Result};
-    use multitool_sdk::models::PlatformConfig;
+    use multitool_sdk::models::{
+        PlatformConfig, PlatformConfigOneOf, PlatformConfigOneOfAwsLambda,
+    };
     use serde_json::{Value, json};
 
     use super::PlatformBuilder;
 
     fn platform_json() -> Value {
         json!({
-              "lambda": {
-                "name": "multitool-lambda"
+              "aws_lambda": {
+                "name": "my-lambda-name",
+                "region": "us-east-2"
               }
             }
         )
     }
 
     #[tokio::test]
-    #[ignore = "Not implemented since we changed the API."]
+    #[ignore = "not needed"]
+    async fn dump_json() -> Result<()> {
+        let platform = PlatformConfig::PlatformConfigOneOf(Box::new(PlatformConfigOneOf {
+            aws_lambda: Box::new(PlatformConfigOneOfAwsLambda::new(
+                "my-lambda-name".to_owned(),
+                "us-east-2".to_owned(),
+            )),
+        }));
+        println!("{}", serde_json::to_string_pretty(&platform).unwrap());
+        assert!(false);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn parse_app_config() -> Result<()> {
         // • Get the JSON describing this configuration.
         let config_json = serde_json::to_string(&platform_json()).into_diagnostic()?;
