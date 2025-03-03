@@ -13,6 +13,8 @@ use crate::{
     artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation,
 };
 
+pub(crate) use deploy_meta::*;
+
 // WARNING: This code seriously needs to be cleaned up.
 // I wrote this in a sloppy fit while trying to yak shave
 // about a million other things.
@@ -37,6 +39,9 @@ impl Clone for BackendClient {
     }
 }
 
+// TODO: Placeholder for the type of pending, unlocked state.
+type StateMessage = ();
+
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
     pub fn new(cli: &Cli) -> Self {
@@ -47,6 +52,64 @@ impl BackendClient {
             conf: raw_conf,
             client,
         }
+    }
+
+    pub async fn lock_state(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: StateId,
+    ) -> Result<StateLock> {
+        // make a request to the backend to lock this particular
+        // state, then return the lease expiration time.
+        todo!()
+    }
+
+    pub async fn refresh_lease(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: StateId,
+    ) -> Result<StateLock> {
+        // make a request to the backend to lock this particular
+        // state, then return the lease expiration time.
+        todo!()
+    }
+
+    /// Release the lock on this state without completing it.
+    pub async fn abandon_state(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<()> {
+        todo!()
+    }
+
+    /// Poll the backend for in-progress states that have not yet been
+    /// locked/claimed.
+    pub async fn poll_for_state(&self, _meta: &DeploymentMetadata) -> Result<Vec<StateMessage>> {
+        todo!()
+    }
+
+    pub async fn mark_state_completed(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: StateId,
+    ) -> Result<()> {
+        // This state has been effected, so the lock
+        // can be released.
+        todo!()
+    }
+
+    pub async fn new_deployment(
+        &self,
+        workspace_id: WorkspaceId,
+        application_id: ApplicationId,
+    ) -> Result<DeploymentId> {
+        let response = self
+            .client
+            .deployments_api()
+            .create_deployment(
+                workspace_id.to_string().as_ref(),
+                application_id.to_string().as_ref(),
+            )
+            .await
+            .into_diagnostic()?;
+        Ok(response.deployment.id)
     }
 
     /// Given the workspace name and the application name, fetch
@@ -99,7 +162,7 @@ impl BackendClient {
         let mut workspaces: Vec<_> = self
             .client
             .workspaces_api()
-            .list_workspaces()
+            .list_workspaces(Some(name))
             .await
             .into_diagnostic()?
             .workspaces
@@ -215,6 +278,8 @@ impl From<LoginSuccess> for UserCreds {
         UserCreds::new(login.user.email, login.user.jwt)
     }
 }
+
+mod deploy_meta;
 
 #[cfg(test)]
 mod tests {

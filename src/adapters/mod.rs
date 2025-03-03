@@ -1,4 +1,5 @@
 pub use backend::{ApplicationConfig, BackendClient};
+pub(crate) use backend::{ApplicationId, DeploymentId, DeploymentMetadata, StateId, WorkspaceId};
 
 pub use ingresses::*;
 pub use monitors::*;

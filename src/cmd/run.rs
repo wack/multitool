@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::adapters::ApplicationConfig;
+use crate::adapters::{ApplicationConfig, DeploymentMetadata};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     Cli, ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
-use miette::Result;
+use aws_sdk_apigateway::types::Deployment;
+use miette::{IntoDiagnostic, Result};
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
 
@@ -41,7 +42,7 @@ impl Run {
         // • First, we have to load the artifact.
         //   This lets us fail fast in the case where the artifact
         //   doesn't exist or we don't have permission to read the file.
-        let artifact = LambdaZip::load(self.artifact_path).await?;
+        let artifact = LambdaZip::load(&self.artifact_path).await?;
         // • Now, we have to load the application's configuration
         //   from the backend. We have the name of the workspace and
         //   application, but we need to look up the details.
@@ -54,10 +55,20 @@ impl Run {
             platform,
             monitor,
         } = conf;
+
+        // Create a new deployment.
+        let metadata = self.create_deployment().await?;
+
         // Build the ControllerSubsystem using the boxed objects.
-        let controller = ControllerSubsystem::new(self.backend, monitor, ingress, platform);
-        //   …but before we do, let's capture the shutdown
-        //   signal from the OS.
+        let controller = ControllerSubsystem::builder()
+            .backend(self.backend)
+            .monitor(monitor)
+            .ingress(ingress)
+            .platform(platform)
+            .meta(metadata)
+            .build();
+
+        // Let's capture the shutdown signal from the OS.
         Toplevel::new(|s| async move {
             // • Start the action listener subsystem.
             s.start(SubsystemBuilder::new(
@@ -69,5 +80,25 @@ impl Run {
         .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
         .await
         .map_err(Into::into)
+    }
+
+    async fn create_deployment(&self) -> Result<DeploymentMetadata> {
+        // TODO: This `.parse().into_diagnostic()?` code is awful. Once
+        //       we settle on the type of WorkspaceId and ApplicationId,
+        //       we can clean it up instead of using the raw types.
+        let deployment_id = self
+            .backend
+            .new_deployment(
+                self.workspace.parse().into_diagnostic()?,
+                self.application.parse().into_diagnostic()?,
+            )
+            .await?;
+
+        let meta = DeploymentMetadata::builder()
+            .workspace_id(self.workspace.parse().into_diagnostic()?)
+            .application_id(self.application.parse().into_diagnostic()?)
+            .deployment_id(deployment_id)
+            .build();
+        Ok(meta)
     }
 }
