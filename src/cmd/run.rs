@@ -1,12 +1,10 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::adapters::{ApplicationConfig, DeploymentMetadata};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     Cli, ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
-use aws_sdk_apigateway::types::Deployment;
 use miette::{IntoDiagnostic, Result};
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
