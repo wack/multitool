@@ -100,7 +100,16 @@ impl BackendClient {
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
     ) -> Result<DeploymentId> {
-        todo!()
+        let response = self
+            .client
+            .deployments_api()
+            .create_deployment(
+                workspace_id.to_string().as_ref(),
+                application_id.to_string().as_ref(),
+            )
+            .await
+            .into_diagnostic()?;
+        Ok(response.deployment.id)
     }
 
     /// Given the workspace name and the application name, fetch
@@ -153,7 +162,7 @@ impl BackendClient {
         let mut workspaces: Vec<_> = self
             .client
             .workspaces_api()
-            .list_workspaces()
+            .list_workspaces(Some(name))
             .await
             .into_diagnostic()?
             .workspaces
