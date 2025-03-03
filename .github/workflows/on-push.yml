@@ -25,3 +25,7 @@ jobs:
   build:
     name: Validate Rust Build
     uses: "wack/gh-actions/.github/workflows/validate.yml@trunk"
+    permissions:
+      id-token: "write"
+      contents: "read"
+      attestations: "write"
