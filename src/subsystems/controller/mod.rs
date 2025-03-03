@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bon::bon;
 use miette::{Report, Result, bail};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 
-use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform};
+use crate::adapters::{
+    BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, DeploymentMetadata,
+};
 use crate::stats::Observation;
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
 use crate::{IngressSubsystem, PlatformSubsystem};
@@ -26,20 +29,27 @@ pub struct ControllerSubsystem<T: Observation> {
     monitor: BoxedMonitor<T>,
     ingress: BoxedIngress,
     platform: BoxedPlatform,
+    /// This field contains context about the current deployment
+    /// and is frequently passed to the backend.
+    meta: DeploymentMetadata,
 }
 
+#[bon]
 impl<T: Observation> ControllerSubsystem<T> {
+    #[builder]
     pub fn new(
         backend: BackendClient,
         monitor: BoxedMonitor<T>,
         ingress: BoxedIngress,
         platform: BoxedPlatform,
+        meta: DeploymentMetadata,
     ) -> Self {
         Self {
             backend,
             monitor,
             ingress,
             platform,
+            meta,
         }
     }
 }
@@ -70,6 +80,7 @@ impl<T: Observation + Clone + Send + Sync + Unpin + 'static> IntoSubsystem<Repor
             .observations(observation_stream)
             .platform(platform_handle)
             .ingress(ingress_handle)
+            .meta(self.meta)
             .build();
 
         // • Start the ingress subsystem.

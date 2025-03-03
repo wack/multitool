@@ -13,7 +13,7 @@ use crate::{
     artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation,
 };
 
-pub (crate) use deploy_meta::*;
+pub(crate) use deploy_meta::*;
 
 // WARNING: This code seriously needs to be cleaned up.
 // I wrote this in a sloppy fit while trying to yak shave
@@ -39,6 +39,9 @@ impl Clone for BackendClient {
     }
 }
 
+// TODO: Placeholder for the type of pending, unlocked state.
+type StateMessage = ();
+
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
     pub fn new(cli: &Cli) -> Self {
@@ -51,13 +54,21 @@ impl BackendClient {
         }
     }
 
-    pub async fn lock_state(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<StateLock> {
+    pub async fn lock_state(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: StateId,
+    ) -> Result<StateLock> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
         todo!()
     }
 
-    pub async fn refresh_lease(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<StateLock> {
+    pub async fn refresh_lease(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: StateId,
+    ) -> Result<StateLock> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
         todo!()
@@ -68,9 +79,27 @@ impl BackendClient {
         todo!()
     }
 
-    pub async fn mark_state_completed(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<()> {
+    /// Poll the backend for in-progress states that have not yet been
+    /// locked/claimed.
+    pub async fn poll_for_state(&self, _meta: &DeploymentMetadata) -> Result<Vec<StateMessage>> {
+        todo!()
+    }
+
+    pub async fn mark_state_completed(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: StateId,
+    ) -> Result<()> {
         // This state has been effected, so the lock
         // can be released.
+        todo!()
+    }
+
+    pub async fn new_deployment(
+        &self,
+        workspace_id: WorkspaceId,
+        application_id: ApplicationId,
+    ) -> Result<DeploymentId> {
         todo!()
     }
 
