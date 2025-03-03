@@ -1,10 +1,17 @@
 use async_trait::async_trait;
-use tokio::{select, sync::mpsc::{self, Receiver, Sender}};
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 use miette::{Report, Result};
-use tokio::time::{Interval, Duration, interval};
+use tokio::time::{Duration, Interval, interval};
+use tokio::{
+    select,
+    sync::mpsc::{self, Receiver, Sender},
+};
+use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
-use crate::{adapters::{BackendClient, DeploymentMetadata, StateId}, subsystems::ShutdownResult, Shutdownable};
+use crate::{
+    Shutdownable,
+    adapters::{BackendClient, DeploymentMetadata, StateId},
+    subsystems::ShutdownResult,
+};
 
 pub(super) struct LeaseRenewer {
     meta: DeploymentMetadata,
@@ -18,17 +25,23 @@ pub(super) struct LeaseRenewer {
 }
 
 impl LeaseRenewer {
-    pub(super) fn new(meta: DeploymentMetadata, state_id: StateId, backend: BackendClient, period: Duration) -> Self {
+    pub(super) fn new(
+        meta: DeploymentMetadata,
+        state_id: StateId,
+        backend: BackendClient,
+        period: Duration,
+    ) -> Self {
         let (done_sender, task_done) = mpsc::channel(1);
         let timer = interval(period);
         Self {
-            meta, state_id, backend,
+            meta,
+            state_id,
+            backend,
             timer,
             task_done,
             done_sender: Some(done_sender),
         }
     }
-    
 }
 
 impl LeaseRenewer {
@@ -55,7 +68,7 @@ impl IntoSubsystem<Report> for LeaseRenewer {
                     // the lock on the state, since we just marked it as completed
                     // instead.
                     return self.backend.mark_state_completed(&self.meta, self.state_id).await;
-                } 
+                }
                 // Ding! Renew the lease.
                 _ = self.timer.tick() => {
                     self.backend.refresh_lease(&self.meta, self.state_id).await?;

@@ -1,15 +1,26 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use derive_getters::Getters;
-use tokio::{select, sync::{mpsc::{self, Receiver, Sender}, oneshot}, time::interval};
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use miette::{Report, Result};
+use tokio::{
+    select,
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        oneshot,
+    },
+    time::interval,
+};
+use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 
-use crate::{adapters::{BackendClient, DeploymentMetadata}, subsystems::{relay::renewer::LeaseRenewer, ShutdownResult}, Shutdownable};
+use crate::{
+    Shutdownable,
+    adapters::{BackendClient, DeploymentMetadata},
+    subsystems::{ShutdownResult, relay::renewer::LeaseRenewer},
+};
 
 /// If you're going to pick an arbitrary number, you could do
 /// worse than picking a power of 2.
-const DEFAULT_STREAM_SIZE: usize = 1<<5;
+const DEFAULT_STREAM_SIZE: usize = 1 << 5;
 
 /// `LeaseRequest` describes a state which we're like to request
 /// a lease on.
@@ -42,9 +53,19 @@ pub(super) struct LeaseManagementSubsystem {
 }
 
 impl LeaseManagementSubsystem {
-    pub fn new(backend: BackendClient, inbox: Receiver<LeaseRequest>, meta: DeploymentMetadata) -> Self {
+    pub fn new(
+        backend: BackendClient,
+        inbox: Receiver<LeaseRequest>,
+        meta: DeploymentMetadata,
+    ) -> Self {
         let (outbox, out_stream) = mpsc::channel(DEFAULT_STREAM_SIZE);
-        Self { backend, inbox, outbox, out_stream: Some(out_stream), meta }
+        Self {
+            backend,
+            inbox,
+            outbox,
+            out_stream: Some(out_stream),
+            meta,
+        }
     }
 
     pub fn take_stream(&mut self) -> Option<Receiver<LeasedState>> {
@@ -65,7 +86,7 @@ impl LeaseManagementSubsystem {
 impl IntoSubsystem<Report> for LeaseManagementSubsystem {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         loop {
-            select!  {
+            select! {
                 // Wait for shutdown
                 _ = subsys.on_shutdown_requested() => {
                     return self.shutdown().await;
@@ -88,7 +109,7 @@ impl IntoSubsystem<Report> for LeaseManagementSubsystem {
                             );
                             let renewer_handle = lease_renewer.take().unwrap();
                             subsys.start(SubsystemBuilder::new("foobar", lease_renewer.into_subsystem()));
-                            self.outbox.send(LeasedState{ 
+                            self.outbox.send(LeasedState{
                                 task_done: renewer_handle,
                             }).await.unwrap();
                         }
@@ -97,7 +118,7 @@ impl IntoSubsystem<Report> for LeaseManagementSubsystem {
                         return self.shutdown().await;
                     }
                 }
-                
+
             }
         }
     }
