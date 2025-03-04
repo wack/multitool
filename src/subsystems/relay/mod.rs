@@ -13,7 +13,7 @@ use crate::{
 
 pub const RELAY_SUBSYSTEM_NAME: &str = "relay";
 
-use lock_mgmt::LockManagementSubsystem;
+use lock_mgmt::LockManager;
 use poll_state::StatePoller;
 
 /// The RelaySubsystem is responsible for sending messages
@@ -84,7 +84,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         // Kick off a task to poll the backend for new states.
         let mut poller = self.new_poller();
-        let state_stream = match poller.take_stream() {
+        let mut state_stream = match poller.take_stream() {
             None => bail!(
                 "Unreachable. Internal state corrupted on the relay subsystem. Please report this as a bug."
             ),
@@ -117,9 +117,29 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         subsys.request_shutdown();
                     }
                 }
+                // • We also need to poll the backend for new states.
+                elem = state_stream.recv() => {
+                    if let Some(state) = elem {
+                        // When we receive a new state, we attempt to lock it.
+                        let mut lock_manager = LockManager::builder()
+                        .backend(self.backend.clone())
+                        .metadata(self.meta.clone())
+                        .state(state)
+                        .build();
+                        // The done_callback tells the LockManager not to bother
+                        // refreshing the lock, and to tell the backend that
+                        // the state has been completed.
+                        let done_callback = lock_manager.take();
+                    } else {
+                        // The stream has been closed, so we should shutdown.
+                        subsys.request_shutdown();
+                    }
+                }
+
+                //   We may or may not be successful at acquiring the lock.
             }
         }
-        // • We also need to poll the backend for new states.
+
         //   Each new state results in a sequence of calls to the Platform
         //   and Ingress. Once those complete, we send an update to the backend.
     }

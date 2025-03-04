@@ -1,5 +1,7 @@
+use crate::adapters::LockedState;
 use async_trait::async_trait;
 use miette::{Report, Result};
+use multitool_sdk::models::DeploymentState;
 use tokio::time::{Duration, Interval, interval};
 use tokio::{
     select,
@@ -9,25 +11,25 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::{
     Shutdownable,
-    adapters::{BackendClient, DeploymentMetadata, StateId},
+    adapters::{BackendClient, DeploymentMetadata},
     subsystems::ShutdownResult,
 };
 
 pub(super) struct LeaseRenewer {
     meta: DeploymentMetadata,
-    state_id: StateId,
+    state: DeploymentState,
     timer: Interval,
     backend: BackendClient,
     task_done: Receiver<()>,
     /// We give this to the caller to signal when they're
     /// done with the task.
-    done_sender: Option<Sender<()>>,
+    done_sender: Option<Sender<LockedState>>,
 }
 
 impl LeaseRenewer {
     pub(super) fn new(
         meta: DeploymentMetadata,
-        state_id: StateId,
+        state: DeploymentState,
         backend: BackendClient,
         period: Duration,
     ) -> Self {
@@ -35,7 +37,7 @@ impl LeaseRenewer {
         let timer = interval(period);
         Self {
             meta,
-            state_id,
+            state,
             backend,
             timer,
             task_done,
@@ -45,7 +47,7 @@ impl LeaseRenewer {
 }
 
 impl LeaseRenewer {
-    pub fn take(&mut self) -> Option<Sender<(())>> {
+    pub fn take(&mut self) -> Option<Sender<LockedState>> {
         self.done_sender.take()
     }
 }

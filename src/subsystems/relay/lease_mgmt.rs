@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use derive_getters::Getters;
 use miette::{Report, Result};
+use multitool_sdk::models::DeploymentState;
 use tokio::{
     select,
     sync::{
@@ -14,7 +15,7 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 
 use crate::{
     Shutdownable,
-    adapters::{BackendClient, DeploymentMetadata},
+    adapters::{BackendClient, DeploymentMetadata, LockedState},
     subsystems::{ShutdownResult, relay::renewer::LeaseRenewer},
 };
 
@@ -22,32 +23,13 @@ use crate::{
 /// worse than picking a power of 2.
 const DEFAULT_STREAM_SIZE: usize = 1 << 5;
 
-/// `LeaseRequest` describes a state which we're like to request
-/// a lease on.
-struct LeaseRequest {
-    state_id: u64,
-}
-
-/// A `Lease` describes a leased state and its expiry.
-struct Lease {
-    expiry: DateTime<Utc>,
-}
-
-/// `LeaseState` represents a state we've successfully leased from
-/// the backend. We want to effect this state by applying it.
-struct LeasedState {
-    /// When the state has been effected, release the lock we have
-    /// on the state.
-    task_done: mpsc::Sender<()>,
-}
-
 pub(super) struct LeaseManagementSubsystem {
     backend: BackendClient,
     /// Incoming requests for leases.
-    inbox: Receiver<LeaseRequest>,
+    inbox: Receiver<DeploymentState>,
     /// Stream out the list of leased items.
-    outbox: Sender<LeasedState>,
-    out_stream: Option<Receiver<LeasedState>>,
+    outbox: Sender<LockedState>,
+    out_stream: Option<Receiver<LockedState>>,
     // Hold onto the deployment ID, application id, and workspace ID.
     meta: DeploymentMetadata,
 }
@@ -55,7 +37,7 @@ pub(super) struct LeaseManagementSubsystem {
 impl LeaseManagementSubsystem {
     pub fn new(
         backend: BackendClient,
-        inbox: Receiver<LeaseRequest>,
+        inbox: Receiver<DeploymentState>,
         meta: DeploymentMetadata,
     ) -> Self {
         let (outbox, out_stream) = mpsc::channel(DEFAULT_STREAM_SIZE);
@@ -68,7 +50,7 @@ impl LeaseManagementSubsystem {
         }
     }
 
-    pub fn take_stream(&mut self) -> Option<Receiver<LeasedState>> {
+    pub fn take_stream(&mut self) -> Option<Receiver<LockedState>> {
         self.out_stream.take()
     }
 }
@@ -96,20 +78,20 @@ impl IntoSubsystem<Report> for LeaseManagementSubsystem {
                     if let Some(req) =  req {
                         // When one comes in, lease the state, then
                         // spawn a task to renew the lease until its completed.
-                        if let Ok(lock) = self.backend.lock_state(&self.meta, req.state_id).await {
+                        if let Ok(lock) = self.backend.lock_state(&self.meta, req).await {
                             // Spawn a thread that will periodically renew the lease.
                             // ...and listen for the shutdown signal.
                             // Attempt to renew the lease every so often, with half
                             // the time left in the lease so we don't cut it close.
                             let period = *lock.period()/2;
                             let mut lease_renewer = LeaseRenewer::new(self.meta.clone(),
-                                req.state_id.clone(),
+                                req,
                                 self.backend.clone(),
                                 period,
                             );
                             let renewer_handle = lease_renewer.take().unwrap();
                             subsys.start(SubsystemBuilder::new("foobar", lease_renewer.into_subsystem()));
-                            self.outbox.send(LeasedState{
+                            self.outbox.send(LockedState{
                                 task_done: renewer_handle,
                             }).await.unwrap();
                         }

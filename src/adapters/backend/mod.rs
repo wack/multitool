@@ -11,6 +11,7 @@ use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
 use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
+use multitool_sdk::models::DeploymentState;
 use multitool_sdk::models::{
     ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest,
     CreateResponseCodeMetricsSuccess, LoginRequest, LoginSuccess, WorkspaceSummary,
@@ -62,8 +63,8 @@ impl BackendClient {
     pub async fn lock_state(
         &self,
         _meta: &DeploymentMetadata,
-        _state: StateId,
-    ) -> Result<StateLock> {
+        _state: DeploymentState,
+    ) -> Result<LockedState> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
         todo!()
@@ -72,15 +73,19 @@ impl BackendClient {
     pub async fn refresh_lease(
         &self,
         _meta: &DeploymentMetadata,
-        _state: StateId,
-    ) -> Result<StateLock> {
+        _state: DeploymentState,
+    ) -> Result<LockedState> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
         todo!()
     }
 
     /// Release the lock on this state without completing it.
-    pub async fn abandon_state(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<()> {
+    pub async fn abandon_state(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: DeploymentState,
+    ) -> Result<()> {
         todo!()
     }
 
@@ -93,7 +98,7 @@ impl BackendClient {
     pub async fn mark_state_completed(
         &self,
         _meta: &DeploymentMetadata,
-        _state: StateId,
+        _state: DeploymentState,
     ) -> Result<()> {
         // This state has been effected, so the lock
         // can be released.
