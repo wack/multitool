@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use bon::bon;
 
 use crate::{
     Shutdownable,
@@ -21,16 +22,20 @@ pub struct CloudWatch {
     client: AwsClient,
     gateway_name: String,
     stage_name: String,
+    region: String,
 }
 
+#[bon]
 impl CloudWatch {
-    pub async fn new(gateway_name: &str, stage_name: &str) -> Self {
+    #[builder]
+    pub async fn new(gateway_name: String, stage_name: String, region: String) -> Self {
         let config = load_default_aws_config().await;
         let client = aws_sdk_cloudwatch::Client::new(config);
         Self {
             client,
-            gateway_name: gateway_name.to_owned(),
-            stage_name: stage_name.to_owned(),
+            region,
+            gateway_name,
+            stage_name,
         }
     }
 }
@@ -91,7 +96,6 @@ impl CloudWatch {
         // 3. As a sum
         // 4. Over a 60s period
         // 5. Over the given window (5 mins, by default)
-
         let query = MetricDataQuery::builder()
             .id(metric_name.to_id())
             .metric_stat(

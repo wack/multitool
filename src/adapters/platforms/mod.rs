@@ -2,11 +2,10 @@ use async_trait::async_trait;
 use miette::Result;
 use mockall::automock;
 
-pub use builder::PlatformBuilder;
-pub use lambda::LambdaPlatform;
-
 use crate::{Shutdownable, subsystems::ShutdownResult};
 pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
+
+pub(crate) use builder::PlatformBuilder;
 
 #[automock]
 #[async_trait]
