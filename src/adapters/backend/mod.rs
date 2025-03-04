@@ -11,6 +11,7 @@ use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
 use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
+use multitool_sdk::models::DeploymentState;
 use multitool_sdk::models::{
     ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest,
     CreateResponseCodeMetricsSuccess, LoginRequest, LoginSuccess, WorkspaceSummary,
@@ -44,9 +45,6 @@ impl Clone for BackendClient {
     }
 }
 
-// TODO: Placeholder for the type of pending, unlocked state.
-type StateMessage = ();
-
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
     pub fn new(cli: &Cli) -> Self {
@@ -59,41 +57,48 @@ impl BackendClient {
         }
     }
 
-    pub async fn lock_state(
+    pub(crate) async fn lock_state(
         &self,
         _meta: &DeploymentMetadata,
-        _state: StateId,
-    ) -> Result<StateLock> {
+        _state: &DeploymentState,
+    ) -> Result<LockedState> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
         todo!()
     }
 
-    pub async fn refresh_lease(
+    pub(crate) async fn refresh_lock(
         &self,
         _meta: &DeploymentMetadata,
-        _state: StateId,
-    ) -> Result<StateLock> {
+        _state: &LockedState,
+    ) -> Result<LockedState> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
         todo!()
     }
 
     /// Release the lock on this state without completing it.
-    pub async fn abandon_state(&self, _meta: &DeploymentMetadata, _state: StateId) -> Result<()> {
+    pub(crate) async fn abandon_lock(
+        &self,
+        _meta: &DeploymentMetadata,
+        _state: &LockedState,
+    ) -> Result<()> {
         todo!()
     }
 
     /// Poll the backend for in-progress states that have not yet been
     /// locked/claimed.
-    pub async fn poll_for_state(&self, _meta: &DeploymentMetadata) -> Result<Vec<StateMessage>> {
+    pub(crate) async fn poll_for_state(
+        &self,
+        _meta: &DeploymentMetadata,
+    ) -> Result<Vec<DeploymentState>> {
         todo!()
     }
 
-    pub async fn mark_state_completed(
+    pub(crate) async fn mark_state_completed(
         &self,
         _meta: &DeploymentMetadata,
-        _state: StateId,
+        _state: &LockedState,
     ) -> Result<()> {
         // This state has been effected, so the lock
         // can be released.
@@ -162,7 +167,7 @@ impl BackendClient {
     }
 
     /// Upload a batch of observations to the backend.
-    pub async fn upload_observations(
+    pub(crate) async fn upload_observations(
         &self,
         meta: &DeploymentMetadata,
         data: Vec<StatusCode>,

@@ -66,9 +66,7 @@ impl Builder for AwsLambdaPlatformBuilder {
 mod tests {
     use crate::{adapters::BoxedPlatform, artifacts::LambdaZip};
     use miette::{IntoDiagnostic, Result};
-    use multitool_sdk::models::{
-        PlatformConfig, PlatformConfigOneOf, PlatformConfigOneOfAwsLambda,
-    };
+    use multitool_sdk::models::PlatformConfig;
     use serde_json::{Value, json};
 
     use super::PlatformBuilder;

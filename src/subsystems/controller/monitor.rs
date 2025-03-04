@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bon::{bon, builder};
+use bon::bon;
 use futures_util::TryStreamExt;
 use miette::{Report, Result};
 use tokio::{

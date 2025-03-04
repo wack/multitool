@@ -1,13 +1,14 @@
 use async_trait::async_trait;
-use bon::{bon, builder};
+use bon::bon;
 use miette::{IntoDiagnostic, Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::{
     Shutdownable,
-    adapters::{BackendClient, DeploymentMetadata, StateId},
+    adapters::{BackendClient, DeploymentMetadata},
     subsystems::ShutdownResult,
 };
+use multitool_sdk::models::DeploymentState;
 use tokio::{
     select,
     sync::mpsc::{self, Receiver, Sender},
@@ -31,14 +32,11 @@ pub struct StatePoller {
     /// context we pass to the backend on each request.
     meta: DeploymentMetadata,
     /// This is where we write new messages when we have them.
-    outbox: Sender<StateMessage>,
+    outbox: Sender<DeploymentState>,
     /// We give this to the caller so it can stream new
     /// messages.
-    stream: Option<Receiver<StateMessage>>,
+    stream: Option<Receiver<DeploymentState>>,
 }
-
-/// Placeholder for the type of pending unlocked state.
-type StateMessage = ();
 
 #[bon]
 impl StatePoller {
@@ -60,7 +58,7 @@ impl StatePoller {
         }
     }
 
-    pub fn take_stream(&mut self) -> Option<Receiver<StateMessage>> {
+    pub fn take_stream(&mut self) -> Option<Receiver<DeploymentState>> {
         self.stream.take()
     }
 }

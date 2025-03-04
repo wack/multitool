@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use mail::{DeployParams, PlatformMail, PromoteParams, YankParams};
-use miette::{IntoDiagnostic, Report, Result};
+use miette::{Report, Result};
 use tokio::{
     select,
-    sync::mpsc::{self, Receiver, Sender, channel},
-    task::JoinHandle,
+    sync::mpsc::{self, Receiver, channel},
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
