@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result, bail};
@@ -8,7 +6,6 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use crate::adapters::{
     BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, DeploymentMetadata,
 };
-use crate::stats::Observation;
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
 use crate::{IngressSubsystem, PlatformSubsystem};
 
@@ -24,9 +21,9 @@ pub const CONTROLLER_SUBSYSTEM_NAME: &str = "controller";
 /// It sends new monitoring observations, asks for instructions to perform
 /// on cloud resources, and reports the state of those instructions back
 /// to the backend.
-pub struct ControllerSubsystem<T: Observation> {
+pub struct ControllerSubsystem {
     backend: BackendClient,
-    monitor: BoxedMonitor<T>,
+    monitor: BoxedMonitor,
     ingress: BoxedIngress,
     platform: BoxedPlatform,
     /// This field contains context about the current deployment
@@ -35,11 +32,11 @@ pub struct ControllerSubsystem<T: Observation> {
 }
 
 #[bon]
-impl<T: Observation> ControllerSubsystem<T> {
+impl ControllerSubsystem {
     #[builder]
     pub fn new(
         backend: BackendClient,
-        monitor: BoxedMonitor<T>,
+        monitor: BoxedMonitor,
         ingress: BoxedIngress,
         platform: BoxedPlatform,
         meta: DeploymentMetadata,
@@ -55,9 +52,7 @@ impl<T: Observation> ControllerSubsystem<T> {
 }
 
 #[async_trait]
-impl<T: Observation + Clone + Send + Sync + Unpin + 'static> IntoSubsystem<Report>
-    for ControllerSubsystem<T>
-{
+impl IntoSubsystem<Report> for ControllerSubsystem {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
         let ingress_subsystem = IngressSubsystem::new(self.ingress);
         let ingress_handle = ingress_subsystem.handle();
@@ -125,5 +120,5 @@ mod tests {
     use static_assertions::assert_impl_all;
     use tokio_graceful_shutdown::IntoSubsystem;
 
-    assert_impl_all!(ControllerSubsystem<CategoricalObservation<5, ResponseStatusCode>>: IntoSubsystem<Report>);
+    assert_impl_all!(ControllerSubsystem: IntoSubsystem<Report>);
 }

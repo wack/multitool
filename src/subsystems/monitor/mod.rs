@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::adapters::BoxedMonitor;
+use crate::adapters::{BoxedMonitor, StatusCode};
 use crate::stats::Observation;
 use async_trait::async_trait;
 use mail::{MonitorHandle, MonitorMail, QueryParams};
@@ -18,14 +18,14 @@ pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
 const MONITOR_MAILBOX_SIZE: usize = 1 << 4;
 
 pub struct MonitorSubsystem<T: Observation> {
-    monitor: BoxedMonitor<T>,
+    monitor: BoxedMonitor,
     handle: MonitorHandle<T>,
     mailbox: Receiver<MonitorMail<T>>,
     shutdown: Receiver<()>,
 }
 
-impl<T: Observation + fmt::Debug + Send + 'static> MonitorSubsystem<T> {
-    pub fn new(monitor: BoxedMonitor<T>) -> Self {
+impl MonitorSubsystem<StatusCode> {
+    pub fn new(monitor: BoxedMonitor) -> Self {
         let (shutdown_trigger, shutdown_signal) = channel(1);
         let (mail_outbox, mailbox) = channel(MONITOR_MAILBOX_SIZE);
         let shutdown = Arc::new(shutdown_trigger);
@@ -39,18 +39,18 @@ impl<T: Observation + fmt::Debug + Send + 'static> MonitorSubsystem<T> {
     }
 
     /// Returns a shallow copy of the Monitor, using a channel and a handle.
-    pub fn handle(&self) -> BoxedMonitor<T> {
+    pub fn handle(&self) -> BoxedMonitor {
         Box::new(self.handle.clone())
     }
 
-    async fn handle_query(&mut self, params: QueryParams<T>) {
+    async fn handle_query(&mut self, params: QueryParams<StatusCode>) {
         let result = self.monitor.query().await;
         params.outbox.send(result).unwrap();
     }
 }
 
 #[async_trait]
-impl<T: Observation + Send + 'static> IntoSubsystem<Report> for MonitorSubsystem<T> {
+impl IntoSubsystem<Report> for MonitorSubsystem<StatusCode> {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         loop {
             select! {
@@ -78,12 +78,12 @@ mod mail;
 
 #[cfg(test)]
 mod tests {
-    use crate::{metrics::ResponseStatusCode, stats::CategoricalObservation};
+    use crate::{adapters::StatusCode, metrics::ResponseStatusCode, stats::CategoricalObservation};
 
     use super::MonitorSubsystem;
     use miette::Report;
     use static_assertions::assert_impl_all;
     use tokio_graceful_shutdown::IntoSubsystem;
 
-    assert_impl_all!(MonitorSubsystem<CategoricalObservation<5, ResponseStatusCode>>: IntoSubsystem<Report>);
+    assert_impl_all!(MonitorSubsystem<StatusCode>: IntoSubsystem<Report>);
 }

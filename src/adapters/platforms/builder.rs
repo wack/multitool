@@ -84,20 +84,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "not needed"]
-    async fn dump_json() -> Result<()> {
-        let platform = PlatformConfig::PlatformConfigOneOf(Box::new(PlatformConfigOneOf {
-            aws_lambda: Box::new(PlatformConfigOneOfAwsLambda::new(
-                "my-lambda-name".to_owned(),
-                "us-east-2".to_owned(),
-            )),
-        }));
-        println!("{}", serde_json::to_string_pretty(&platform).unwrap());
-        assert!(false);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn parse_app_config() -> Result<()> {
         // • Get the JSON describing this configuration.
         let config_json = serde_json::to_string(&platform_json()).into_diagnostic()?;

@@ -5,8 +5,8 @@ use multitool_sdk::models::{MonitorConfig, MonitorConfigOneOfAwsCloudwatchMetric
 use super::BoxedMonitor;
 
 #[async_trait]
-trait Builder<T> {
-    async fn build(self) -> BoxedMonitor<T>;
+trait Builder {
+    async fn build(self) -> BoxedMonitor;
 }
 
 pub(crate) struct MonitorBuilder {
@@ -18,14 +18,14 @@ impl MonitorBuilder {
         Self { config }
     }
 
-    pub async fn build<T>(self) -> BoxedMonitor<T> {
+    pub async fn build(self) -> BoxedMonitor {
         Builder::build(self).await
     }
 }
 
 #[async_trait]
-impl<T> Builder<T> for MonitorBuilder {
-    async fn build(self) -> BoxedMonitor<T> {
+impl Builder for MonitorBuilder {
+    async fn build(self) -> BoxedMonitor {
         match self.config {
             MonitorConfig::MonitorConfigOneOf(monitor_config) => {
                 AwsCloudwatchMetricsMonitorBuilder::new(*monitor_config.aws_cloudwatch_metrics)
@@ -47,8 +47,8 @@ impl AwsCloudwatchMetricsMonitorBuilder {
 }
 
 #[async_trait]
-impl<T> Builder<T> for AwsCloudwatchMetricsMonitorBuilder {
-    async fn build(self) -> BoxedMonitor<T> {
+impl Builder for AwsCloudwatchMetricsMonitorBuilder {
+    async fn build(self) -> BoxedMonitor {
         // TODO: Plumb the values in correctly.
         // let gateway_name = self.conf.gateway_name;
         // let stage_name = self.conf.stage_name;
@@ -68,16 +68,11 @@ impl<T> Builder<T> for AwsCloudwatchMetricsMonitorBuilder {
 #[cfg(test)]
 mod tests {
     use miette::{IntoDiagnostic, Result};
-    use multitool_sdk::models::{
-        MonitorConfig, MonitorConfigOneOf, MonitorConfigOneOfAwsCloudwatchMetrics,
-    };
+    use multitool_sdk::models::MonitorConfig;
     use serde_json::{Value, json};
 
-    use crate::{
-        adapters::BoxedMonitor, metrics::ResponseStatusCode, stats::CategoricalObservation,
-    };
-
     use super::MonitorBuilder;
+    use crate::adapters::BoxedMonitor;
 
     // TODO: I think we're going to need a LogGroup here.
     fn monitor_json() -> Value {
@@ -89,23 +84,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "not needed"]
-    async fn dump_json() -> Result<()> {
-        let monitor = MonitorConfig::MonitorConfigOneOf(Box::new(MonitorConfigOneOf::new(
-            MonitorConfigOneOfAwsCloudwatchMetrics::new("us-east-2".to_owned()),
-        )));
-        println!("{}", serde_json::to_string_pretty(&monitor).unwrap());
-        assert!(false);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn parse_monitor_config() -> Result<()> {
         let config_json = serde_json::to_string(&monitor_json()).into_diagnostic()?;
         let config_object: MonitorConfig = serde_json::from_str(&config_json).into_diagnostic()?;
-        let _: BoxedMonitor<_> = MonitorBuilder::new(config_object).build().await;
-        // let _: BoxedMonitor<CategoricalObservation<5, ResponseStatusCode>> =
-        //     MonitorBuilder::new(config_object).build().await;
+        let _: BoxedMonitor = MonitorBuilder::new(config_object).build().await;
         Ok(())
     }
 }

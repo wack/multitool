@@ -233,7 +233,7 @@ impl BackendClient {
 pub struct ApplicationConfig {
     pub platform: BoxedPlatform,
     pub ingress: BoxedIngress,
-    pub monitor: BoxedMonitor<CategoricalObservation<5, ResponseStatusCode>>,
+    pub monitor: BoxedMonitor,
 }
 
 #[derive(Clone)]

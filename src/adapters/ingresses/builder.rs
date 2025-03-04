@@ -91,23 +91,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "not needed"]
-    async fn dump_json() -> Result<()> {
-        let ingress = IngressConfig::IngressConfigOneOf(Box::new(IngressConfigOneOf {
-            aws_rest_api_gateway: Box::new(IngressConfigOneOfAwsRestApiGateway {
-                gateway_name: "multitool-gateway".to_owned(),
-                region: "us-east-2".to_owned(),
-                resource_method: "ANY".to_owned(),
-                resource_path: "/".to_owned(),
-                stage_name: "dev".to_owned(),
-            }),
-        }));
-        println!("{}", serde_json::to_string_pretty(&ingress).unwrap());
-        assert!(false);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn parse_ingress_config() -> Result<()> {
         // • Get the JSON describing this configuration.
         let config_json = serde_json::to_string(&ingress_json()).into_diagnostic()?;

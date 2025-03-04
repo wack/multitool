@@ -96,7 +96,6 @@ impl CloudWatch {
         // 3. As a sum
         // 4. Over a 60s period
         // 5. Over the given window (5 mins, by default)
-
         let query = MetricDataQuery::builder()
             .id(metric_name.to_id())
             .metric_stat(

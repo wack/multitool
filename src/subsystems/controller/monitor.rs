@@ -13,7 +13,9 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use tokio_stream::{Stream, StreamExt as _, wrappers::IntervalStream};
 
 use crate::{
-    MonitorSubsystem, adapters::BoxedMonitor, stats::Observation,
+    MonitorSubsystem,
+    adapters::{BoxedMonitor, StatusCode},
+    stats::Observation,
     subsystems::MONITOR_SUBSYSTEM_NAME,
 };
 
@@ -46,7 +48,7 @@ pub struct MonitorController<T>
 where
     T: Observation,
 {
-    monitor: BoxedMonitor<T>,
+    monitor: BoxedMonitor,
     /// This field stores the stream of outputs.
     /// The stream can only be given to one caller. The first
     /// call to `Self::stream` will return the stream, and all
@@ -59,13 +61,10 @@ where
 }
 
 #[bon]
-impl<T> MonitorController<T>
-where
-    T: Observation + Clone,
-{
+impl MonitorController<StatusCode> {
     #[builder]
     pub fn new(
-        monitor: BoxedMonitor<T>,
+        monitor: BoxedMonitor,
         poll_interval: Option<Duration>,
         emit_interval: Option<Duration>,
     ) -> Self {
@@ -82,7 +81,7 @@ where
 
     /// This function returns a channel receiver of values the first time
     /// its called. Subsequent calls return None.
-    pub fn stream(&mut self) -> Option<Receiver<Vec<T>>> {
+    pub fn stream(&mut self) -> Option<Receiver<Vec<StatusCode>>> {
         self.recv.take()
         // TODO: This block of code produces an Unpin error at the caller
         //       when using a Stream instead of a receiver, but its
@@ -107,10 +106,7 @@ where
 }
 
 #[async_trait]
-impl<T> IntoSubsystem<Report> for MonitorController<T>
-where
-    T: Observation + Clone + Send + 'static,
-{
+impl IntoSubsystem<Report> for MonitorController<StatusCode> {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         // • Build the `MonitorSubsystem`. Don't launch it until
         //   we take a handle to it.
@@ -169,10 +165,10 @@ fn log_error(err: &Report) {
 
 /// [repeat_query] runs the query on an interval and returns a stream of items.
 /// This function runs indefinitely, as long as its polled.
-fn repeat_query<T: Observation>(
-    mut monitor: BoxedMonitor<T>,
+fn repeat_query(
+    mut monitor: BoxedMonitor,
     duration: tokio::time::Duration,
-) -> impl Stream<Item = Result<T>> {
+) -> impl Stream<Item = Result<StatusCode>> {
     // • Everything happens in this stream closure, which desugars
     //   into a background thread and a channel write at yield points.
     async_stream::stream! {
