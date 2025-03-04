@@ -45,9 +45,6 @@ impl Clone for BackendClient {
     }
 }
 
-// TODO: Placeholder for the type of pending, unlocked state.
-type StateMessage = ();
-
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
     pub fn new(cli: &Cli) -> Self {
@@ -63,17 +60,17 @@ impl BackendClient {
     pub async fn lock_state(
         &self,
         _meta: &DeploymentMetadata,
-        _state: DeploymentState,
+        _state: &DeploymentState,
     ) -> Result<LockedState> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
         todo!()
     }
 
-    pub async fn refresh_lease(
+    pub async fn refresh_lock(
         &self,
         _meta: &DeploymentMetadata,
-        _state: DeploymentState,
+        _state: &LockedState,
     ) -> Result<LockedState> {
         // make a request to the backend to lock this particular
         // state, then return the lease expiration time.
@@ -81,24 +78,24 @@ impl BackendClient {
     }
 
     /// Release the lock on this state without completing it.
-    pub async fn abandon_state(
+    pub async fn abandon_lock(
         &self,
         _meta: &DeploymentMetadata,
-        _state: DeploymentState,
+        _state: &LockedState,
     ) -> Result<()> {
         todo!()
     }
 
     /// Poll the backend for in-progress states that have not yet been
     /// locked/claimed.
-    pub async fn poll_for_state(&self, _meta: &DeploymentMetadata) -> Result<Vec<StateMessage>> {
+    pub async fn poll_for_state(&self, _meta: &DeploymentMetadata) -> Result<Vec<DeploymentState>> {
         todo!()
     }
 
     pub async fn mark_state_completed(
         &self,
         _meta: &DeploymentMetadata,
-        _state: DeploymentState,
+        _state: &LockedState,
     ) -> Result<()> {
         // This state has been effected, so the lock
         // can be released.

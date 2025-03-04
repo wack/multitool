@@ -1,4 +1,4 @@
-use bon::Builder;
+use bon::{Builder, bon};
 use derive_getters::Getters;
 use multitool_sdk::models::DeploymentState;
 use tokio::{sync::mpsc, time::Duration};
@@ -20,12 +20,28 @@ pub(crate) struct DeploymentMetadata {
 
 #[derive(Getters, Clone)]
 pub(crate) struct LockedState {
-    id: DeploymentState,
+    state: DeploymentState,
     /// How often the lease must be renewed.
-    period: Duration,
+    frequency: Duration,
     /// When the state has been effected, release the lock we have
     /// on the state. This channel signals to the thread managing
     /// the lock that it can tell the backend to release
     /// the lock because the state has been effected.
     task_done: mpsc::Sender<()>,
+}
+
+#[bon]
+impl LockedState {
+    #[builder]
+    pub(crate) fn new(
+        state: DeploymentState,
+        frequency: Duration,
+        task_done: mpsc::Sender<()>,
+    ) -> Self {
+        Self {
+            state,
+            frequency,
+            task_done,
+        }
+    }
 }
