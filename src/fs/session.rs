@@ -1,4 +1,3 @@
-use multitool_sdk::models::LoginSuccess;
 use serde::{Deserialize, Serialize};
 
 use super::{DirectoryType, StaticFile};

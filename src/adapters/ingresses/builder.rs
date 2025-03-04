@@ -71,9 +71,7 @@ impl Builder for AwsGatewayIngressBuilder {
 mod tests {
     use crate::adapters::BoxedIngress;
     use miette::{IntoDiagnostic, Result};
-    use multitool_sdk::models::{
-        IngressConfig, IngressConfigOneOf, IngressConfigOneOfAwsRestApiGateway,
-    };
+    use multitool_sdk::models::IngressConfig;
     use serde_json::{Value, json};
 
     use super::IngressBuilder;

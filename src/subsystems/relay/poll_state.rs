@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use bon::{bon, builder};
+use bon::bon;
 use miette::{IntoDiagnostic, Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 

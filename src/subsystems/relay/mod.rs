@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use bon::bon;
-use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Report, Result, bail};
-use multitool_sdk::models::DeploymentState;
 use multitool_sdk::models::DeploymentStateType::{
     DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
 };

@@ -113,8 +113,6 @@ mod monitor;
 
 #[cfg(test)]
 mod tests {
-    use crate::{metrics::ResponseStatusCode, stats::CategoricalObservation};
-
     use super::ControllerSubsystem;
     use miette::Report;
     use static_assertions::assert_impl_all;

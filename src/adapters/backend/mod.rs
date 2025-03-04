@@ -57,7 +57,7 @@ impl BackendClient {
         }
     }
 
-    pub async fn lock_state(
+    pub(crate) async fn lock_state(
         &self,
         _meta: &DeploymentMetadata,
         _state: &DeploymentState,
@@ -67,7 +67,7 @@ impl BackendClient {
         todo!()
     }
 
-    pub async fn refresh_lock(
+    pub(crate) async fn refresh_lock(
         &self,
         _meta: &DeploymentMetadata,
         _state: &LockedState,
@@ -78,7 +78,7 @@ impl BackendClient {
     }
 
     /// Release the lock on this state without completing it.
-    pub async fn abandon_lock(
+    pub(crate) async fn abandon_lock(
         &self,
         _meta: &DeploymentMetadata,
         _state: &LockedState,
@@ -88,11 +88,14 @@ impl BackendClient {
 
     /// Poll the backend for in-progress states that have not yet been
     /// locked/claimed.
-    pub async fn poll_for_state(&self, _meta: &DeploymentMetadata) -> Result<Vec<DeploymentState>> {
+    pub(crate) async fn poll_for_state(
+        &self,
+        _meta: &DeploymentMetadata,
+    ) -> Result<Vec<DeploymentState>> {
         todo!()
     }
 
-    pub async fn mark_state_completed(
+    pub(crate) async fn mark_state_completed(
         &self,
         _meta: &DeploymentMetadata,
         _state: &LockedState,
@@ -164,7 +167,7 @@ impl BackendClient {
     }
 
     /// Upload a batch of observations to the backend.
-    pub async fn upload_observations(
+    pub(crate) async fn upload_observations(
         &self,
         meta: &DeploymentMetadata,
         data: Vec<StatusCode>,

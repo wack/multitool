@@ -1,4 +1,3 @@
-use std::fmt;
 use std::sync::Arc;
 
 use crate::adapters::{BoxedMonitor, StatusCode};
@@ -78,7 +77,7 @@ mod mail;
 
 #[cfg(test)]
 mod tests {
-    use crate::{adapters::StatusCode, metrics::ResponseStatusCode, stats::CategoricalObservation};
+    use crate::adapters::StatusCode;
 
     use super::MonitorSubsystem;
     use miette::Report;
