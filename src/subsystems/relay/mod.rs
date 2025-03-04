@@ -7,7 +7,7 @@ use tokio::{select, sync::mpsc::Receiver, time::Duration};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 
 use crate::{
-    adapters::{BackendClient, BoxedIngress, BoxedPlatform, DeploymentMetadata},
+    adapters::{BackendClient, BoxedIngress, BoxedPlatform, DeploymentMetadata, StatusCode},
     stats::Observation,
 };
 
@@ -80,7 +80,7 @@ impl<T: Observation + Send + 'static> RelaySubsystem<T> {
 }
 
 #[async_trait]
-impl<T: Observation + Send + Sync> IntoSubsystem<Report> for RelaySubsystem<T> {
+impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         // Kick off a task to poll the backend for new states.
         let mut poller = self.new_poller();
@@ -111,8 +111,7 @@ impl<T: Observation + Send + Sync> IntoSubsystem<Report> for RelaySubsystem<T> {
                 //   When a new observation arrives, we send it to the backend.
                 elem = observations.recv() => {
                     if let Some(batch) = elem {
-                        // self.backend.upload_observations(batch).await?;
-                        self.backend.upload_observations(vec![]).await?;
+                        self.backend.upload_observations(&self.meta, batch).await?;
                     } else {
                         // The stream has been closed, so we should shutdown.
                         subsys.request_shutdown();

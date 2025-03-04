@@ -3,17 +3,20 @@ use std::sync::Arc;
 
 use super::{
     BoxedIngress, BoxedMonitor, BoxedPlatform, IngressBuilder, MonitorBuilder, PlatformBuilder,
+    StatusCode,
 };
 use crate::Cli;
 use crate::fs::UserCreds;
+use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
+use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
-use multitool_sdk::models::{ApplicationDetails, LoginRequest, LoginSuccess, WorkspaceSummary};
-use uuid::Uuid;
-
-use crate::{
-    artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode, stats::CategoricalObservation,
+use multitool_sdk::models::{
+    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest,
+    CreateResponseCodeMetricsSuccess, LoginRequest, LoginSuccess, WorkspaceSummary,
 };
+use tokio::task::JoinSet;
+use uuid::Uuid;
 
 pub(crate) use deploy_meta::*;
 
@@ -159,8 +162,47 @@ impl BackendClient {
     }
 
     /// Upload a batch of observations to the backend.
-    pub async fn upload_observations(&self, data: Vec<()>) -> Result<()> {
-        todo!();
+    pub async fn upload_observations(
+        &self,
+        meta: &DeploymentMetadata,
+        data: Vec<StatusCode>,
+    ) -> Result<()> {
+        let mut req_waiter = JoinSet::new();
+
+        for item in data {
+            let group = match item.group() {
+                crate::stats::Group::Control => ApplicationGroup::Baseline,
+                crate::stats::Group::Experimental => ApplicationGroup::Canary,
+            };
+            let req_body = CreateResponseCodeMetricsRequest {
+                app_class: group,
+                status_2xx_count: item.get_count(&ResponseStatusCode::_2XX) as i32,
+                status_4xx_count: item.get_count(&ResponseStatusCode::_4XX) as i32,
+                status_5xx_count: item.get_count(&ResponseStatusCode::_5XX) as i32,
+            };
+            let workspace_id = meta.workspace_id().to_string();
+            let application_id = meta.application_id().to_string();
+            let deployment_id = *meta.deployment_id();
+            let cloned_client = self.clone();
+            req_waiter.spawn_local(async move {
+                cloned_client
+                    .client
+                    .response_code_metrics_api()
+                    .create_response_code_metrics(
+                        &workspace_id,
+                        &application_id,
+                        deployment_id,
+                        req_body,
+                    )
+                    .await
+            });
+        }
+        let results = req_waiter.join_all().await;
+        let result: std::result::Result<Vec<CreateResponseCodeMetricsSuccess>, _> =
+            results.into_iter().collect();
+        result
+            .map(|_| ())
+            .map_err(|err| miette!("Error uploading observation: {err}"))
     }
 
     /// Return information about the workspace given its name.

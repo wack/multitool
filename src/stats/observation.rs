@@ -40,6 +40,14 @@ impl<const N: usize, Cat: Categorical<N>> CategoricalObservation<N, Cat> {
     pub fn increment_by(&mut self, category: &Cat, count: u32) {
         self.histogram.increment_by(category, count);
     }
+
+    pub fn group(&self) -> Group {
+        self.group
+    }
+
+    pub fn get_count(&self, cat: &Cat) -> u32 {
+        self.histogram.get_count(cat)
+    }
 }
 
 impl<const N: usize, Cat: Categorical<N> + fmt::Debug> fmt::Debug

@@ -1,4 +1,10 @@
-use crate::adapters::{BackendClient, DeploymentMetadata, StateId};
+use async_trait::async_trait;
+
+use crate::{
+    Shutdownable,
+    adapters::{BackendClient, DeploymentMetadata, StateId},
+    subsystems::ShutdownResult,
+};
 
 pub(super) struct LockManagementSubsystem {
     /// We use this client to refresh locks.
@@ -8,4 +14,12 @@ pub(super) struct LockManagementSubsystem {
     meta: DeploymentMetadata,
     /// This is the state that this manager is locking.
     state_id: StateId,
+}
+
+#[async_trait]
+impl Shutdownable for LockManagementSubsystem {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        // Release any of the locks we've taken.
+        todo!()
+    }
 }
