@@ -50,12 +50,7 @@ impl Clone for BackendClient {
 
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
-    pub fn new(cli: &Cli) -> Result<Self> {
-        let fs = FileSystem::new().unwrap();
-
-        // Load the user's session information from the filesystem, if it exists
-        let session = fs.load_file(SessionFile)?;
-
+    pub fn new(cli: &Cli, session: Session) -> Result<Self> {
         let conf = BackendConfig::new(cli.origin(), Some(session.clone()));
 
         let raw_conf: Configuration = conf.clone().into();
