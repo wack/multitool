@@ -1,3 +1,4 @@
+use crate::subsystems::TakenOptionalError;
 use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result};
@@ -62,8 +63,8 @@ impl LockManager {
         &self.state
     }
 
-    pub(super) fn take(&mut self) -> Option<Sender<()>> {
-        self.done_sender.take()
+    pub(super) fn take(&mut self) -> Result<Sender<()>> {
+        self.done_sender.take().ok_or(TakenOptionalError.into())
     }
 }
 

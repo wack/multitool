@@ -16,7 +16,7 @@ use crate::{
     MonitorSubsystem,
     adapters::{BoxedMonitor, StatusCode},
     stats::Observation,
-    subsystems::MONITOR_SUBSYSTEM_NAME,
+    subsystems::{MONITOR_SUBSYSTEM_NAME, TakenOptionalError},
 };
 
 /// The maximum number of observations that can be recevied before we
@@ -81,8 +81,8 @@ impl MonitorController<StatusCode> {
 
     /// This function returns a channel receiver of values the first time
     /// its called. Subsequent calls return None.
-    pub fn stream(&mut self) -> Option<Receiver<Vec<StatusCode>>> {
-        self.recv.take()
+    pub fn stream(&mut self) -> Result<Receiver<Vec<StatusCode>>> {
+        self.recv.take().ok_or(TakenOptionalError.into())
         // TODO: This block of code produces an Unpin error at the caller
         //       when using a Stream instead of a receiver, but its
         //       a more idiomatic API. If we can work through the error,
@@ -140,6 +140,8 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
                     // we don't have anything to do except ensure
                     // our children have shutdown, guaranteeing
                     // the monitor is shut down.
+                    // NB: We can't implement the shutdown trait because
+                    // self has been partially moved.
                     subsys.wait_for_children().await;
                     return Ok(());
                 }
@@ -152,7 +154,6 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
                         // The stream has been closed. Shut down.
                         subsys.request_local_shutdown();
                     }
-
                 }
             }
         }

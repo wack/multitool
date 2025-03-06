@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{Report, Result, bail};
+use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 
 use crate::adapters::{
@@ -61,14 +61,7 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
         let platform_handle = platform_subsystem.handle();
 
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
-        let observation_stream = match monitor_controller.stream() {
-            Some(stream) => stream,
-            None => {
-                bail!(
-                    "Failed to take monitoring stream. This is an internal error and should be reported as a bug."
-                );
-            }
-        };
+        let observation_stream = monitor_controller.stream()?;
 
         let relay_subsystem = RelaySubsystem::builder()
             .backend(self.backend)

@@ -6,7 +6,7 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 use crate::{
     Shutdownable,
     adapters::{BackendClient, DeploymentMetadata},
-    subsystems::ShutdownResult,
+    subsystems::{ShutdownResult, TakenOptionalError},
 };
 use multitool_sdk::models::DeploymentState;
 use tokio::{
@@ -58,8 +58,8 @@ impl StatePoller {
         }
     }
 
-    pub fn take_stream(&mut self) -> Option<Receiver<DeploymentState>> {
-        self.stream.take()
+    pub fn take_stream(&mut self) -> Result<Receiver<DeploymentState>> {
+        self.stream.take().ok_or(TakenOptionalError.into())
     }
 }
 
