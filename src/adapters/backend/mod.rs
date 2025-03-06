@@ -6,8 +6,9 @@ use super::{
     StatusCode,
 };
 use crate::Cli;
-use crate::fs::UserCreds;
+use crate::fs::{FileSystem, SessionFile, UserCreds};
 use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
+use chrono::{DateTime, Utc};
 use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
@@ -32,6 +33,7 @@ pub struct BackendClient {
     /// in each request.
     conf: Configuration,
     client: ApiClient,
+    session: Option<Session>,
     // TODO: Add a method for updating the access token.
 }
 
@@ -41,19 +43,31 @@ impl Clone for BackendClient {
         Self {
             conf: conf.clone(),
             client: ApiClient::new(Arc::new(conf)),
+            session: self.session.clone(),
         }
     }
 }
 
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
-    pub fn new(cli: &Cli) -> Self {
-        let conf = BackendConfig::from(cli);
+    pub fn new(cli: &Cli, session: Session) -> Result<Self> {
+        let conf = BackendConfig::new(cli.origin(), Some(session.clone()));
+
         let raw_conf: Configuration = conf.clone().into();
+
         let client = ApiClient::new(Arc::new(raw_conf.clone()));
-        Self {
+        Ok(Self {
             conf: raw_conf,
             client,
+            session: Some(session),
+        })
+    }
+
+    pub fn is_authenicated(&self) -> Result<()> {
+        if self.session.clone().is_some_and(Session::is_not_expired) {
+            return Ok(());
+        } else {
+            bail!("Please login before running this command.");
         }
     }
 
@@ -212,6 +226,8 @@ impl BackendClient {
 
     /// Return information about the workspace given its name.
     async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
+        self.is_authenicated()?;
+
         // let mut workspaces = list_workspaces(&self.conf, Some(name))
         let mut workspaces: Vec<_> = self
             .client
@@ -243,6 +259,8 @@ impl BackendClient {
         workspace_id: Uuid,
         name: &str,
     ) -> Result<ApplicationDetails> {
+        self.is_authenicated()?;
+
         let mut applications: Vec<_> = self
             .client
             .applications_api()
@@ -290,24 +308,19 @@ pub(super) struct BackendConfig {
     conf: Configuration,
 }
 
-impl From<&Cli> for BackendConfig {
-    fn from(cli: &Cli) -> Self {
-        Self::new(cli.origin())
-    }
-}
-
 impl BackendConfig {
-    pub fn new<T: AsRef<str>>(origin: Option<T>) -> Self {
+    pub fn new<T: AsRef<str>>(origin: Option<T>, session: Option<Session>) -> Self {
         // • Convert the Option<T> to a String.
         let origin = origin.map(|val| val.as_ref().to_owned());
         // • Set up the default configuration values.
-        let mut conf = Configuration {
+        let jwt = session.and_then(|session| match session {
+            Session::User(creds) => Some(creds.jwt),
+        });
+        let conf = Configuration {
+            base_path: origin.unwrap_or("https://api.multitool.run".to_string()),
+            bearer_access_token: jwt,
             ..Configuration::default()
         };
-        // • Override the default origin.
-        if let Some(origin) = origin {
-            conf.base_path = origin;
-        }
         Self { conf }
     }
 }
@@ -329,7 +342,13 @@ impl Deref for BackendConfig {
 /// Add a convertion from the response type into our internal type.
 impl From<LoginSuccess> for UserCreds {
     fn from(login: LoginSuccess) -> Self {
-        UserCreds::new(login.user.email, login.user.jwt)
+        UserCreds::new(
+            login.user.email,
+            login.user.jwt,
+            DateTime::parse_from_rfc2822(&login.user.expires_at)
+                .expect("Failed to parse JWT expiry date.")
+                .into(),
+        )
     }
 }
 

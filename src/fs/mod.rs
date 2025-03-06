@@ -10,7 +10,7 @@ use std::{
 };
 
 pub(crate) use file::File;
-pub(crate) use session::{Session, UserCreds};
+pub(crate) use session::{Session, SessionFile, UserCreds};
 
 use manifest::{JsonManifest, Manifest, TomlManifest};
 

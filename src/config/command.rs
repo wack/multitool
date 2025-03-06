@@ -24,9 +24,9 @@ impl MultiCommand {
     /// dispatch the user-provided arguments to the command handler.
     pub async fn dispatch(self, console: Terminal, cli: &Cli) -> Result<()> {
         match self {
-            Self::Login(flags) => Login::new(console, cli, flags).dispatch().await,
+            Self::Login(flags) => Login::new(console, cli, flags)?.dispatch().await,
             Self::Logout => Logout::new(console).dispatch(),
-            Self::Run(flags) => Run::new(console, cli, flags).dispatch().await,
+            Self::Run(flags) => Run::new(console, cli, flags)?.dispatch().await,
             Self::Version => Version::new(console).dispatch(),
         }
     }

@@ -1,5 +1,5 @@
-use crate::Cli;
 use crate::adapters::BackendClient;
+use crate::{Cli, fs::SessionFile};
 use miette::Result;
 
 use crate::{Terminal, config::LoginSubcommand, fs::FileSystem};
@@ -12,13 +12,17 @@ pub struct Login {
 }
 
 impl Login {
-    pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Self {
-        let backend = BackendClient::new(cli);
-        Self {
+    pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Result<Self> {
+        let fs = FileSystem::new().unwrap();
+        let session = fs.load_file(SessionFile)?;
+
+        let backend = BackendClient::new(cli, session)?;
+
+        Ok(Self {
             terminal,
             flags,
             backend,
-        }
+        })
     }
 
     pub async fn dispatch(self) -> Result<()> {
@@ -40,7 +44,7 @@ impl Login {
         let creds = self.backend.exchange_creds(&email, &password).await?;
 
         // • Save the auth credentials to disk.
-        fs.save_file(&creds, &creds)?;
+        fs.save_file(&SessionFile, &creds)?;
 
         // • Print a success message.
         self.terminal.login_successful()

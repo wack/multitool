@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::adapters::{ApplicationConfig, DeploymentMetadata};
+use crate::fs::{FileSystem, SessionFile};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     Cli, ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
@@ -25,15 +26,19 @@ pub struct Run {
 }
 
 impl Run {
-    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Self {
-        let backend = BackendClient::new(cli);
-        Self {
+    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Result<Self> {
+        let fs = FileSystem::new().unwrap();
+        let session = fs.load_file(SessionFile)?;
+
+        let backend = BackendClient::new(cli, session)?;
+
+        Ok(Self {
             terminal,
             backend,
             artifact_path: args.artifact_path,
             workspace: args.workspace,
             application: args.application,
-        }
+        })
     }
 
     pub async fn dispatch(self) -> Result<()> {

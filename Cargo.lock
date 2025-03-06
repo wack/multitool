@@ -1770,6 +1770,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "serde_with",
  "static_assertions",
  "thiserror 2.0.12",
  "tokio",
