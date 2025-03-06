@@ -12,13 +12,13 @@ pub struct Login {
 }
 
 impl Login {
-    pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Self {
-        let backend = BackendClient::new(cli).unwrap();
-        Self {
+    pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Result<Self> {
+        let backend = BackendClient::new(cli)?;
+        Ok(Self {
             terminal,
             flags,
             backend,
-        }
+        })
     }
 
     pub async fn dispatch(self) -> Result<()> {

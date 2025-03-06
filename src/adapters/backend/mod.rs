@@ -53,14 +53,10 @@ impl BackendClient {
     pub fn new(cli: &Cli) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
 
-        // Load the user's session information from the filesystem.
-        let session = fs.load_file(SessionFile).map(|session| session);
+        // Load the user's session information from the filesystem, if it exists
+        let session = fs.load_file(SessionFile)?;
 
-        let creds = match session {
-            Session::User(creds) => creds,
-        };
-
-        let conf = BackendConfig::new(cli.origin(), Some(creds.jwt.clone()));
+        let conf = BackendConfig::new(cli.origin(), Some(session.clone()));
 
         let raw_conf: Configuration = conf.clone().into();
 
@@ -72,8 +68,12 @@ impl BackendClient {
         })
     }
 
-    pub fn is_authenicated(&self) -> bool {
-        self.session.is_some()
+    pub fn is_authenicated(&self) -> Result<()> {
+        if self.session.clone().is_some_and(Session::is_not_expired) {
+            return Ok(());
+        } else {
+            bail!("Please login before running this command.");
+        }
     }
 
     pub(crate) async fn lock_state(
@@ -231,9 +231,8 @@ impl BackendClient {
 
     /// Return information about the workspace given its name.
     async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
-        if !self.is_authenicated() {
-            bail!("Please login before running this command.");
-        }
+        self.is_authenicated()?;
+
         // let mut workspaces = list_workspaces(&self.conf, Some(name))
         let mut workspaces: Vec<_> = self
             .client
@@ -265,9 +264,7 @@ impl BackendClient {
         workspace_id: Uuid,
         name: &str,
     ) -> Result<ApplicationDetails> {
-        if !self.is_authenicated() {
-            bail!("Please login before running this command.");
-        }
+        self.is_authenicated()?;
 
         let mut applications: Vec<_> = self
             .client
@@ -317,12 +314,15 @@ pub(super) struct BackendConfig {
 }
 
 impl BackendConfig {
-    pub fn new<T: AsRef<str>>(origin: Option<T>, jwt: Option<String>) -> Self {
+    pub fn new<T: AsRef<str>>(origin: Option<T>, session: Option<Session>) -> Self {
         // • Convert the Option<T> to a String.
         let origin = origin.map(|val| val.as_ref().to_owned());
         // • Set up the default configuration values.
+        let jwt = session.and_then(|session| match session {
+            Session::User(creds) => Some(creds.jwt),
+        });
         let conf = Configuration {
-            base_path: origin.unwrap(),
+            base_path: origin.unwrap_or("https://api.multitool.run".to_string()),
             bearer_access_token: jwt,
             ..Configuration::default()
         };

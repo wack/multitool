@@ -14,11 +14,9 @@ pub enum Session {
 }
 
 impl Session {
-    pub fn is_not_expired(creds: UserCreds) -> Self {
-        if creds.expiry >= Utc::now() {
-            Self::User(creds)
-        } else {
-            panic!("Login token expired, please login again with \'multitool login\'.");
+    pub fn is_not_expired(self) -> bool {
+        match self {
+            Self::User(creds) => creds.expiry >= Utc::now(),
         }
     }
 }
