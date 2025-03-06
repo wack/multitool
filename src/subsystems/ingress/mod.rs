@@ -11,6 +11,8 @@ use crate::adapters::BoxedIngress;
 
 use mail::IngressHandle;
 
+use super::{ShutdownResult, Shutdownable};
+
 mod mail;
 
 pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
@@ -39,8 +41,18 @@ impl IngressSubsystem {
         }
     }
 
+    /// Create a new handle to the underlying ingress. The handle is a BoxedIngress itself,
+    /// but it communicates with the real ingress over a channel, so it's Send+Sync+Clone.
     pub fn handle(&self) -> BoxedIngress {
         Box::new(self.handle.clone())
+    }
+
+    async fn respond_to_mail(&mut self, mail: IngressMail) {
+        match mail {
+            IngressMail::RollbackCanary(params) => self.handle_rollback(params).await,
+            IngressMail::PromoteCanary(params) => self.handle_promote(params).await,
+            IngressMail::SetCanaryTraffic(params) => self.handle_set_traffic(params).await,
+        }
     }
 
     async fn handle_rollback(&mut self, params: RollbackParams) {
@@ -66,24 +78,32 @@ impl IntoSubsystem<Report> for IngressSubsystem {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
-                    return self.ingress.shutdown().await;
+                    return self.shutdown().await;
                 }
+                // Shutdown signal from one of the handles. Since this thread has exclusive
+                // access to the platform, we have to give the outside world a way to shut
+                // us down. That's this channel, created before the SubsystemHandle existed.
                 _ = self.shutdown.recv() => {
                     subsys.request_shutdown();
                 }
                 mail = self.mailbox.recv() => {
                     if let Some(mail) = mail {
-                        match mail {
-                            IngressMail::RollbackCanary(params) => self.handle_rollback(params).await,
-                            IngressMail::PromoteCanary(params) => self.handle_promote(params).await,
-                            IngressMail::SetCanaryTraffic(params) => self.handle_set_traffic(params).await,
-                        }
+                        self.respond_to_mail(mail).await;
                     } else {
-                        subsys.request_shutdown();
+                        return self.shutdown().await;
                     }
                 }
             }
         }
+    }
+}
+
+#[async_trait]
+impl Shutdownable for IngressSubsystem {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        // We just have to shut the ingress down manually,
+        // since we have an exclusive lock on it.
+        self.ingress.shutdown().await
     }
 }
 

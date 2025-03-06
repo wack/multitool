@@ -11,6 +11,8 @@ use tokio::{
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
+use super::{ShutdownResult, Shutdownable};
+
 pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
 /// If you're going to pick an arbitrary number, you could do worse
 /// than picking a power of two.
@@ -42,6 +44,12 @@ impl MonitorSubsystem<StatusCode> {
         Box::new(self.handle.clone())
     }
 
+    async fn respond_to_mail(&mut self, mail: MonitorMail<StatusCode>) {
+        match mail {
+            MonitorMail::Query(params) => self.handle_query(params).await,
+        }
+    }
+
     async fn handle_query(&mut self, params: QueryParams<StatusCode>) {
         let result = self.monitor.query().await;
         params.outbox.send(result).unwrap();
@@ -54,22 +62,29 @@ impl IntoSubsystem<Report> for MonitorSubsystem<StatusCode> {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
-                    return self.monitor.shutdown().await;
+                    return self.shutdown().await;
                 }
                 _ = self.shutdown.recv() => {
-                    return self.monitor.shutdown().await;
+                    return self.shutdown().await;
                 }
                 mail = self.mailbox.recv() => {
                     if let Some(mail) = mail {
-                        match mail {
-                            MonitorMail::Query(params) => self.handle_query(params).await,
-                        }
+                        self.respond_to_mail(mail).await;
                     } else {
-                        subsys.request_shutdown();
+                        return self.shutdown().await;
                     }
                 }
             }
         }
+    }
+}
+
+#[async_trait]
+impl Shutdownable for MonitorSubsystem<StatusCode> {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        // We just have to shut the monitor down manually,
+        // since we have an exclusive lock on it.
+        self.monitor.shutdown().await
     }
 }
 

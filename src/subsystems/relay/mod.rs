@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{IntoDiagnostic, Report, Result, bail};
+use miette::{IntoDiagnostic, Report, Result};
 use multitool_sdk::models::DeploymentStateType::{
     DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
 };
@@ -37,14 +37,6 @@ pub struct RelaySubsystem<T: Observation + Send + 'static> {
     /// and is frequently serialized and passed to the backend on
     /// each request.
     meta: DeploymentMetadata,
-    // TODO:
-    // Every so often, we need to poll the backend for
-    // instructions. These instructions come in the form
-    // of state.
-    //
-    // Each time we get new state, we need to lock the state,
-    // manage the locks, and make a request to the Ingress
-    // or Platform to effect the state.
     platform: BoxedPlatform,
     ingress: BoxedIngress,
     backend_poll_frequency: Option<Duration>,
@@ -88,13 +80,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         // Kick off a task to poll the backend for new states.
         let mut poller = self.new_poller();
-        let mut state_stream = match poller.take_stream() {
-            None => bail!(
-                "Unreachable. Internal state corrupted on the relay subsystem. Please report this as a bug."
-            ),
-            Some(stream) => stream,
-        };
-
+        let mut state_stream = poller.take_stream()?;
         subsys.start(SubsystemBuilder::new(
             "StatePoller",
             poller.into_subsystem(),
@@ -134,13 +120,8 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         // The done_callback tells the LockManager not to bother
                         // refreshing the lock, and to tell the backend that
                         // the state has been completed.
-                        let done_callback = if let Some(done) = lock_manager.take() {
-                           done
-                        } else {
-                           bail!(
-                                "Unreachable. Internal state corrupted on the relay subsystem. Please report this as a bug."
-                            );
-                        };
+                        let done_callback = lock_manager.take()?;
+
                         // Launch the lock manager.
                         subsys.start(SubsystemBuilder::new(
                             format!("LockManager {}", state.id),
@@ -153,6 +134,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                             PromoteCanary => {
                                 // Ingress operation.
                                 self.ingress.promote_canary().await?;
+                                // TODO: Do we need to call Platform::promote_canary too?
                             },
                             DeployCanary => {
                                 // First, we deploy the canary to the platform. At
@@ -193,16 +175,5 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
     }
 }
 
-// /// HACK: This code calculates the duration of the lock
-// /// by comparing the current time to the expiry. This isn't super
-// /// smart because it doesn't account for latency. The backend
-// /// should tell us how long locks are valid for.
-// fn lock_duration(state: &DeploymentState) -> Duration {
-//     let now = Utc::now();
-//     let expiry = state.expiry();
-// }
-
-// mod lease_mgmt;
 mod lock_mgmt;
 mod poll_state;
-// mod renewer;

@@ -18,6 +18,8 @@ const PLATFORM_MAILBOX_SIZE: usize = 1 << 4;
 
 use mail::PlatformHandle;
 
+use super::{ShutdownResult, Shutdownable};
+
 mod mail;
 
 /// The PlatformSubsystem handles sychronizing access to the
@@ -36,20 +38,28 @@ impl PlatformSubsystem {
         //     subsystem. We could also do this by blocking the `handle()`
         //     method until we have the subsystem available, but that's trickier
         //     and potentially more deadlock-prone.
-        let (shutdown_trigger, shutdown_signal) = channel(1);
+        let (shutdown_trigger, shutdown_recv) = channel(1);
         let (mail_outbox, mailbox) = mpsc::channel(PLATFORM_MAILBOX_SIZE);
-        let shutdown = Arc::new(shutdown_trigger);
-        let handle = PlatformHandle::new(Arc::new(mail_outbox), shutdown);
+        let shutdown_sender = Arc::new(shutdown_trigger);
+        let handle = PlatformHandle::new(Arc::new(mail_outbox), shutdown_sender);
         Self {
             handle,
             platform,
             mailbox,
-            shutdown: shutdown_signal,
+            shutdown: shutdown_recv,
         }
     }
 
     pub fn handle(&self) -> BoxedPlatform {
         Box::new(self.handle.clone())
+    }
+
+    async fn respond_to_mail(&mut self, mail: PlatformMail) {
+        match mail {
+            PlatformMail::DeployCanary(params) => self.handle_deploy(params).await,
+            PlatformMail::YankCanary(params) => self.handle_yank(params).await,
+            PlatformMail::PromoteDeployment(params) => self.handle_promote(params).await,
+        }
     }
 
     async fn handle_deploy(&mut self, params: DeployParams) {
@@ -79,24 +89,32 @@ impl IntoSubsystem<Report> for PlatformSubsystem {
             select! {
                 // Shutdown comes first so it has high priority.
                 _ = subsys.on_shutdown_requested() => {
-                    return self.platform.shutdown().await;
+                    return self.shutdown().await;
                 }
+                // Shutdown signal from one of the handles. Since this thread has exclusive
+                // access to the platform, we have to give the outside world a way to shut
+                // us down. That's this channel, created before the SubsystemHandle existed.
                 _ = self.shutdown.recv() => {
-                    subsys.request_shutdown();
+                    return self.shutdown().await;
                 }
                 mail = self.mailbox.recv() => {
                     if let Some(mail) = mail {
-                        match mail {
-                            PlatformMail::DeployCanary(params) => self.handle_deploy(params).await,
-                            PlatformMail::YankCanary(params) => self.handle_yank(params).await,
-                            PlatformMail::PromoteDeployment(params) => self.handle_promote(params).await,
-                        }
+                        self.respond_to_mail(mail).await;
                     } else {
                         subsys.request_shutdown()
                     }
                 }
             }
         }
+    }
+}
+
+#[async_trait]
+impl Shutdownable for PlatformSubsystem {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        // We just have to shut the platform down manually,
+        // since we have an exclusive lock on it.
+        self.platform.shutdown().await
     }
 }
 
