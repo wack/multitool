@@ -26,7 +26,7 @@ impl MultiCommand {
         match self {
             Self::Login(flags) => Login::new(console, cli, flags)?.dispatch().await,
             Self::Logout => Logout::new(console).dispatch(),
-            Self::Run(flags) => Run::new(console, cli, flags).dispatch().await,
+            Self::Run(flags) => Run::new(console, cli, flags)?.dispatch().await,
             Self::Version => Version::new(console).dispatch(),
         }
     }

@@ -25,15 +25,15 @@ pub struct Run {
 }
 
 impl Run {
-    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Self {
-        let backend = BackendClient::new(cli).unwrap();
-        Self {
+    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Result<Self> {
+        let backend = BackendClient::new(cli)?;
+        Ok(Self {
             terminal,
             backend,
             artifact_path: args.artifact_path,
             workspace: args.workspace,
             application: args.application,
-        }
+        })
     }
 
     pub async fn dispatch(self) -> Result<()> {
