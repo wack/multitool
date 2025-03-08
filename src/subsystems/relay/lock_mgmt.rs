@@ -46,7 +46,7 @@ impl LockManager {
     ) -> Result<Self> {
         let (done_sender, task_done) = mpsc::channel(1);
         // Take the initial lock.
-        let locked_state = backend.lock_state(&metadata, &state).await?;
+        let locked_state = backend.lock_state(&metadata, &state, &done_sender).await?;
         let freq = *locked_state.frequency();
         let timer = interval(freq / 2);
         Ok(Self {
