@@ -12,12 +12,15 @@ use chrono::{DateTime, Utc};
 use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
-use multitool_sdk::models::DeploymentState;
 use multitool_sdk::models::{
     ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest,
-    CreateResponseCodeMetricsSuccess, LoginRequest, LoginSuccess, WorkspaceSummary,
+    CreateResponseCodeMetricsSuccess, DeploymentStateStatus, LoginRequest, LoginSuccess,
+    WorkspaceSummary,
 };
+use multitool_sdk::models::{DeploymentState, UpdateDeploymentStateRequest};
+use tokio::sync::mpsc::Sender;
 use tokio::task::JoinSet;
+use tokio::time::Duration;
 use uuid::Uuid;
 
 pub(crate) use deploy_meta::*;
@@ -73,50 +76,118 @@ impl BackendClient {
 
     pub(crate) async fn lock_state(
         &self,
-        _meta: &DeploymentMetadata,
-        _state: &DeploymentState,
+        meta: &DeploymentMetadata,
+        state: &DeploymentState,
+        done_sender: Sender<()>,
     ) -> Result<LockedState> {
-        // make a request to the backend to lock this particular
-        // state, then return the lease expiration time.
-        todo!()
+        let response = self
+            .client
+            .deployment_states_api()
+            .update_deployment_state(
+                meta.workspace_id().to_string().as_ref(),
+                meta.application_id().to_string().as_ref(),
+                *meta.deployment_id(),
+                state.id,
+                UpdateDeploymentStateRequest {
+                    status: Some(Some(DeploymentStateStatus::InProgress)),
+                },
+            )
+            .await
+            .into_diagnostic()?;
+
+        let locked_state = LockedState::builder()
+            .state(*response.state)
+            // TODO: we should return this from the API
+            .frequency(Duration::from_secs(30))
+            .task_done(done_sender)
+            .build();
+
+        Ok(locked_state)
     }
 
     pub(crate) async fn refresh_lock(
         &self,
-        _meta: &DeploymentMetadata,
-        _state: &LockedState,
-    ) -> Result<LockedState> {
-        // make a request to the backend to lock this particular
-        // state, then return the lease expiration time.
-        todo!()
+        meta: &DeploymentMetadata,
+        locked_state: &LockedState,
+    ) -> Result<()> {
+        self.client
+            .deployment_states_api()
+            .refresh_deployment_state(
+                meta.workspace_id().to_string().as_ref(),
+                meta.application_id().to_string().as_ref(),
+                *meta.deployment_id(),
+                locked_state.state().id,
+            )
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
     }
 
     /// Release the lock on this state without completing it.
     pub(crate) async fn abandon_lock(
         &self,
-        _meta: &DeploymentMetadata,
-        _state: &LockedState,
+        meta: &DeploymentMetadata,
+        locked_state: &LockedState,
     ) -> Result<()> {
-        todo!()
+        self.client
+            .deployment_states_api()
+            .update_deployment_state(
+                meta.workspace_id().to_string().as_ref(),
+                meta.application_id().to_string().as_ref(),
+                *meta.deployment_id(),
+                locked_state.state().id,
+                UpdateDeploymentStateRequest {
+                    status: Some(Some(DeploymentStateStatus::Pending)),
+                },
+            )
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
     }
 
-    /// Poll the backend for in-progress states that have not yet been
-    /// locked/claimed.
+    /// Poll the backend for pending states that have not yet been
+    /// locked/claimed and thus are ready to be locked and processed.
     pub(crate) async fn poll_for_state(
         &self,
-        _meta: &DeploymentMetadata,
+        meta: &DeploymentMetadata,
     ) -> Result<Vec<DeploymentState>> {
-        todo!()
+        let response = self
+            .client
+            .deployment_states_api()
+            .list_deployment_states(
+                meta.workspace_id().to_string().as_ref(),
+                meta.application_id().to_string().as_ref(),
+                *meta.deployment_id(),
+                DeploymentStateStatus::Pending,
+            )
+            .await
+            .into_diagnostic()?;
+
+        Ok(response.states)
     }
 
     pub(crate) async fn mark_state_completed(
         &self,
-        _meta: &DeploymentMetadata,
-        _state: &LockedState,
+        meta: &DeploymentMetadata,
+        locked_state: &LockedState,
     ) -> Result<()> {
-        // This state has been effected, so the lock
-        // can be released.
-        todo!()
+        self.client
+            .deployment_states_api()
+            .update_deployment_state(
+                meta.workspace_id().to_string().as_ref(),
+                meta.application_id().to_string().as_ref(),
+                *meta.deployment_id(),
+                locked_state.state().id,
+                UpdateDeploymentStateRequest {
+                    status: Some(Some(DeploymentStateStatus::Done)),
+                },
+            )
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
     }
 
     pub async fn new_deployment(
