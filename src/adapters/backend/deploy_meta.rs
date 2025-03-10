@@ -1,6 +1,8 @@
 use bon::{Builder, bon};
 use derive_getters::Getters;
+use miette::{IntoDiagnostic, Result};
 use multitool_sdk::models::DeploymentState;
+use std::sync::Arc;
 use tokio::{sync::mpsc, time::Duration};
 use uuid::Uuid;
 
@@ -27,7 +29,7 @@ pub(crate) struct LockedState {
     /// on the state. This channel signals to the thread managing
     /// the lock that it can tell the backend to release
     /// the lock because the state has been effected.
-    task_done: mpsc::Sender<()>,
+    task_done: Arc<mpsc::Sender<()>>,
 }
 
 #[bon]
@@ -41,7 +43,11 @@ impl LockedState {
         Self {
             state,
             frequency,
-            task_done,
+            task_done: Arc::new(task_done),
         }
+    }
+
+    pub(crate) async fn mark_done(&mut self) -> Result<()> {
+        self.task_done.send(()).await.into_diagnostic()
     }
 }

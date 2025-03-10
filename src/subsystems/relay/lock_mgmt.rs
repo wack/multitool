@@ -31,8 +31,6 @@ pub(super) struct LockManager {
     /// backend know the state has been achieved, and we can
     /// shutdown.
     task_done: Receiver<()>,
-    // We give this to the caller to write to `task_done`.
-    done_sender: Option<Sender<()>>,
 }
 
 #[bon]
@@ -42,18 +40,16 @@ impl LockManager {
         backend: BackendClient,
         metadata: DeploymentMetadata,
         state: DeploymentState,
-        // frequency: Duration,
     ) -> Result<Self> {
         let (done_sender, task_done) = mpsc::channel(1);
         // Take the initial lock.
-        let locked_state = backend.lock_state(&metadata, &state, &done_sender).await?;
+        let locked_state = backend.lock_state(&metadata, &state, done_sender).await?;
         let freq = *locked_state.frequency();
         let timer = interval(freq / 2);
         Ok(Self {
             backend,
             state: locked_state,
             timer,
-            done_sender: Some(done_sender),
             task_done,
             meta: metadata,
         })
@@ -61,10 +57,6 @@ impl LockManager {
 
     pub(super) fn state(&self) -> &LockedState {
         &self.state
-    }
-
-    pub(super) fn take(&mut self) -> Result<Sender<()>> {
-        self.done_sender.take().ok_or(TakenOptionalError.into())
     }
 }
 

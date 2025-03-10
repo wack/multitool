@@ -78,7 +78,7 @@ impl BackendClient {
         &self,
         meta: &DeploymentMetadata,
         state: &DeploymentState,
-        done_sender: &Sender<()>,
+        done_sender: Sender<()>,
     ) -> Result<LockedState> {
         let response = self
             .client
@@ -99,7 +99,7 @@ impl BackendClient {
             .state(*response.state)
             // TODO: we should return this from the API
             .frequency(Duration::from_secs(30))
-            .task_done(done_sender.clone())
+            .task_done(done_sender)
             .build();
 
         Ok(locked_state)

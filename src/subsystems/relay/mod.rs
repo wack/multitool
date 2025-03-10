@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{IntoDiagnostic, Report, Result};
+use miette::{Report, Result};
 use multitool_sdk::models::DeploymentStateType::{
     DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
 };
@@ -111,16 +111,12 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                 elem = state_stream.recv() => {
                     if let Some(state) = elem {
                         // When we receive a new state, we attempt to lock it.
-                        let mut lock_manager = LockManager::builder()
+                        let lock_manager = LockManager::builder()
                             .backend(self.backend.clone())
                             .metadata(self.meta.clone())
                             .state(state.clone())
                             .build().await?;
-                        let locked_state = lock_manager.state().clone();
-                        // The done_callback tells the LockManager not to bother
-                        // refreshing the lock, and to tell the backend that
-                        // the state has been completed.
-                        let done_callback = lock_manager.take()?;
+                        let mut locked_state = lock_manager.state().clone();
 
                         // Launch the lock manager.
                         subsys.start(SubsystemBuilder::new(
@@ -164,7 +160,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         // Since the action completed successfully,
                         // we can release the lock and tell the backend
                         // that the state has been effected.
-                        done_callback.send(()).await.into_diagnostic()?;
+                        locked_state.mark_done().await?;
                     } else {
                         // The stream has been closed, so we should shutdown.
                         subsys.request_shutdown();
