@@ -30,6 +30,10 @@ impl Platform for PlatformHandle {
         receiver.await.into_diagnostic()?
     }
 
+    async fn delete_canary(&mut self) -> Result<()> {
+        todo!("Not used yet")
+    }
+
     async fn promote_deployment(&mut self) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
         let params = PromoteParams::new(sender);
