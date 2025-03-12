@@ -7,6 +7,7 @@ use crate::{WholePercent, adapters::Ingress, subsystems::handle::Handle};
 pub(super) type IngressHandle = Handle<IngressMail>;
 
 pub(super) enum IngressMail {
+    Release(ReleaseParams),
     SetCanaryTraffic(TrafficParams),
     RollbackCanary(RollbackParams),
     PromoteCanary(PromoteParams),
@@ -14,6 +15,14 @@ pub(super) enum IngressMail {
 
 #[async_trait]
 impl Ingress for IngressHandle {
+    async fn release_canary(&mut self, platform_id: String) -> Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        let params = ReleaseParams::new(sender, platform_id);
+        let mail = IngressMail::Release(params);
+        self.outbox.send(mail).await.into_diagnostic()?;
+        receiver.await.into_diagnostic()?
+    }
+
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
         let params = TrafficParams::new(sender, percent);
@@ -35,6 +44,22 @@ impl Ingress for IngressHandle {
         let mail = IngressMail::PromoteCanary(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
+    }
+}
+
+pub(super) struct ReleaseParams {
+    /// The sender where the response is written.
+    pub(super) outbox: oneshot::Sender<ReleaseResp>,
+    /// The amount of traffic the user is expected to receive.
+    pub(super) platform_id: String,
+}
+
+impl ReleaseParams {
+    pub(super) fn new(outbox: oneshot::Sender<ReleaseResp>, platform_id: String) -> Self {
+        Self {
+            outbox,
+            platform_id,
+        }
     }
 }
 
@@ -75,7 +100,7 @@ impl PromoteParams {
     }
 }
 
-pub(super) type DeployResp = Result<()>;
+pub(super) type ReleaseResp = Result<()>;
 pub(super) type RollbackResp = Result<()>;
 pub(super) type PromoteResp = Result<()>;
 pub(super) type TrafficResp = Result<()>;

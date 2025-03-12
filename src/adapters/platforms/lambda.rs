@@ -14,6 +14,7 @@ pub struct LambdaPlatform {
     region: String,
     name: String,
     artifact: LambdaZip,
+    arn: Option<String>,
 }
 
 #[bon]
@@ -27,6 +28,7 @@ impl LambdaPlatform {
             region,
             name,
             artifact,
+            arn: None,
         }
     }
 }
@@ -34,7 +36,7 @@ impl LambdaPlatform {
 #[async_trait]
 impl Platform for LambdaPlatform {
     /// Update the Lambda code with the zip we're holding.
-    async fn deploy(&mut self) -> Result<()> {
+    async fn deploy(&mut self) -> Result<String> {
         // First, we need to deploy the new version of the lambda
         // Parse the bytes into the format AWS wants
         let code = Blob::from(self.artifact.as_ref());
@@ -46,7 +48,7 @@ impl Platform for LambdaPlatform {
             .ok_or(miette!("Couldn't zip lambda code"))?;
 
         // Upload it to Lambda
-        let _res = self
+        let res = self
             .client
             .update_function_code()
             .function_name(&self.name)
@@ -55,7 +57,11 @@ impl Platform for LambdaPlatform {
             .await
             .into_diagnostic()?;
 
-        Ok(())
+        let arn = res.function_arn().map(|arn| arn.to_string());
+
+        self.arn = arn.clone();
+
+        Ok(arn.unwrap())
     }
 
     async fn yank_canary(&mut self) -> Result<()> {

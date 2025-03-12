@@ -14,6 +14,8 @@ pub(super) use builder::IngressBuilder;
 /// (2) deploying, yanking, and promoting both the canary and the baseline.
 #[async_trait]
 pub trait Ingress: Shutdownable {
+    /// Given a deployed platform, release the canary in the ingress.
+    async fn release_canary(&mut self, platform_id: String) -> Result<()>;
     /// The `[Ingress]` controls how much traffic the canary gets.
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()>;
     /// This method is subtly different from `Platform::yank_canary`.

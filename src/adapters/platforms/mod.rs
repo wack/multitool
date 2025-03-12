@@ -11,7 +11,7 @@ pub(crate) use builder::PlatformBuilder;
 #[async_trait]
 pub trait Platform: Shutdownable {
     /// Deploy the canary app. Do not assign it any traffic.
-    async fn deploy(&mut self) -> Result<()>;
+    async fn deploy(&mut self) -> Result<String>;
     /// Remove the canary app from the platform.
     async fn yank_canary(&mut self) -> Result<()>;
     /// Make the canary app the new baseline.
