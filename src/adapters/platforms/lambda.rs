@@ -57,11 +57,11 @@ impl Platform for LambdaPlatform {
             .await
             .into_diagnostic()?;
 
-        let arn = res.function_arn().map(|arn| arn.to_string());
+        self.arn = res.function_arn().map(|s| s.to_string());
 
-        self.arn = arn.clone();
-
-        Ok(arn.unwrap())
+        self.arn
+            .clone()
+            .ok_or_else(|| miette!("No ARN returned from AWS"))
     }
 
     async fn yank_canary(&mut self) -> Result<()> {
