@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use mail::{IngressMail, PromoteParams, RollbackParams, TrafficParams};
+use mail::{IngressMail, PromoteParams, ReleaseParams, RollbackParams, TrafficParams};
 use miette::{Report, Result};
 use tokio::sync::mpsc::channel;
 use tokio::{select, sync::mpsc::Receiver};
@@ -49,10 +49,16 @@ impl IngressSubsystem {
 
     async fn respond_to_mail(&mut self, mail: IngressMail) {
         match mail {
+            IngressMail::Release(params) => self.handle_release(params).await,
             IngressMail::RollbackCanary(params) => self.handle_rollback(params).await,
             IngressMail::PromoteCanary(params) => self.handle_promote(params).await,
             IngressMail::SetCanaryTraffic(params) => self.handle_set_traffic(params).await,
         }
+    }
+
+    async fn handle_release(&mut self, params: ReleaseParams) {
+        let result = self.ingress.release_canary(params.platform_id).await;
+        params.outbox.send(result).unwrap();
     }
 
     async fn handle_rollback(&mut self, params: RollbackParams) {

@@ -14,7 +14,7 @@ pub(super) enum PlatformMail {
 
 #[async_trait]
 impl Platform for PlatformHandle {
-    async fn deploy(&mut self) -> Result<()> {
+    async fn deploy(&mut self) -> Result<String> {
         let (sender, receiver) = oneshot::channel();
         let params = DeployParams::new(sender);
         let mail = PlatformMail::DeployCanary(params);
@@ -75,6 +75,6 @@ impl PromoteParams {
     }
 }
 
-pub(super) type DeployResp = Result<()>;
+pub(super) type DeployResp = Result<String>;
 pub(super) type RollbackResp = Result<()>;
 pub(super) type PromoteResp = Result<()>;
