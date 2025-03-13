@@ -14,6 +14,10 @@ pub trait Platform: Shutdownable {
     async fn deploy(&mut self) -> Result<String>;
     /// Remove the canary app from the platform.
     async fn yank_canary(&mut self) -> Result<()>;
+    /// Delete the canary app from the platform.
+    /// This is slightly different than Yank becuase it actually
+    /// destroys the resoruces we created.
+    async fn delete_canary(&mut self) -> Result<()>;
     /// Make the canary app the new baseline.
     async fn promote_deployment(&mut self) -> Result<()>;
 }

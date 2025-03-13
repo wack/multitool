@@ -64,8 +64,20 @@ impl Platform for LambdaPlatform {
             .ok_or_else(|| miette!("No ARN returned from AWS"))
     }
 
+    // There's nothing to yank when the platform is a lambda
     async fn yank_canary(&mut self) -> Result<()> {
-        todo!("I'm not sure we ever yank the canary from the platform currently.")
+        Ok(())
+    }
+
+    async fn delete_canary(&mut self) -> Result<()> {
+        self.client
+            .delete_function()
+            .function_name(self.arn.as_ref().ok_or(miette!("Lambda ARN not set"))?)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
     }
 
     async fn promote_deployment(&mut self) -> Result<()> {
@@ -76,6 +88,8 @@ impl Platform for LambdaPlatform {
 #[async_trait]
 impl Shutdownable for LambdaPlatform {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!();
+        // When we get the shutdown signal, we don't want to do anything to let
+        // users debug their lamdbda
+        Ok(())
     }
 }

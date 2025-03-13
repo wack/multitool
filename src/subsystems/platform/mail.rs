@@ -9,6 +9,7 @@ pub(super) type PlatformHandle = Handle<PlatformMail>;
 pub(super) enum PlatformMail {
     DeployCanary(DeployParams),
     YankCanary(YankParams),
+    DeleteCanary(DeleteParams),
     PromoteDeployment(PromoteParams),
 }
 
@@ -26,6 +27,14 @@ impl Platform for PlatformHandle {
         let (sender, receiver) = oneshot::channel();
         let params = YankParams::new(sender);
         let mail = PlatformMail::YankCanary(params);
+        self.outbox.send(mail).await.into_diagnostic()?;
+        receiver.await.into_diagnostic()?
+    }
+
+    async fn delete_canary(&mut self) -> Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        let params = DeleteParams::new(sender);
+        let mail = PlatformMail::DeleteCanary(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
     }
@@ -75,6 +84,18 @@ impl PromoteParams {
     }
 }
 
+pub(super) struct DeleteParams {
+    /// The sender where the response is written.
+    pub(super) outbox: oneshot::Sender<DeleteResp>,
+}
+
+impl DeleteParams {
+    pub(super) fn new(outbox: oneshot::Sender<DeleteResp>) -> Self {
+        Self { outbox }
+    }
+}
+
 pub(super) type DeployResp = Result<String>;
 pub(super) type RollbackResp = Result<()>;
 pub(super) type PromoteResp = Result<()>;
+pub(super) type DeleteResp = Result<()>;

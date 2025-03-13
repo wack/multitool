@@ -169,6 +169,7 @@ impl Ingress for AwsApiGateway {
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
+
         // Remove the trailing percent sign from the string.
         let percent_string = percent.to_string();
         let percent_trimmed = percent_string.trim_end_matches('%');
@@ -192,17 +193,65 @@ impl Ingress for AwsApiGateway {
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
-        todo!("Not yet implemented.")
+        let api = self.get_api_id_by_name(&self.gateway_name).await?;
+        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
+
+        // Updates the stage to delete any canary settings from the API Gateway
+        let patch_op = PatchOperation::builder()
+            .op(Op::Remove)
+            .path("/canarySettings")
+            .build();
+
+        self.apig_client
+            .update_stage()
+            .rest_api_id(api_id)
+            .stage_name(&self.stage_name)
+            .patch_operations(patch_op)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
-        todo!("Not yet implemented.")
+        let api = self.get_api_id_by_name(&self.gateway_name).await?;
+        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
+
+        // Overwrite the main deployment's ID with the canary's
+        let replace_deployment_op = PatchOperation::builder()
+            .op(Op::Copy)
+            .from("/canarySettings/deploymentId")
+            .path("/deploymentId")
+            .build();
+
+        // Deletes all canary settings from the API Gateway so we're ready for the next
+        // canary deployment
+        let delete_canary_op = PatchOperation::builder()
+            .op(Op::Remove)
+            .path("/canarySettings")
+            .build();
+
+        // Send request to update stage
+        self.apig_client
+            .update_stage()
+            .rest_api_id(api_id)
+            .stage_name(&self.stage_name)
+            .patch_operations(replace_deployment_op)
+            .patch_operations(delete_canary_op)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
     }
 }
 
 #[async_trait]
 impl Shutdownable for AwsApiGateway {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!("What should the APIG do abnormal shutdown?");
+        // When we get the shutdown signal, we should delete any Canary settings we've set
+        self.rollback_canary().await?;
+        Ok(())
     }
 }

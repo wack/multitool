@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use mail::{DeployParams, PlatformMail, PromoteParams, YankParams};
+use mail::{DeleteParams, DeployParams, PlatformMail, PromoteParams, YankParams};
 use miette::{Report, Result};
 use tokio::{
     select,
@@ -58,6 +58,7 @@ impl PlatformSubsystem {
         match mail {
             PlatformMail::DeployCanary(params) => self.handle_deploy(params).await,
             PlatformMail::YankCanary(params) => self.handle_yank(params).await,
+            PlatformMail::DeleteCanary(params) => self.handle_delete(params).await,
             PlatformMail::PromoteDeployment(params) => self.handle_promote(params).await,
         }
     }
@@ -71,6 +72,12 @@ impl PlatformSubsystem {
     async fn handle_yank(&mut self, params: YankParams) {
         let outbox = params.outbox;
         let result = self.platform.yank_canary().await;
+        outbox.send(result).unwrap();
+    }
+
+    async fn handle_delete(&mut self, params: DeleteParams) {
+        let outbox = params.outbox;
+        let result = self.platform.delete_canary().await;
         outbox.send(result).unwrap();
     }
 

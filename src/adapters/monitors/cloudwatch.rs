@@ -134,7 +134,6 @@ impl CloudWatch {
             .send()
             .await;
 
-        // If there's an error, just return 0 results
         response
             .map(|resp| {
                 resp.metric_data_results()
@@ -149,7 +148,8 @@ impl CloudWatch {
 #[async_trait]
 impl Shutdownable for CloudWatch {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!("What should the monitor do on shutdown? Per MULTI-481, proably nothing")
+        // When we get the shutdown signal, all we need to do is not query CloudWatch
+        Ok(())
     }
 }
 
