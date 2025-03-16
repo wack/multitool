@@ -18,7 +18,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Run {
-    terminal: Terminal,
+    _terminal: Terminal,
     artifact_path: PathBuf,
     workspace: String,
     application: String,
@@ -33,7 +33,7 @@ impl Run {
         let backend = BackendClient::new(cli, session)?;
 
         Ok(Self {
-            terminal,
+            _terminal: terminal,
             backend,
             artifact_path: args.artifact_path,
             workspace: args.workspace,
