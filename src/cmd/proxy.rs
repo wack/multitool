@@ -9,7 +9,7 @@ use rand::rngs::SmallRng;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
-const DEFAULT_CANARY_CHANCE: f64 = 0.2;
+const DEFAULT_CANARY_CHANCE: f64 = 0.4;
 
 pub struct Proxy {
     _terminal: Terminal,
@@ -38,6 +38,7 @@ impl Proxy {
 
 struct MultiProxy {
     balancer: Arc<LoadBalancer<Weighted<CanarySelector>>>,
+    is_canary: Box<dyn Fn(String) -> bool + Send + Sync>,
 }
 
 struct CanarySelector {
@@ -72,10 +73,13 @@ impl MultiProxy {
     pub fn new(flags: &ProxySubcommand) -> Self {
         let canary = flags.canary().clone();
         let baseline = flags.baseline().clone();
+        let canary_ip = canary.clone();
+        let is_canary = Box::new(move |ip| ip == canary_ip);
         let upstreams = LoadBalancer::try_from_iter([baseline, canary]).unwrap();
 
         Self {
             balancer: Arc::new(upstreams),
+            is_canary,
         }
     }
 }
@@ -105,7 +109,12 @@ impl ProxyHttp for MultiProxy {
             .select(b"", 256) // hash doesn't matter for round robin
             .unwrap();
 
-        println!("upstream peer is: {upstream:?}");
+        let addr = upstream.addr.clone();
+        if (self.is_canary)(format!("{addr}")) {
+            println!("Proxying to canary at {addr}");
+        } else {
+            println!("Proxying to baseline at {addr}");
+        }
 
         let peer = Box::new(HttpPeer::new(upstream, false, "".to_owned()));
         Ok(peer)

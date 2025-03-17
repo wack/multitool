@@ -29,13 +29,13 @@ pub enum MultiCommand {
 
 impl MultiCommand {
     /// dispatch the user-provided arguments to the command handler.
-    pub async fn dispatch(self, console: Terminal, cli: &Cli) -> Result<()> {
+    pub fn dispatch(self, console: Terminal, cli: &Cli) -> Result<()> {
         match self {
-            Self::Login(flags) => Login::new(console, cli, flags)?.dispatch().await,
+            Self::Login(flags) => Login::new(console, cli, flags)?.dispatch(),
             Self::Logout => Logout::new(console).dispatch(),
             #[cfg(feature = "proxy")]
             Self::Proxy(flags) => Proxy::new(console, cli, flags).dispatch(),
-            Self::Run(flags) => Run::new(console, cli, flags)?.dispatch().await,
+            Self::Run(flags) => Run::new(console, cli, flags)?.dispatch(),
             Self::Version => Version::new(console).dispatch(),
         }
     }
