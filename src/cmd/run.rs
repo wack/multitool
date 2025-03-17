@@ -7,6 +7,7 @@ use crate::{
     Cli, ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
 use miette::{IntoDiagnostic, Result};
+use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
 
@@ -18,7 +19,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Run {
-    terminal: Terminal,
+    _terminal: Terminal,
     artifact_path: PathBuf,
     workspace: String,
     application: String,
@@ -33,7 +34,7 @@ impl Run {
         let backend = BackendClient::new(cli, session)?;
 
         Ok(Self {
-            terminal,
+            _terminal: terminal,
             backend,
             artifact_path: args.artifact_path,
             workspace: args.workspace,
@@ -41,48 +42,52 @@ impl Run {
         })
     }
 
-    pub async fn dispatch(self) -> Result<()> {
-        // • First, we have to load the artifact.
-        //   This lets us fail fast in the case where the artifact
-        //   doesn't exist or we don't have permission to read the file.
-        let artifact = LambdaZip::load(&self.artifact_path).await?;
-        // • Now, we have to load the application's configuration
-        //   from the backend. We have the name of the workspace and
-        //   application, but we need to look up the details.
-        let conf = self
-            .backend
-            .fetch_config(&self.workspace, &self.application, artifact)
-            .await?;
-        let ApplicationConfig {
-            ingress,
-            platform,
-            monitor,
-        } = conf;
+    pub fn dispatch(self) -> Result<()> {
+        let rt = Runtime::new().unwrap();
+        let _guard = rt.enter();
+        rt.block_on(async {
+            // • First, we have to load the artifact.
+            //   This lets us fail fast in the case where the artifact
+            //   doesn't exist or we don't have permission to read the file.
+            let artifact = LambdaZip::load(&self.artifact_path).await?;
+            // • Now, we have to load the application's configuration
+            //   from the backend. We have the name of the workspace and
+            //   application, but we need to look up the details.
+            let conf = self
+                .backend
+                .fetch_config(&self.workspace, &self.application, artifact)
+                .await?;
+            let ApplicationConfig {
+                ingress,
+                platform,
+                monitor,
+            } = conf;
 
-        // Create a new deployment.
-        let metadata = self.create_deployment().await?;
+            // Create a new deployment.
+            let metadata = self.create_deployment().await?;
 
-        // Build the ControllerSubsystem using the boxed objects.
-        let controller = ControllerSubsystem::builder()
-            .backend(self.backend)
-            .monitor(monitor)
-            .ingress(ingress)
-            .platform(platform)
-            .meta(metadata)
-            .build();
+            // Build the ControllerSubsystem using the boxed objects.
+            let controller = ControllerSubsystem::builder()
+                .backend(self.backend)
+                .monitor(monitor)
+                .ingress(ingress)
+                .platform(platform)
+                .meta(metadata)
+                .build();
 
-        // Let's capture the shutdown signal from the OS.
-        Toplevel::new(|s| async move {
-            // • Start the action listener subsystem.
-            s.start(SubsystemBuilder::new(
-                CONTROLLER_SUBSYSTEM_NAME,
-                controller.into_subsystem(),
-            ));
+            // Let's capture the shutdown signal from the OS.
+            Toplevel::new(|s| async move {
+                // • Start the action listener subsystem.
+                s.start(SubsystemBuilder::new(
+                    CONTROLLER_SUBSYSTEM_NAME,
+                    controller.into_subsystem(),
+                ));
+            })
+            .catch_signals()
+            .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
+            .await
+            .map_err(Into::into)
         })
-        .catch_signals()
-        .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
-        .await
-        .map_err(Into::into)
     }
 
     async fn create_deployment(&self) -> Result<DeploymentMetadata> {

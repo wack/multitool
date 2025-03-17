@@ -6,9 +6,9 @@ use super::{
     StatusCode,
 };
 use crate::Cli;
-use crate::fs::{FileSystem, SessionFile, UserCreds};
+use crate::fs::UserCreds;
 use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};

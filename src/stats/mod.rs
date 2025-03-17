@@ -1,5 +1,4 @@
 pub use categorical::Categorical;
-pub use contingency::ContingencyTable;
 pub use group::Group;
 pub use observation::{CategoricalObservation, Observation};
 

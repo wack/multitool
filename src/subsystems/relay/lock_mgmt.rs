@@ -1,10 +1,9 @@
-use crate::subsystems::TakenOptionalError;
 use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result};
 use multitool_sdk::models::DeploymentState;
 use tokio::select;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{self, Receiver};
 use tokio::time::{Interval, interval};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
