@@ -77,7 +77,7 @@ impl Terminal {
     pub fn login_successful(&self) -> Result<()> {
         self.stdout
             .term()
-            .write_line("Logout successful.")
+            .write_line("Login successful!")
             .into_diagnostic()
     }
 

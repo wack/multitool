@@ -53,8 +53,8 @@ impl Clone for BackendClient {
 
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
-    pub fn new(cli: &Cli, session: Session) -> Result<Self> {
-        let conf = BackendConfig::new(cli.origin(), Some(session.clone()));
+    pub fn new(cli: &Cli, session: Option<Session>) -> Result<Self> {
+        let conf = BackendConfig::new(cli.origin(), session.clone());
 
         let raw_conf: Configuration = conf.clone().into();
 
@@ -62,7 +62,7 @@ impl BackendClient {
         Ok(Self {
             conf: raw_conf,
             client,
-            session: Some(session),
+            session,
         })
     }
 
@@ -416,7 +416,7 @@ impl From<LoginSuccess> for UserCreds {
         UserCreds::new(
             login.user.email,
             login.user.jwt,
-            DateTime::parse_from_rfc2822(&login.user.expires_at)
+            DateTime::parse_from_rfc3339(&login.user.expires_at)
                 .expect("Failed to parse JWT expiry date.")
                 .into(),
         )

@@ -30,7 +30,7 @@ impl Run {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
 
-        let backend = BackendClient::new(cli, session)?;
+        let backend = BackendClient::new(cli, Some(session))?;
 
         Ok(Self {
             terminal,
