@@ -14,7 +14,7 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t=EnableColors::default())]
     enable_colors: EnableColors,
 
-    #[arg(long, short = 'o', default_value = Some("localhost:8000"))]
+    #[arg(long, short = 'o', default_value = Some("http://127.0.0.1:8080"))]
     origin: Option<String>,
 }
 
