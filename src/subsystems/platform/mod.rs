@@ -108,6 +108,7 @@ impl IntoSubsystem<Report> for PlatformSubsystem {
                     if let Some(mail) = mail {
                         self.respond_to_mail(mail).await;
                     } else {
+                        dbg!("Stream closed in platform");
                         subsys.request_shutdown()
                     }
                 }

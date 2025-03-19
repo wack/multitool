@@ -5,7 +5,7 @@ pub use ingresses::*;
 pub use monitors::*;
 pub use platforms::*;
 
-mod backend;
+pub mod backend;
 /// Contains the trait definition and ingress implementations. Ingresses are responsible
 /// for actuating changes to traffic.
 mod ingresses;

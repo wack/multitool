@@ -96,6 +96,7 @@ impl IntoSubsystem<Report> for IngressSubsystem {
                     if let Some(mail) = mail {
                         self.respond_to_mail(mail).await;
                     } else {
+                        dbg!("Stream closed in ingress");
                         return self.shutdown().await;
                     }
                 }
