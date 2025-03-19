@@ -21,7 +21,6 @@ use multitool_sdk::models::{DeploymentState, UpdateDeploymentStateRequest};
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinSet;
 use tokio::time::Duration;
-use uuid::Uuid;
 
 pub(crate) use deploy_meta::*;
 
@@ -84,8 +83,8 @@ impl BackendClient {
             .client
             .deployment_states_api()
             .update_deployment_state(
-                meta.workspace_id().to_string().as_ref(),
-                meta.application_id().to_string().as_ref(),
+                *meta.workspace_id(),
+                *meta.application_id(),
                 *meta.deployment_id(),
                 state.id,
                 UpdateDeploymentStateRequest {
@@ -113,8 +112,8 @@ impl BackendClient {
         self.client
             .deployment_states_api()
             .refresh_deployment_state(
-                meta.workspace_id().to_string().as_ref(),
-                meta.application_id().to_string().as_ref(),
+                *meta.workspace_id(),
+                *meta.application_id(),
                 *meta.deployment_id(),
                 locked_state.state().id,
             )
@@ -133,8 +132,8 @@ impl BackendClient {
         self.client
             .deployment_states_api()
             .update_deployment_state(
-                meta.workspace_id().to_string().as_ref(),
-                meta.application_id().to_string().as_ref(),
+                *meta.workspace_id(),
+                *meta.application_id(),
                 *meta.deployment_id(),
                 locked_state.state().id,
                 UpdateDeploymentStateRequest {
@@ -157,10 +156,10 @@ impl BackendClient {
             .client
             .deployment_states_api()
             .list_deployment_states(
-                meta.workspace_id().to_string().as_ref(),
-                meta.application_id().to_string().as_ref(),
+                *meta.workspace_id(),
+                *meta.application_id(),
                 *meta.deployment_id(),
-                DeploymentStateStatus::Pending,
+                Some(DeploymentStateStatus::Pending),
             )
             .await
             .into_diagnostic()?;
@@ -176,8 +175,8 @@ impl BackendClient {
         self.client
             .deployment_states_api()
             .update_deployment_state(
-                meta.workspace_id().to_string().as_ref(),
-                meta.application_id().to_string().as_ref(),
+                *meta.workspace_id(),
+                *meta.application_id(),
                 *meta.deployment_id(),
                 locked_state.state().id,
                 UpdateDeploymentStateRequest {
@@ -198,10 +197,7 @@ impl BackendClient {
         let response = self
             .client
             .deployments_api()
-            .create_deployment(
-                workspace_id.to_string().as_ref(),
-                application_id.to_string().as_ref(),
-            )
+            .create_deployment(workspace_id, application_id)
             .await
             .into_diagnostic()?;
         Ok(response.deployment.id)
@@ -265,13 +261,13 @@ impl BackendClient {
                 crate::stats::Group::Experimental => ApplicationGroup::Canary,
             };
             let req_body = CreateResponseCodeMetricsRequest {
-                app_class: group,
-                status_2xx_count: item.get_count(&ResponseStatusCode::_2XX) as i32,
-                status_4xx_count: item.get_count(&ResponseStatusCode::_4XX) as i32,
-                status_5xx_count: item.get_count(&ResponseStatusCode::_5XX) as i32,
+                app_group: group,
+                status_2xx_count: item.get_count(&ResponseStatusCode::_2XX) as u32,
+                status_4xx_count: item.get_count(&ResponseStatusCode::_4XX) as u32,
+                status_5xx_count: item.get_count(&ResponseStatusCode::_5XX) as u32,
             };
-            let workspace_id = meta.workspace_id().to_string();
-            let application_id = meta.application_id().to_string();
+            let workspace_id = *meta.workspace_id();
+            let application_id = *meta.application_id();
             let deployment_id = *meta.deployment_id();
             let cloned_client = self.clone();
             req_waiter.spawn_local(async move {
@@ -279,8 +275,8 @@ impl BackendClient {
                     .client
                     .response_code_metrics_api()
                     .create_response_code_metrics(
-                        &workspace_id,
-                        &application_id,
+                        workspace_id,
+                        application_id,
                         deployment_id,
                         req_body,
                     )
@@ -327,7 +323,7 @@ impl BackendClient {
     /// name, fetch the application's information.
     async fn get_application_by_name(
         &self,
-        workspace_id: Uuid,
+        workspace_id: WorkspaceId,
         name: &str,
     ) -> Result<ApplicationDetails> {
         self.is_authenicated()?;
@@ -335,7 +331,7 @@ impl BackendClient {
         let mut applications: Vec<_> = self
             .client
             .applications_api()
-            .list_applications(workspace_id.to_string().as_ref())
+            .list_applications(workspace_id)
             .await
             .into_diagnostic()?
             .applications
@@ -354,10 +350,7 @@ impl BackendClient {
 
         self.client
             .applications_api()
-            .get_application(
-                workspace_id.to_string().as_ref(),
-                application.id.to_string().as_ref(),
-            )
+            .get_application(workspace_id, application.id)
             .await
             .map(|success| *success.application)
             .into_diagnostic()

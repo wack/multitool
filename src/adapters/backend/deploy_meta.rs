@@ -4,10 +4,9 @@ use miette::{IntoDiagnostic, Result};
 use multitool_sdk::models::DeploymentState;
 use std::sync::Arc;
 use tokio::{sync::mpsc, time::Duration};
-use uuid::Uuid;
 
-pub(crate) type WorkspaceId = Uuid;
-pub(crate) type ApplicationId = Uuid;
+pub(crate) type WorkspaceId = u32;
+pub(crate) type ApplicationId = u32;
 pub(crate) type DeploymentId = u64;
 
 /// DeploymentMetadata captures the relevant parameters for a particular
