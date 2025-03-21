@@ -2,7 +2,6 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
-use crate::Cli;
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode};
 use chrono::DateTime;
@@ -20,6 +19,7 @@ use tokio::task::JoinSet;
 use tokio::time::Duration;
 
 pub(crate) use deploy_meta::*;
+use tracing::trace;
 
 // WARNING: This code seriously needs to be cleaned up.
 // I wrote this in a sloppy fit while trying to yak shave
@@ -49,8 +49,8 @@ impl Clone for BackendClient {
 
 impl BackendClient {
     /// Return a new backend client for the MultiTool backend.
-    pub fn new(cli: &Cli, session: Option<Session>) -> Result<Self> {
-        let conf = BackendConfig::new(cli.origin(), session.clone());
+    pub fn new(origin: Option<&str>, session: Option<Session>) -> Result<Self> {
+        let conf = BackendConfig::new(origin, session.clone());
 
         let raw_conf: Configuration = conf.clone().into();
 
@@ -106,6 +106,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
+        trace!("Refreshing lock");
         self.client
             .deployment_states_api()
             .refresh_deployment_state(
@@ -116,7 +117,7 @@ impl BackendClient {
             )
             .await
             .into_diagnostic()?;
-
+        trace!("Lock refreshed successfully");
         Ok(())
     }
 
@@ -126,6 +127,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
+        trace!("Abandoning lock");
         self.client
             .deployment_states_api()
             .update_deployment_state(
@@ -140,6 +142,7 @@ impl BackendClient {
             .await
             .into_diagnostic()?;
 
+        trace!("Lock abandoned successfully");
         Ok(())
     }
 
@@ -149,6 +152,7 @@ impl BackendClient {
         &self,
         meta: &DeploymentMetadata,
     ) -> Result<Vec<DeploymentState>> {
+        trace!("Polling for new state");
         let response = self
             .client
             .deployment_states_api()
@@ -161,6 +165,7 @@ impl BackendClient {
             .await
             .into_diagnostic()?;
 
+        trace!("Polling complete");
         Ok(response.states)
     }
 
@@ -169,6 +174,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
+        trace!("Marking state as completed");
         self.client
             .deployment_states_api()
             .update_deployment_state(
@@ -183,6 +189,7 @@ impl BackendClient {
             .await
             .into_diagnostic()?;
 
+        trace!("Stated successfulled marked as completed");
         Ok(())
     }
 
@@ -191,18 +198,22 @@ impl BackendClient {
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
     ) -> Result<DeploymentId> {
+        trace!("Creating a new deployment");
         let response = self
             .client
             .deployments_api()
             .create_deployment(workspace_id, application_id)
             .await
             .into_diagnostic()?;
+
+        trace!("Deployment created successfully");
         Ok(response.deployment.id)
     }
 
     /// This fuction logs the user into the backend by exchanging these credentials
     /// with the backend server.
     pub async fn exchange_creds(&self, email: &str, password: &str) -> Result<Session> {
+        trace!("Exchanging creds with the backend");
         // • Create and send the request, marshalling the result
         //   into user credentials.
         let req = LoginRequest {
@@ -217,6 +228,7 @@ impl BackendClient {
             .into_diagnostic()?
             .into();
 
+        trace!("Creds exchanged, login success");
         Ok(Session::User(creds))
     }
 
@@ -226,6 +238,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         data: Vec<StatusCode>,
     ) -> Result<()> {
+        trace!("Uploading observation to backend");
         let mut req_waiter = JoinSet::new();
 
         for item in data {
@@ -262,13 +275,14 @@ impl BackendClient {
         result
             .map(|_| ())
             .map_err(|err| miette!("Error uploading observation: {err}"))
+            .inspect(|_| trace!("Uploading observation to backend"))
     }
 
     /// Return information about the workspace given its name.
     pub(crate) async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
         self.is_authenicated()?;
 
-        // let mut workspaces = list_workspaces(&self.conf, Some(name))
+        trace!("Getting workspace id using its name");
         let mut workspaces: Vec<_> = self
             .client
             .workspaces_api()
@@ -286,6 +300,7 @@ impl BackendClient {
             bail!("No workspace with the given name exists for this account");
         } else {
             // TODO: We can simplify this code with .ok_or()
+            trace!("Successfully acquired the workspace id");
             Ok(workspaces.pop().unwrap())
         }
     }
@@ -300,6 +315,7 @@ impl BackendClient {
         name: &str,
     ) -> Result<ApplicationDetails> {
         self.is_authenicated()?;
+        trace!("Getting application id using its name");
 
         let mut applications: Vec<_> = self
             .client
@@ -327,6 +343,7 @@ impl BackendClient {
             .await
             .map(|success| *success.application)
             .into_diagnostic()
+            .inspect(|_| trace!("Successfully acquired the workspace id"))
     }
 }
 

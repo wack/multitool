@@ -1,5 +1,5 @@
 use crate::adapters::BackendClient;
-use crate::{Cli, fs::SessionFile};
+use crate::fs::SessionFile;
 use miette::Result;
 use tokio::runtime::Runtime;
 
@@ -13,8 +13,8 @@ pub struct Login {
 }
 
 impl Login {
-    pub fn new(terminal: Terminal, cli: &Cli, flags: LoginSubcommand) -> Result<Self> {
-        let backend = BackendClient::new(cli, None)?;
+    pub fn new(terminal: Terminal, flags: LoginSubcommand) -> Result<Self> {
+        let backend = BackendClient::new(flags.origin(), None)?;
 
         Ok(Self {
             terminal,

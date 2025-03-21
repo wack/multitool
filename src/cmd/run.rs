@@ -7,7 +7,7 @@ use crate::adapters::{
 use crate::fs::{FileSystem, SessionFile};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
-    Cli, ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
+    ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
 use miette::Result;
 use tokio::runtime::Runtime;
@@ -30,18 +30,19 @@ pub struct Run {
 }
 
 impl Run {
-    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Result<Self> {
+    pub fn new(terminal: Terminal, args: RunSubcommand) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
+        let origin = args.origin().as_deref();
 
-        let backend = BackendClient::new(cli, Some(session))?;
+        let backend = BackendClient::new(origin, Some(session))?;
 
         Ok(Self {
             _terminal: terminal,
             backend,
-            artifact_path: args.artifact_path,
-            workspace_name: args.workspace,
-            application_name: args.application,
+            artifact_path: args.artifact_path().to_owned(),
+            workspace_name: args.workspace().to_owned(),
+            application_name: args.application().to_owned(),
         })
     }
 

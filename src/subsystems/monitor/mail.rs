@@ -33,4 +33,4 @@ impl<T: Observation> QueryParams<T> {
     }
 }
 
-pub(super) type QueryResp<T: Observation> = Result<Vec<T>>;
+pub(super) type QueryResp<T> = Result<Vec<T>>;
