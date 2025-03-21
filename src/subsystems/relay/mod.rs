@@ -53,6 +53,7 @@ impl<T: Observation + Send + 'static> RelaySubsystem<T> {
         ingress: BoxedIngress,
         backend_poll_frequency: Option<Duration>,
     ) -> Self {
+        dbg!("Creating a new relay subsystem...");
         Self {
             backend,
             meta,
@@ -78,6 +79,7 @@ impl<T: Observation + Send + 'static> RelaySubsystem<T> {
 #[async_trait]
 impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
+        dbg!("Running the relay subsystem...");
         // Kick off a task to poll the backend for new states.
         let mut poller = self.new_poller();
         let mut state_stream = poller.take_stream()?;
@@ -100,15 +102,18 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                 //   we need to select on the observation stream.
                 //   When a new observation arrives, we send it to the backend.
                 elem = observations.recv() => {
+                    dbg!("Received new observation: {:?}", &elem);
                     if let Some(batch) = elem {
                         self.backend.upload_observations(&self.meta, batch).await?;
                     } else {
                         // The stream has been closed, so we should shutdown.
+                        dbg!("Shutting down in relay");
                         subsys.request_shutdown();
                     }
                 }
                 // • We also need to poll the backend for new states.
                 elem = state_stream.recv() => {
+                    dbg!("Received new state: {:?}", &elem);
                     if let Some(state) = elem {
                         // When we receive a new state, we attempt to lock it.
                         let lock_manager = LockManager::builder()
@@ -116,8 +121,9 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                             .metadata(self.meta.clone())
                             .state(state.clone())
                             .build().await?;
+                        dbg!("Locking state: {:?}", &state);
                         let mut locked_state = lock_manager.state().clone();
-
+                        dbg!("Starting lock manager from relay...");
                         // Launch the lock manager.
                         subsys.start(SubsystemBuilder::new(
                             format!("LockManager {}", state.id),
@@ -126,6 +132,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         // Now that we have the lock managed, we
                         // need to tell the Platform/Ingress
                         // to effect the state.
+                        dbg!("Effecting state: {:?}", locked_state.state().state_type);
                         match locked_state.state().state_type {
                             PromoteCanary => {
                                 // Ingress operation.
@@ -136,10 +143,12 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 // First, we deploy the canary to the platform. At
                                 // this point, it won't have any traffic, and the ingress doesn't
                                 // know anything about it.
-                                let platform_id = self.platform.deploy().await?;
+                                dbg!("Deploying canary...");
+                                let platform_id = dbg!(self.platform.deploy().await)?;
                                 // Next, we need the ingress to acknowledge the platform's existance,
                                 // creating a CanarySettings objects with zero traffic.
-                                self.ingress.release_canary(platform_id).await?;
+                                dbg!("Releasing canary with ingress...");
+                                dbg!(self.ingress.release_canary(platform_id).await)?;
                             },
                             SetCanaryTraffic => {
                                  // TODO: Capture percentage from data field of the DeploymentState object.

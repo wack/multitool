@@ -7,7 +7,7 @@ use crate::{Shutdownable, WholePercent};
 /// dispatched.
 pub type BoxedIngress = Box<dyn Ingress + Send + Sync>;
 
-pub(super) use builder::IngressBuilder;
+pub(crate) use builder::IngressBuilder;
 
 /// Ingresses are responsible for (1) controlling how much traffic the canary
 /// gets (hence the name ingress, since it functions like a virtual LB) and

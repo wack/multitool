@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bon::bon;
+use chrono::format;
 use miette::{IntoDiagnostic as _, Result, miette};
 
 use crate::{
@@ -51,14 +52,19 @@ impl Platform for LambdaPlatform {
         let res = self
             .client
             .update_function_code()
+            .publish(true)
             .function_name(&self.name)
             .zip_file(zip_file.clone())
             .send()
             .await
             .into_diagnostic()?;
 
-        self.arn = res.function_arn().map(|s| s.to_string());
+        let function_arn = res
+            .function_arn()
+            .map(ToString::to_string)
+            .ok_or(miette!("Couldn't get ARN of deployed lambda"))?;
 
+        self.arn = Some(function_arn);
         self.arn
             .clone()
             .ok_or_else(|| miette!("No ARN returned from AWS"))

@@ -1,13 +1,10 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use super::{
-    BoxedIngress, BoxedMonitor, BoxedPlatform, IngressBuilder, MonitorBuilder, PlatformBuilder,
-    StatusCode,
-};
+use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::Cli;
 use crate::fs::UserCreds;
-use crate::{artifacts::LambdaZip, fs::Session, metrics::ResponseStatusCode};
+use crate::{fs::Session, metrics::ResponseStatusCode};
 use chrono::DateTime;
 use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
@@ -203,30 +200,6 @@ impl BackendClient {
         Ok(response.deployment.id)
     }
 
-    /// Given the workspace name and the application name, fetch
-    /// the configuration of the application.
-    pub async fn fetch_config(
-        &self,
-        workspace: &str,
-        application_name: &str,
-        artifact: LambdaZip,
-    ) -> Result<ApplicationConfig> {
-        // • First, we have to exchange the workspace name for it's id.
-        let workspace = self.get_workspace_by_name(workspace).await?;
-        // • Then, we can do the same with the application name.
-        let application = self
-            .get_application_by_name(workspace.id, application_name)
-            .await?;
-        let ingress_conf = *application.ingress;
-        let platform_conf = *application.platform;
-        let monitor_conf = *application.monitor;
-        Ok(ApplicationConfig {
-            platform: PlatformBuilder::new(platform_conf, artifact).build().await,
-            ingress: IngressBuilder::new(ingress_conf).build().await,
-            monitor: MonitorBuilder::new(monitor_conf).build().await,
-        })
-    }
-
     /// This fuction logs the user into the backend by exchanging these credentials
     /// with the backend server.
     pub async fn exchange_creds(&self, email: &str, password: &str) -> Result<Session> {
@@ -292,7 +265,7 @@ impl BackendClient {
     }
 
     /// Return information about the workspace given its name.
-    async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
+    pub(crate) async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
         self.is_authenicated()?;
 
         // let mut workspaces = list_workspaces(&self.conf, Some(name))
@@ -321,7 +294,7 @@ impl BackendClient {
     //       isntead of having to filter by name.
     /// Given the id of the workspace containing the application, and the application's
     /// name, fetch the application's information.
-    async fn get_application_by_name(
+    pub(crate) async fn get_application_by_name(
         &self,
         workspace_id: WorkspaceId,
         name: &str,
@@ -416,7 +389,7 @@ impl From<LoginSuccess> for UserCreds {
     }
 }
 
-mod deploy_meta;
+pub mod deploy_meta;
 
 #[cfg(test)]
 mod tests {

@@ -17,7 +17,7 @@ pub type StatusCode = CategoricalObservation<5, ResponseStatusCode>;
 // and there may not be a generic parameter on the Monitor type anymore.
 pub type BoxedMonitor = Box<dyn Monitor<Item = StatusCode> + Send + Sync>;
 
-pub(super) use builder::MonitorBuilder;
+pub(crate) use builder::MonitorBuilder;
 
 #[async_trait]
 pub trait Monitor: Shutdownable {

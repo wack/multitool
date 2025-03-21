@@ -2285,7 +2285,7 @@ dependencies = [
 [[package]]
 name = "multitool-sdk"
 version = "0.1.0"
-source = "git+https://github.com/wack/multitool-rust-sdk.git?branch=trunk#c7a2105da95b09e3b783fad133a223b0dc0ade8c"
+source = "git+https://github.com/wack/multitool-rust-sdk.git?branch=trunk#ea6e5148500ee10a9af3421eca5ab72d17db614e"
 dependencies = [
  "async-trait",
  "reqwest 0.12.15",
