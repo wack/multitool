@@ -49,16 +49,11 @@ impl AwsCloudwatchMetricsMonitorBuilder {
 #[async_trait]
 impl Builder for AwsCloudwatchMetricsMonitorBuilder {
     async fn build(self) -> BoxedMonitor {
-        // TODO: Plumb the values in correctly.
-        // let gateway_name = self.conf.gateway_name;
-        // let stage_name = self.conf.stage_name;
-        let gateway_name = "".to_owned();
-        let stage_name = "".to_owned();
         let region = self.conf.region;
+        let dimensions = self.conf.dimensions;
         let cloudwatch_monitor = CloudWatch::builder()
-            .gateway_name(gateway_name)
-            .stage_name(stage_name)
             .region(region)
+            .dimensions(dimensions)
             .build()
             .await;
         Box::new(cloudwatch_monitor)

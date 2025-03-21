@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{Report, Result};
+use miette::{Report, Result, miette};
+use multitool_sdk::models::DeploymentStateData;
 use multitool_sdk::models::DeploymentStateType::{
     DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
 };
@@ -116,18 +117,19 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                 elem = state_stream.recv() => {
                     debug!("Received new state: {:?}", &elem);
                     if let Some(state) = elem {
+                        let state_id = state.id;
                         // When we receive a new state, we attempt to lock it.
                         let lock_manager = LockManager::builder()
                             .backend(self.backend.clone())
                             .metadata(self.meta.clone())
-                            .state(state.clone())
+                            .state(state)
                             .build().await?;
                         debug!("Locking state: {:?}", &state);
                         let mut locked_state = lock_manager.state().clone();
                         debug!("Starting lock manager from relay...");
                         // Launch the lock manager.
                         subsys.start(SubsystemBuilder::new(
-                            format!("LockManager {}", state.id),
+                            format!("LockManager {}", state_id),
                             lock_manager.into_subsystem(),
                         ));
                         // Now that we have the lock managed, we
@@ -136,9 +138,12 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         debug!("Effecting state: {:?}", locked_state.state().state_type);
                         match locked_state.state().state_type {
                             PromoteCanary => {
+                                dbg!("Promoting canary...");
                                 // Ingress operation.
                                 self.ingress.promote_canary().await?;
-                                // TODO: Do we need to call Platform::promote_canary too?
+
+                                // If the canary is promoted, we can safely just shut down the CLI
+                                subsys.request_shutdown();
                             },
                             DeployCanary => {
                                 // First, we deploy the canary to the platform. At
@@ -154,18 +159,26 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                             },
                             SetCanaryTraffic => {
                                  // TODO: Capture percentage from data field of the DeploymentState object.
-                                let percent = WholePercent::try_from(0).unwrap();
                                 info!("Scaling traffic to {percent}%");
+                                let percent_traffic = if let Some(data) = locked_state.state().data.clone().flatten() {
+                                    let DeploymentStateData::DeploymentStateDataOneOf(state_data) = *data;
+                                    state_data.set_canary_traffic.percent_traffic
+                                } else{
+                                    return Err(miette!("No data found in state"));
+                                };
+                                info!("Setting canary traffic to: {:?}", percent_traffic);
+                                let percent = WholePercent::try_from(percent_traffic).unwrap();
                                 self.ingress.set_canary_traffic(percent).await?;
-                                todo!();
                             },
                             RollbackCanary => {
+                                debug!("Rolling back canary...");
                                 // Set traffic to 0 immediately.
                                 self.ingress.set_canary_traffic(WholePercent::try_from(0).unwrap()).await?;
                                 // Then, yank the canary from the ingress.
                                 self.ingress.rollback_canary().await?;
-                                // TODO: We don't currently support yanking from the platform for Lambda.
-                                // Finally, yank the canary from the platform. [Optional]
+
+                                // If the canary is rolled back, we can safely just shut down the CLI
+                                subsys.request_shutdown();
                             },
                         }
                         // Since the action completed successfully,
