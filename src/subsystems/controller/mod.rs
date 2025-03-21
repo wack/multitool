@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
+use tracing::{debug, trace};
 
 use crate::adapters::{
     BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, DeploymentMetadata,
@@ -41,7 +42,8 @@ impl ControllerSubsystem {
         platform: BoxedPlatform,
         meta: DeploymentMetadata,
     ) -> Self {
-        dbg!("Creating a new controller subsystem...");
+        trace!("Creating a new controller subsystem...");
+
         Self {
             backend,
             monitor,
@@ -55,7 +57,7 @@ impl ControllerSubsystem {
 #[async_trait]
 impl IntoSubsystem<Report> for ControllerSubsystem {
     async fn run(self, subsys: SubsystemHandle) -> Result<()> {
-        dbg!("Running the controller subsystem...");
+        debug!("Running the controller subsystem...");
         let ingress_subsystem = IngressSubsystem::new(self.ingress);
         let ingress_handle = ingress_subsystem.handle();
 

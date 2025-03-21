@@ -1,4 +1,5 @@
 use dialoguer::{Input, Password};
+use logging::setup_logger;
 use miette::{DebugReportHandler, GraphicalReportHandler, IntoDiagnostic, Result};
 
 use crate::Cli;
@@ -6,6 +7,7 @@ use crate::Cli;
 use dest::TermDestination;
 
 mod dest;
+mod logging;
 mod theme;
 
 pub struct Terminal {
@@ -19,6 +21,7 @@ impl Terminal {
         // terminal output.
         let stdout = TermDestination::stdout(cli);
         let stderr = TermDestination::stderr(cli);
+        setup_logger(*cli.log_level());
 
         Self { stdout, stderr }
     }

@@ -7,12 +7,13 @@ use crate::adapters::{
 use crate::fs::{FileSystem, SessionFile};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
-    Cli, ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
+    ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
 use miette::Result;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
+use tracing::debug;
 
 use crate::Terminal;
 
@@ -30,33 +31,34 @@ pub struct Run {
 }
 
 impl Run {
-    pub fn new(terminal: Terminal, cli: &Cli, args: RunSubcommand) -> Result<Self> {
+    pub fn new(terminal: Terminal, args: RunSubcommand) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
+        let origin = args.origin().as_deref();
 
-        let backend = BackendClient::new(cli, Some(session))?;
+        let backend = BackendClient::new(origin, Some(session))?;
 
         Ok(Self {
             _terminal: terminal,
             backend,
-            artifact_path: args.artifact_path,
-            workspace_name: args.workspace,
-            application_name: args.application,
+            artifact_path: args.artifact_path().to_owned(),
+            workspace_name: args.workspace().to_owned(),
+            application_name: args.application().to_owned(),
         })
     }
 
     pub fn dispatch(self) -> Result<()> {
-        dbg!("Executing the `run` command...");
+        debug!("Executing the `run` command...");
         let rt = Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
             // First, we have to load the artifact.
             // This lets us fail fast in the case where the artifact
             // doesn't exist or we don't have permission to read the file.
-            dbg!("Loading the lambda artifact...");
+            debug!("Loading the lambda artifact...");
             let artifact = LambdaZip::load(&self.artifact_path).await?;
             // We need to convert our workspace and application names into the full workspace and application object
-            dbg!("Loading workspace and application...");
+            debug!("Loading workspace and application...");
             let workspace = self
                 .backend
                 .get_workspace_by_name(&self.workspace_name)
@@ -68,7 +70,7 @@ impl Run {
             // Now, we have to load the application's configuration
             // from the backend. We have the name of the workspace and
             // application, but we need to look up the details.
-            dbg!("Loading application conf...");
+            debug!("Loading application conf...");
             let conf = ApplicationConfig {
                 platform: PlatformBuilder::new(*application.platform, artifact)
                     .build()
@@ -81,7 +83,7 @@ impl Run {
             let metadata = self.create_deployment(workspace.id, application.id).await?;
 
             // Build the ControllerSubsystem using the boxed objects.
-            dbg!("Building controller...");
+            debug!("Building controller...");
             let controller = ControllerSubsystem::builder()
                 .backend(self.backend)
                 .monitor(conf.monitor)
@@ -110,13 +112,13 @@ impl Run {
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
     ) -> Result<DeploymentMetadata> {
-        dbg!("Creating new deployment...");
+        debug!("Creating new deployment...");
         let deployment_id = self
             .backend
             .new_deployment(workspace_id, application_id)
             .await?;
 
-        dbg!("Creating new deployment metadata...");
+        debug!("Creating new deployment metadata...");
         let meta = DeploymentMetadata::builder()
             .workspace_id(workspace_id)
             .application_id(application_id)
