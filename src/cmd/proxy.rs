@@ -1,4 +1,4 @@
-use crate::{Cli, Terminal, config::ProxySubcommand};
+use crate::{Terminal, config::ProxySubcommand};
 use async_trait::async_trait;
 use miette::Result;
 use pingora::lb::selection::weighted::Weighted;
@@ -17,7 +17,7 @@ pub struct Proxy {
 }
 
 impl Proxy {
-    pub fn new(terminal: Terminal, _: &Cli, args: ProxySubcommand) -> Self {
+    pub fn new(terminal: Terminal, args: ProxySubcommand) -> Self {
         Self {
             _terminal: terminal,
             args,
@@ -88,9 +88,7 @@ impl MultiProxy {
 impl ProxyHttp for MultiProxy {
     type CTX = ();
 
-    fn new_ctx(&self) -> () {
-        ()
-    }
+    fn new_ctx(&self) {}
 
     async fn logging(&self, session: &mut Session, _e: Option<&Error>, _ctx: &mut Self::CTX) {
         if let Some(resp) = session.response_written() {

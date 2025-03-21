@@ -19,7 +19,7 @@ fn dispatch_command(cli: Cli) -> Result<()> {
     // or use a more accessible output.
     terminal.set_error_hook()?;
     match cli.cmd() {
-        Some(cmd) => cmd.clone().dispatch(terminal, &cli),
+        Some(cmd) => cmd.clone().dispatch(terminal),
         // No command was provided.
         None => empty_command(),
     }

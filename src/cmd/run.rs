@@ -13,6 +13,7 @@ use miette::Result;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
+use tracing::debug;
 
 use crate::Terminal;
 
@@ -47,17 +48,17 @@ impl Run {
     }
 
     pub fn dispatch(self) -> Result<()> {
-        dbg!("Executing the `run` command...");
+        debug!("Executing the `run` command...");
         let rt = Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
             // First, we have to load the artifact.
             // This lets us fail fast in the case where the artifact
             // doesn't exist or we don't have permission to read the file.
-            dbg!("Loading the lambda artifact...");
+            debug!("Loading the lambda artifact...");
             let artifact = LambdaZip::load(&self.artifact_path).await?;
             // We need to convert our workspace and application names into the full workspace and application object
-            dbg!("Loading workspace and application...");
+            debug!("Loading workspace and application...");
             let workspace = self
                 .backend
                 .get_workspace_by_name(&self.workspace_name)
@@ -69,7 +70,7 @@ impl Run {
             // Now, we have to load the application's configuration
             // from the backend. We have the name of the workspace and
             // application, but we need to look up the details.
-            dbg!("Loading application conf...");
+            debug!("Loading application conf...");
             let conf = ApplicationConfig {
                 platform: PlatformBuilder::new(*application.platform, artifact)
                     .build()
@@ -82,7 +83,7 @@ impl Run {
             let metadata = self.create_deployment(workspace.id, application.id).await?;
 
             // Build the ControllerSubsystem using the boxed objects.
-            dbg!("Building controller...");
+            debug!("Building controller...");
             let controller = ControllerSubsystem::builder()
                 .backend(self.backend)
                 .monitor(conf.monitor)
@@ -111,13 +112,13 @@ impl Run {
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
     ) -> Result<DeploymentMetadata> {
-        dbg!("Creating new deployment...");
+        debug!("Creating new deployment...");
         let deployment_id = self
             .backend
             .new_deployment(workspace_id, application_id)
             .await?;
 
-        dbg!("Creating new deployment metadata...");
+        debug!("Creating new deployment metadata...");
         let meta = DeploymentMetadata::builder()
             .workspace_id(workspace_id)
             .application_id(application_id)

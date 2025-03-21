@@ -10,6 +10,7 @@ use tokio::{
     sync::mpsc::{Receiver, channel},
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use tracing::debug;
 
 use super::{ShutdownResult, Shutdownable};
 
@@ -71,7 +72,7 @@ impl IntoSubsystem<Report> for MonitorSubsystem<StatusCode> {
                     if let Some(mail) = mail {
                         self.respond_to_mail(mail).await;
                     } else {
-                        dbg!("Stream closed in monitor");
+                        debug!("Stream closed in monitor");
                         return self.shutdown().await;
                     }
                 }

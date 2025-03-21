@@ -11,6 +11,7 @@ use tokio::{
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use tokio_stream::{Stream, StreamExt as _, wrappers::IntervalStream};
+use tracing::debug;
 
 use crate::{
     MonitorSubsystem,
@@ -151,7 +152,7 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
                         // Let's emit them to our output stream.
                         self.sender.send(batch).await.unwrap();
                     } else {
-                        dbg!("Shutting down in monitor");
+                        debug!("Shutting down in monitor");
                         // The stream has been closed. Shut down.
                         subsys.request_local_shutdown();
                     }

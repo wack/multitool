@@ -8,6 +8,7 @@ use tokio::{
     sync::mpsc::{self, Receiver, channel},
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use tracing::debug;
 
 use crate::adapters::BoxedPlatform;
 
@@ -108,7 +109,7 @@ impl IntoSubsystem<Report> for PlatformSubsystem {
                     if let Some(mail) = mail {
                         self.respond_to_mail(mail).await;
                     } else {
-                        dbg!("Stream closed in platform");
+                        debug!("Stream closed in platform");
                         subsys.request_shutdown()
                     }
                 }
