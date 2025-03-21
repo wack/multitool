@@ -14,7 +14,8 @@ pub struct Login {
 
 impl Login {
     pub fn new(terminal: Terminal, flags: LoginSubcommand) -> Result<Self> {
-        let backend = BackendClient::new(flags.origin(), None)?;
+        let origin = flags.origin().as_deref();
+        let backend = BackendClient::new(origin, None)?;
 
         Ok(Self {
             terminal,
@@ -32,6 +33,7 @@ impl Login {
             let email = self
                 .flags
                 .email()
+                .as_deref()
                 .map(ToString::to_string)
                 .unwrap_or_else(|| self.terminal.prompt_email());
 
@@ -39,6 +41,7 @@ impl Login {
             let password = self
                 .flags
                 .password()
+                .as_deref()
                 .map(ToString::to_string)
                 .unwrap_or_else(|| self.terminal.prompt_password());
 
