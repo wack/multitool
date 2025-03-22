@@ -1,5 +1,5 @@
 # If we're on Ubuntu, we need to install openssl
 # before we can install Rust.
 - name: "Install OpenSSL"
-  if: ${{ startsWith(matrix.runner, "ubuntu") }}
+  if: ${{ startsWith(matrix.runner, 'ubuntu') }}
   run: "sudo apt-get install -yq openssl libssl-dev"

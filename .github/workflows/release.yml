@@ -128,7 +128,7 @@ jobs:
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
       - name: "Install OpenSSL"
-        if: "${{ startsWith(matrix.runner, \"ubuntu\") }}"
+        if: "${{ startsWith(matrix.runner, 'ubuntu') }}"
         run: "sudo apt-get install -yq openssl libssl-dev"
       - uses: swatinem/rust-cache@v2
         with:
