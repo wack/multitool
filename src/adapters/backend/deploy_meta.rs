@@ -4,6 +4,7 @@ use miette::{IntoDiagnostic, Result};
 use multitool_sdk::models::DeploymentState;
 use std::sync::Arc;
 use tokio::{sync::mpsc, time::Duration};
+use tracing::trace;
 
 pub(crate) type WorkspaceId = u32;
 pub(crate) type ApplicationId = u32;
@@ -47,6 +48,7 @@ impl LockedState {
     }
 
     pub(crate) async fn mark_done(&mut self) -> Result<()> {
+        trace!("Marking state {} as done...", self.state.state_type);
         self.task_done.send(()).await.into_diagnostic()
     }
 }

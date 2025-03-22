@@ -32,7 +32,7 @@ indexmap = { version = "2.1.0", features = ["serde"] }
 miette = { version = "7", features = ["fancy"] }
 mockall = "0.13.1"
 multitool-sdk = { git = "https://github.com/wack/multitool-rust-sdk.git", branch = "trunk" }
-pingora = { version = "0.3", features = [ "lb", "proxy" ] }
+pingora = { version = "0.3", features = ["lb", "proxy"] }
 rand = { version = "0.9.0", features = ["small_rng"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -43,7 +43,14 @@ tokio-graceful-shutdown = "0.16.0"
 tokio-stream = { version = "0.1", features = ["time"] }
 toml = { version = "0.8.8", features = ["preserve_order"] }
 tracing = { version = "0.1.41", features = ["attributes"] }
-tracing-subscriber = { version = "0.3.19", features = ["json", "local-time", "time", "chrono", "fmt"] }
+tracing-subscriber = { version = "0.3.19", features = [
+    "json",
+    "local-time",
+    "time",
+    "chrono",
+    "fmt",
+    "env-filter",
+] }
 uuid = { version = "1.9", features = ["serde", "v4"] }
 
 [dev-dependencies]

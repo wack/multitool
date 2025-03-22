@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use bon::bon;
 use multitool_sdk::models::CloudWatchDimensions;
+use tracing::debug;
 
 use crate::{
     Shutdownable,
@@ -171,7 +172,7 @@ impl Monitor for CloudWatch {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
 
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
-        dbg!("Querying CloudWatch for metrics...");
+        debug!("Querying CloudWatch for metrics...");
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
         // compiles them into a list, then generates the correct number of
         // CategoricalObservations for each response code
@@ -264,15 +265,9 @@ impl Monitor for CloudWatch {
         // Collate all of our canary/experimental metrics
         let canary_2xx = canary_count - (canary_4xx + canary_5xx);
 
-        dbg!(format!(
-            "Control: 2xx: {}, 4xx: {}, 5xx: {}",
-            control_2xx, control_4xx, control_5xx
-        ));
+        debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
 
-        dbg!(format!(
-            "Canary: 2xx: {}, 4xx: {}, 5xx: {}",
-            canary_2xx, canary_4xx, canary_5xx
-        ));
+        debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
 
         let mut baseline = CategoricalObservation::new(Group::Control);
         let mut canary = CategoricalObservation::new(Group::Experimental);

@@ -186,7 +186,7 @@ fn repeat_query(
             // • We perform the query then dump the results into the stream.
             match monitor.query().await {
                 Ok(items) => {
-                    dbg!("Received items: {:?}", items.clone());
+                    debug!("Received items: {:?}", items.clone());
                     for item in items {
                         yield Ok(item);
                     }
