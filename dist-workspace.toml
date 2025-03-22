@@ -9,6 +9,8 @@ cargo-dist-version = "0.28.0"
 ci = "github"
 # Whether to enable GitHub Attestations
 github-attestations = true
+# Set up code to run before building our artifacts.
+github-build-setup = "release-prebuild.yml"
 # The installers to generate for each app
 installers = ["shell", "powershell", "homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
@@ -22,6 +24,7 @@ tap = "wack/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 pr-run-mode = "upload"
+
 
 # Override the default runner image. Ubuntu-20.04 builds
 # with too old of a C compiler, and breaks some cryptography
