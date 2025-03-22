@@ -25,7 +25,6 @@ pub(crate) struct LockedState {
     state: DeploymentState,
     /// How often the lease must be renewed.
     frequency: Duration,
-    done_sent: bool,
     /// When the state has been effected, release the lock we have
     /// on the state. This channel signals to the thread managing
     /// the lock that it can tell the backend to release
@@ -42,14 +41,13 @@ impl LockedState {
         task_done: mpsc::Sender<()>,
     ) -> Self {
         Self {
-            done_sent: false,
             state,
             frequency,
             task_done: Arc::new(task_done),
         }
     }
 
-    pub(crate) async fn mark_done(&mut self) {
-        let _ = self.task_done.try_send(message).await;
+    pub(crate) async fn mark_done(&mut self) -> Result<()> {
+        self.task_done.send(()).await.into_diagnostic()
     }
 }
