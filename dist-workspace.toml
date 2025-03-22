@@ -22,3 +22,18 @@ tap = "wack/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 pr-run-mode = "upload"
+
+# Override the default runner image. Ubuntu-20.04 builds
+# with too old of a C compiler, and breaks some cryptography
+# packages due to open bugs.
+[dist.github-custom-runners]
+x86_64-unknown-linux-gnu = "ubuntu-22.04"
+aarch64-unknown-linux-gnu = "ubuntu-22.04"
+# Also failing, but maybe unrelated?
+# x86_64-pc-windows-msvc = "ubuntu-22.04"
+
+# aarch64-apple-darwin = "ubuntu-22.04"
+# aarch64-pc-windows-msvc = "ubuntu-22.04"
+# x86_64-apple-darwin = "ubuntu-22.04"
+
+
