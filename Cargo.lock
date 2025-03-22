@@ -256,9 +256,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.27.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77926887776171ced7d662120a75998e444d3750c951abfe07f90da130514b1f"
+checksum = "02864f6f8061f14ca73c85d261838dcb87b6a9a4259781bd0e1031821b280167"
 dependencies = [
  "bindgen",
  "cc",
@@ -2286,7 +2286,7 @@ dependencies = [
 [[package]]
 name = "multitool-sdk"
 version = "0.1.0"
-source = "git+https://github.com/wack/multitool-rust-sdk.git?branch=trunk#ea6e5148500ee10a9af3421eca5ab72d17db614e"
+source = "git+https://github.com/wack/multitool-rust-sdk.git?branch=trunk#455561041e849141c633afa412b3561da777113a"
 dependencies = [
  "async-trait",
  "reqwest 0.12.15",

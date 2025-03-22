@@ -37,6 +37,7 @@ impl LambdaPlatform {
 impl Platform for LambdaPlatform {
     /// Update the Lambda code with the zip we're holding.
     async fn deploy(&mut self) -> Result<String> {
+        dbg!("Deploying lambda...");
         // First, we need to deploy the new version of the lambda
         // Parse the bytes into the format AWS wants
         let code = Blob::from(self.artifact.as_ref());

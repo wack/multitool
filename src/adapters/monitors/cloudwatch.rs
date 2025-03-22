@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bon::bon;
+use multitool_sdk::models::CloudWatchDimensions;
 
 use crate::{
     Shutdownable,
@@ -14,28 +15,26 @@ use aws_sdk_cloudwatch::{
 };
 use aws_smithy_types::DateTime as AwsDateTime;
 use chrono::{DateTime, Duration, Utc};
-use miette::{IntoDiagnostic, Result};
+use miette::Result;
 
 use super::Monitor;
 
 pub struct CloudWatch {
     client: AwsClient,
-    gateway_name: String,
-    stage_name: String,
+    dimensions: Vec<CloudWatchDimensions>,
     region: String,
 }
 
 #[bon]
 impl CloudWatch {
     #[builder]
-    pub async fn new(gateway_name: String, stage_name: String, region: String) -> Self {
+    pub async fn new(region: String, dimensions: Vec<CloudWatchDimensions>) -> Self {
         let config = load_default_aws_config().await;
         let client = aws_sdk_cloudwatch::Client::new(config);
         Self {
             client,
             region,
-            gateway_name,
-            stage_name,
+            dimensions,
         }
     }
 }
@@ -106,7 +105,7 @@ impl CloudWatch {
                             .metric_name(metric_name.to_metric_name())
                             .dimensions(
                                 Dimension::builder()
-                                    .name("Name")
+                                    .name("ApiName")
                                     .value(api_gateway_name)
                                     .build(),
                             )
@@ -128,20 +127,32 @@ impl CloudWatch {
         let response = self
             .client
             .get_metric_data()
+            // AWS has custom DateTime formats, so we need to do a conversion first
             .start_time(AwsDateTime::from_secs(start.timestamp()))
             .end_time(AwsDateTime::from_secs(end.timestamp()))
             .metric_data_queries(query)
             .send()
             .await;
 
-        response
-            .map(|resp| {
-                resp.metric_data_results()
+        // If there's an error, just return 0 results
+        match response {
+            Ok(response) => {
+                // We need to sum all values provided since we have a period of 60s and time window of 5 mins,
+                // so, in the worst case we get 0 values and in the best case we get 5 values
+                Ok(response
+                    .metric_data_results()
                     .iter()
                     .flat_map(|result| result.values())
-                    .sum::<f64>() as u32
-            })
-            .into_diagnostic()
+                    .sum::<f64>() as u32)
+            }
+            Err(err) => {
+                println!(
+                    "Error querying cloudwatch metrics for {:?} {:?}: {:?}",
+                    metric_name, group, err
+                );
+                Ok(0)
+            }
+        }
     }
 }
 
@@ -158,6 +169,7 @@ impl Monitor for CloudWatch {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
 
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
+        dbg!("Querying CloudWatch for metrics...");
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
         // compiles them into a list, then generates the correct number of
         // CategoricalObservations for each response code
@@ -166,56 +178,56 @@ impl Monitor for CloudWatch {
 
         let control_count_future = self.query_cloudwatch(
             ApiMetric::Count,
-            &self.gateway_name,
-            &self.stage_name,
+            self.dimensions[0].value.as_ref(),
+            self.dimensions[1].value.as_ref(),
             Group::Control,
-            now,
             five_mins_ago,
+            now,
         );
 
         let control_4xx_future = self.query_cloudwatch(
             ApiMetric::Error4XX,
-            &self.gateway_name,
-            &self.stage_name,
+            self.dimensions[0].value.as_ref(),
+            self.dimensions[1].value.as_ref(),
             Group::Control,
-            now,
             five_mins_ago,
+            now,
         );
 
         let control_5xx_future = self.query_cloudwatch(
             ApiMetric::Error5XX,
-            &self.gateway_name,
-            &self.stage_name,
+            self.dimensions[0].value.as_ref(),
+            self.dimensions[1].value.as_ref(),
             Group::Control,
-            now,
             five_mins_ago,
+            now,
         );
 
         let canary_count_future = self.query_cloudwatch(
             ApiMetric::Count,
-            &self.gateway_name,
-            &self.stage_name,
+            self.dimensions[0].value.as_ref(),
+            self.dimensions[1].value.as_ref(),
             Group::Experimental,
-            now,
             five_mins_ago,
+            now,
         );
 
         let canary_4xx_future = self.query_cloudwatch(
             ApiMetric::Error4XX,
-            &self.gateway_name,
-            &self.stage_name,
+            self.dimensions[0].value.as_ref(),
+            self.dimensions[1].value.as_ref(),
             Group::Experimental,
-            now,
             five_mins_ago,
+            now,
         );
 
         let canary_5xx_future = self.query_cloudwatch(
             ApiMetric::Error5XX,
-            &self.gateway_name,
-            &self.stage_name,
+            self.dimensions[0].value.as_ref(),
+            self.dimensions[1].value.as_ref(),
             Group::Experimental,
-            now,
             five_mins_ago,
+            now,
         );
 
         let (
@@ -241,10 +253,19 @@ impl Monitor for CloudWatch {
         let canary_count = canary_count_result?;
 
         // Collate all of our control metrics
-        let control_2xx = (control_4xx + control_5xx) - control_count;
-
+        let control_2xx = control_count - (control_4xx + control_5xx);
         // Collate all of our canary/experimental metrics
-        let canary_2xx = (canary_4xx + canary_5xx) - canary_count;
+        let canary_2xx = canary_count - (canary_4xx + canary_5xx);
+
+        dbg!(format!(
+            "Control: 2xx: {}, 4xx: {}, 5xx: {}",
+            control_2xx, control_4xx, control_5xx
+        ));
+
+        dbg!(format!(
+            "Canary: 2xx: {}, 4xx: {}, 5xx: {}",
+            canary_2xx, canary_4xx, canary_5xx
+        ));
 
         let mut baseline = CategoricalObservation::new(Group::Control);
         let mut canary = CategoricalObservation::new(Group::Experimental);

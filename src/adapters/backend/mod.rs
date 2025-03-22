@@ -76,8 +76,7 @@ impl BackendClient {
         state: &DeploymentState,
         done_sender: Sender<()>,
     ) -> Result<LockedState> {
-        let response = self
-            .client
+        self.client
             .deployment_states_api()
             .update_deployment_state(
                 *meta.workspace_id(),
@@ -92,7 +91,7 @@ impl BackendClient {
             .into_diagnostic()?;
 
         let locked_state = LockedState::builder()
-            .state(*response.state)
+            .state(state.clone())
             // TODO: we should return this from the API
             .frequency(Duration::from_secs(30))
             .task_done(done_sender)
@@ -256,7 +255,7 @@ impl BackendClient {
             let application_id = *meta.application_id();
             let deployment_id = *meta.deployment_id();
             let cloned_client = self.clone();
-            req_waiter.spawn_local(async move {
+            req_waiter.spawn(async move {
                 cloned_client
                     .client
                     .response_code_metrics_api()

@@ -6,7 +6,7 @@ use crate::cmd::Proxy;
 use crate::cmd::{Login, Logout, Run, Version};
 use crate::terminal::Terminal;
 
-use super::{Cli, LoginSubcommand, RunSubcommand};
+use super::{LoginSubcommand, RunSubcommand};
 
 #[cfg(feature = "proxy")]
 use super::ProxySubcommand;
