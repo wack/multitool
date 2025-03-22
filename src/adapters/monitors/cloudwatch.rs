@@ -14,7 +14,7 @@ use aws_sdk_cloudwatch::{
     types::{Dimension, Metric, MetricDataQuery, MetricStat},
 };
 use aws_smithy_types::DateTime as AwsDateTime;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use miette::Result;
 
 use super::Monitor;
@@ -23,6 +23,7 @@ pub struct CloudWatch {
     client: AwsClient,
     dimensions: Vec<CloudWatchDimensions>,
     region: String,
+    start: DateTime<Utc>,
 }
 
 #[bon]
@@ -35,6 +36,7 @@ impl CloudWatch {
             client,
             region,
             dimensions,
+            start: Utc::now(),
         }
     }
 }
@@ -173,16 +175,16 @@ impl Monitor for CloudWatch {
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
         // compiles them into a list, then generates the correct number of
         // CategoricalObservations for each response code
-        let now: DateTime<Utc> = Utc::now();
-        let five_mins_ago: DateTime<Utc> = now - Duration::minutes(5);
+        let end_time: DateTime<Utc> = Utc::now();
+        let start_time = self.start;
 
         let control_count_future = self.query_cloudwatch(
             ApiMetric::Count,
             self.dimensions[0].value.as_ref(),
             self.dimensions[1].value.as_ref(),
             Group::Control,
-            five_mins_ago,
-            now,
+            start_time,
+            end_time,
         );
 
         let control_4xx_future = self.query_cloudwatch(
@@ -190,8 +192,8 @@ impl Monitor for CloudWatch {
             self.dimensions[0].value.as_ref(),
             self.dimensions[1].value.as_ref(),
             Group::Control,
-            five_mins_ago,
-            now,
+            start_time,
+            end_time,
         );
 
         let control_5xx_future = self.query_cloudwatch(
@@ -199,8 +201,8 @@ impl Monitor for CloudWatch {
             self.dimensions[0].value.as_ref(),
             self.dimensions[1].value.as_ref(),
             Group::Control,
-            five_mins_ago,
-            now,
+            start_time,
+            end_time,
         );
 
         let canary_count_future = self.query_cloudwatch(
@@ -208,8 +210,8 @@ impl Monitor for CloudWatch {
             self.dimensions[0].value.as_ref(),
             self.dimensions[1].value.as_ref(),
             Group::Experimental,
-            five_mins_ago,
-            now,
+            start_time,
+            end_time,
         );
 
         let canary_4xx_future = self.query_cloudwatch(
@@ -217,8 +219,8 @@ impl Monitor for CloudWatch {
             self.dimensions[0].value.as_ref(),
             self.dimensions[1].value.as_ref(),
             Group::Experimental,
-            five_mins_ago,
-            now,
+            start_time,
+            end_time,
         );
 
         let canary_5xx_future = self.query_cloudwatch(
@@ -226,8 +228,8 @@ impl Monitor for CloudWatch {
             self.dimensions[0].value.as_ref(),
             self.dimensions[1].value.as_ref(),
             Group::Experimental,
-            five_mins_ago,
-            now,
+            start_time,
+            end_time,
         );
 
         let (
@@ -245,6 +247,11 @@ impl Monitor for CloudWatch {
             canary_4xx_future,
             canary_5xx_future
         );
+
+        // Update the timer to skip old values. This has to occur
+        // before the ? in the next block, or else we might
+        // never advance our timer.
+        self.start = end_time;
         let control_4xx = control_4xx_result?;
         let control_5xx = control_5xx_result?;
         let control_count = control_count_result?;
