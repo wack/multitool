@@ -8,6 +8,8 @@ pub use proxy::Proxy;
 
 mod login;
 mod logout;
-mod proxy;
 mod run;
 mod version;
+
+#[cfg(feature = "proxy")]
+mod proxy;
