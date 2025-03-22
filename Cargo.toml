@@ -66,3 +66,6 @@ proxy = ["dep:pingora"]
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[package.metadata.dist]
+formula = "multi"
