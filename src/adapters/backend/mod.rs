@@ -193,7 +193,7 @@ impl BackendClient {
             .await
             .into_diagnostic()?;
 
-        trace!("Stated successfulled marked as completed");
+        trace!("State successfully marked as complete");
         Ok(())
     }
 
@@ -242,7 +242,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         data: Vec<StatusCode>,
     ) -> Result<()> {
-        trace!("Uploading observation to backend");
+        trace!("Uploading observations to backend");
         let mut req_waiter = JoinSet::new();
 
         for item in data {

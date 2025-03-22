@@ -15,7 +15,7 @@ use aws_sdk_cloudwatch::{
     types::{Dimension, Metric, MetricDataQuery, MetricStat},
 };
 use aws_smithy_types::DateTime as AwsDateTime;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use miette::Result;
 
 use super::Monitor;
@@ -37,7 +37,7 @@ impl CloudWatch {
             client,
             region,
             dimensions,
-            start: Utc::now(),
+            start: Utc::now() - Duration::minutes(5),
         }
     }
 }

@@ -64,18 +64,18 @@ impl IntoSubsystem<Report> for LockManager {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
         loop {
             select! {
-                _ = subsys.on_shutdown_requested() => {
-                    // Release the lock.
-                    return self.shutdown().await;
-                }
+                // NOTE: the order matters here
                 _ = self.task_done.recv() => {
-                    // Tell the backend that the task
-                    // has been completed.
+                    // Tell the backend that the task has been completed.
                     // Don't call `shutdown` since that's for abnormal
                     // termination in this case. We don't need to release
                     // the lock on the state, since we just marked it as completed
                     // instead.
                     return self.backend.mark_state_completed(&self.meta, &self.state).await;
+                }
+                _ = subsys.on_shutdown_requested() => {
+                    // Release the lock.
+                    return self.shutdown().await;
                 }
                 // Ding! Renew the lease.
                 _ = self.timer.tick() => {

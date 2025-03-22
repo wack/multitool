@@ -48,7 +48,6 @@ impl LockedState {
     }
 
     pub(crate) async fn mark_done(&mut self) -> Result<()> {
-        trace!("Marking state {} as done...", self.state.state_type);
         self.task_done.send(()).await.into_diagnostic()
     }
 }

@@ -93,8 +93,6 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
         let mut observations = self.observations;
         loop {
             select! {
-                // TODO: We need to release the lock on
-                // any states we've locked.
                 // Besides that, we can just hang out.
                 _ = subsys.on_shutdown_requested() => {
                     subsys.wait_for_children().await;
@@ -116,7 +114,6 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                 // • We also need to poll the backend for new states.
                 elem = state_stream.recv() => {
                     debug!("Received new state: {:?}", &elem);
-                    let mut trigger_shutdown = false;
 
                     if let Some(state) = elem {
                         let state_id = state.id;
@@ -142,8 +139,8 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 // Ingress operation.
                                 self.ingress.promote_canary().await?;
 
-                                // If the canary is promoted, we can safely just shut down the CLI
-                                trigger_shutdown = true;
+                                locked_state.mark_done().await?;
+                                subsys.request_shutdown();
                             },
                             DeployCanary => {
                                 // First, we deploy the canary to the platform. At
@@ -156,6 +153,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 info!("Releasing the application...");
                                 self.ingress.release_canary(platform_id).await.inspect(|res| debug!("Result: {res:?}"))?;
                                 info!("Release successful! Beginning canarying...");
+                                locked_state.mark_done().await?;
                             },
                             SetCanaryTraffic => {
                                 let percent_traffic = if let Some(data) = locked_state.state().data.clone().flatten() {
@@ -166,6 +164,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 };
                                 let percent = WholePercent::try_from(percent_traffic).unwrap();
                                 self.ingress.set_canary_traffic(percent).await?;
+                                locked_state.mark_done().await?;
                             },
                             RollbackCanary => {
                                 // Set traffic to 0 immediately.
@@ -173,19 +172,9 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 // Then, yank the canary from the ingress.
                                 self.ingress.rollback_canary().await?;
 
-                                // If the canary is rolled back, we can safely just shut down the CLI
-                                trigger_shutdown = true;
+                                locked_state.mark_done().await?;
+                                subsys.request_shutdown();
                             },
-                        }
-                        // Since the action completed successfully,
-                        // we can release the lock and tell the backend
-                        // that the state has been effected.
-                        locked_state.mark_done().await?;
-
-                        // This is separated so we can mark the state as done
-                        // before we shut down.
-                        if trigger_shutdown {
-                            subsys.request_shutdown();
                         }
                     } else {
                         // The stream has been closed, so we should shutdown.
