@@ -128,7 +128,7 @@ jobs:
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
       - name: "Install OpenSSL"
-        run: "apt-get install libssl-dev"
+        run: "sudo apt-get install -yq libssl-dev"
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ join(matrix.targets, '-') }}

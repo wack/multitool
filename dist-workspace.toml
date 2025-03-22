@@ -25,7 +25,6 @@ tap = "wack/homebrew-tap"
 publish-jobs = ["homebrew"]
 pr-run-mode = "upload"
 
-
 # Override the default runner image. Ubuntu-20.04 builds
 # with too old of a C compiler, and breaks some cryptography
 # packages due to open bugs.

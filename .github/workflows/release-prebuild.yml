@@ -1,4 +1,4 @@
 # If we're on Ubuntu, we need to install openssl
 # before we can install Rust.
 - name: "Install OpenSSL"
-  run: "apt-get install libssl-dev"
+  run: "sudo apt-get install -yq libssl-dev"
