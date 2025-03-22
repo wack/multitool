@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use bon::bon;
 use miette::{IntoDiagnostic as _, Result, miette};
+use tracing::{debug, info};
 
 use crate::{
     Shutdownable, WholePercent, subsystems::ShutdownResult, utils::load_default_aws_config,
@@ -104,7 +105,7 @@ impl AwsApiGateway {
 #[async_trait]
 impl Ingress for AwsApiGateway {
     async fn release_canary(&mut self, platform_id: String) -> Result<()> {
-        dbg!("Releasing canary deployment...");
+        debug!("Releasing canary deployment...");
         // Get the auto-generated API ID and Resource ID
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of API Gateway"))?;
@@ -168,7 +169,7 @@ impl Ingress for AwsApiGateway {
     }
 
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
-        dbg!("Setting canary traffic...");
+        info!("Setting API Gateway canary traffic to {percent}.");
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
 
@@ -195,6 +196,7 @@ impl Ingress for AwsApiGateway {
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
+        info!("Rolling back canary deployment in API Gateway.");
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
 
@@ -217,6 +219,7 @@ impl Ingress for AwsApiGateway {
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
+        info!("Promoting canary deployment in API Gateway!");
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
 

@@ -4,6 +4,7 @@ use miette::{IntoDiagnostic, Result};
 use multitool_sdk::models::DeploymentState;
 use std::sync::Arc;
 use tokio::{sync::mpsc, time::Duration};
+use tracing::trace;
 
 pub(crate) type WorkspaceId = u32;
 pub(crate) type ApplicationId = u32;

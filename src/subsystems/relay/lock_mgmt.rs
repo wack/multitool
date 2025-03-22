@@ -6,7 +6,6 @@ use tokio::select;
 use tokio::sync::mpsc::{self, Receiver};
 use tokio::time::{Interval, interval};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
-use tracing::debug;
 
 use crate::{
     Shutdownable,
@@ -41,7 +40,6 @@ impl LockManager {
         metadata: DeploymentMetadata,
         state: DeploymentState,
     ) -> Result<Self> {
-        debug!("Creating a new lock manager...");
         let (done_sender, task_done) = mpsc::channel(1);
         // Take the initial lock.
         let locked_state = backend.lock_state(&metadata, &state, done_sender).await?;
@@ -64,25 +62,23 @@ impl LockManager {
 #[async_trait]
 impl IntoSubsystem<Report> for LockManager {
     async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
-        debug!("Running the lock manager...");
         loop {
             select! {
-                _ = subsys.on_shutdown_requested() => {
-                    // Release the lock.
-                    return self.shutdown().await;
-                }
+                // NOTE: the order matters here
                 _ = self.task_done.recv() => {
-                    // Tell the backend that the task
-                    // has been completed.
+                    // Tell the backend that the task has been completed.
                     // Don't call `shutdown` since that's for abnormal
                     // termination in this case. We don't need to release
                     // the lock on the state, since we just marked it as completed
                     // instead.
                     return self.backend.mark_state_completed(&self.meta, &self.state).await;
                 }
+                _ = subsys.on_shutdown_requested() => {
+                    // Release the lock.
+                    return self.shutdown().await;
+                }
                 // Ding! Renew the lease.
                 _ = self.timer.tick() => {
-                    debug!("Refreshing lock...");
                     self.backend.refresh_lock(&self.meta, &self.state).await?;
                 }
             }
@@ -94,7 +90,6 @@ impl IntoSubsystem<Report> for LockManager {
 impl Shutdownable for LockManager {
     async fn shutdown(&mut self) -> ShutdownResult {
         // Release any of the locks we've taken.
-        debug!("Releasing lock...");
         self.backend.abandon_lock(&self.meta, &self.state).await
     }
 }

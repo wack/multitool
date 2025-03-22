@@ -76,6 +76,7 @@ impl BackendClient {
         state: &DeploymentState,
         done_sender: Sender<()>,
     ) -> Result<LockedState> {
+        trace!("Locking state {}...", state.state_type);
         self.client
             .deployment_states_api()
             .update_deployment_state(
@@ -97,6 +98,7 @@ impl BackendClient {
             .task_done(done_sender)
             .build();
 
+        trace!("State locked successfully");
         Ok(locked_state)
     }
 
@@ -105,7 +107,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
-        trace!("Refreshing lock");
+        trace!("Refreshing {} lock...", locked_state.state().state_type);
         self.client
             .deployment_states_api()
             .refresh_deployment_state(
@@ -126,7 +128,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
-        trace!("Abandoning lock");
+        trace!("Abandoning {} lock", locked_state.state().state_type);
         self.client
             .deployment_states_api()
             .update_deployment_state(
@@ -151,7 +153,7 @@ impl BackendClient {
         &self,
         meta: &DeploymentMetadata,
     ) -> Result<Vec<DeploymentState>> {
-        trace!("Polling for new state");
+        trace!("Polling for new states...");
         let response = self
             .client
             .deployment_states_api()
@@ -164,7 +166,7 @@ impl BackendClient {
             .await
             .into_diagnostic()?;
 
-        trace!("Polling complete");
+        trace!("States polled successfully");
         Ok(response.states)
     }
 
@@ -173,7 +175,10 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
-        trace!("Marking state as completed");
+        trace!(
+            "Marking state {} as completed...",
+            locked_state.state().state_type
+        );
         self.client
             .deployment_states_api()
             .update_deployment_state(
@@ -188,7 +193,7 @@ impl BackendClient {
             .await
             .into_diagnostic()?;
 
-        trace!("Stated successfulled marked as completed");
+        trace!("State successfully marked as complete");
         Ok(())
     }
 
@@ -237,7 +242,7 @@ impl BackendClient {
         meta: &DeploymentMetadata,
         data: Vec<StatusCode>,
     ) -> Result<()> {
-        trace!("Uploading observation to backend");
+        trace!("Uploading observations to backend");
         let mut req_waiter = JoinSet::new();
 
         for item in data {

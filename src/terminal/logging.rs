@@ -25,6 +25,8 @@ pub(super) fn setup_logger(level: LevelFilter) {
             .with_file(false)
             .with_line_number(false)
             .with_target(false)
+            // Scope the subscriber to ONLY the multitool module.
+            .with_env_filter(format!("multitool={}", level.to_string()))
             .compact()
             .finish();
 
