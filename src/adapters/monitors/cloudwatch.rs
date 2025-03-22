@@ -15,7 +15,7 @@ use aws_sdk_cloudwatch::{
 };
 use aws_smithy_types::DateTime as AwsDateTime;
 use chrono::{DateTime, Duration, Utc};
-use miette::{IntoDiagnostic, Result, miette};
+use miette::Result;
 
 use super::Monitor;
 

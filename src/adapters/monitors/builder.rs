@@ -73,7 +73,11 @@ mod tests {
     fn monitor_json() -> Value {
         json!({
             "aws_cloudwatch_metrics": {
-                "region": "us-east-2"
+                "region": "us-east-2",
+                "dimensions": [{
+                    "name": "foo",
+                    "value": "bar",
+                }],
             }
         })
     }

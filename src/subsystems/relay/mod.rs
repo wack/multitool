@@ -119,12 +119,12 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                     if let Some(state) = elem {
                         let state_id = state.id;
                         // When we receive a new state, we attempt to lock it.
+                        debug!("Locking state: {:?}", &state);
                         let lock_manager = LockManager::builder()
                             .backend(self.backend.clone())
                             .metadata(self.meta.clone())
                             .state(state)
                             .build().await?;
-                        debug!("Locking state: {:?}", &state);
                         let mut locked_state = lock_manager.state().clone();
                         debug!("Starting lock manager from relay...");
                         // Launch the lock manager.
@@ -158,15 +158,13 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 info!("Release successful! Beginning canarying...");
                             },
                             SetCanaryTraffic => {
-                                 // TODO: Capture percentage from data field of the DeploymentState object.
-                                info!("Scaling traffic to {percent}%");
                                 let percent_traffic = if let Some(data) = locked_state.state().data.clone().flatten() {
                                     let DeploymentStateData::DeploymentStateDataOneOf(state_data) = *data;
                                     state_data.set_canary_traffic.percent_traffic
                                 } else{
                                     return Err(miette!("No data found in state"));
                                 };
-                                info!("Setting canary traffic to: {:?}", percent_traffic);
+                                info!("Scaling canary traffic to {}%", percent_traffic);
                                 let percent = WholePercent::try_from(percent_traffic).unwrap();
                                 self.ingress.set_canary_traffic(percent).await?;
                             },
