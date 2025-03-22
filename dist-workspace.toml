@@ -21,3 +21,4 @@ install-updater = true
 tap = "wack/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
+pr-run-mode = "upload"
