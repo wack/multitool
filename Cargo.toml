@@ -46,12 +46,12 @@ tokio-stream = { version = "0.1", features = ["time"] }
 toml = { version = "0.8.8", features = ["preserve_order"] }
 tracing = { version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.19", features = [
-    "json",
-    "local-time",
-    "time",
-    "chrono",
-    "fmt",
-    "env-filter",
+  "json",
+  "local-time",
+  "time",
+  "chrono",
+  "fmt",
+  "env-filter",
 ] }
 uuid = { version = "1.9", features = ["serde", "v4"] }
 
