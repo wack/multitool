@@ -5,17 +5,14 @@ use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode};
 use chrono::DateTime;
-use miette::miette;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
 use multitool_sdk::models::{
-    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest,
-    CreateResponseCodeMetricsSuccess, DeploymentStateStatus, LoginRequest, LoginSuccess,
-    WorkspaceSummary,
+    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, DeploymentStateStatus,
+    LoginRequest, LoginSuccess, StatusCodeMetrics, WorkspaceSummary,
 };
 use multitool_sdk::models::{DeploymentState, UpdateDeploymentStateRequest};
 use tokio::sync::mpsc::Sender;
-use tokio::task::JoinSet;
 use tokio::time::Duration;
 
 pub(crate) use deploy_meta::*;
@@ -243,43 +240,37 @@ impl BackendClient {
         data: Vec<StatusCode>,
     ) -> Result<()> {
         trace!("Uploading observations to backend");
-        let mut req_waiter = JoinSet::new();
+        let mut status_codes = Vec::new();
 
         for item in data {
             let group = match item.group() {
                 crate::stats::Group::Control => ApplicationGroup::Baseline,
                 crate::stats::Group::Experimental => ApplicationGroup::Canary,
             };
-            let req_body = CreateResponseCodeMetricsRequest {
+            let metrics = StatusCodeMetrics {
                 app_group: group,
                 status_2xx_count: item.get_count(&ResponseStatusCode::_2XX) as u32,
                 status_4xx_count: item.get_count(&ResponseStatusCode::_4XX) as u32,
                 status_5xx_count: item.get_count(&ResponseStatusCode::_5XX) as u32,
             };
-            let workspace_id = *meta.workspace_id();
-            let application_id = *meta.application_id();
-            let deployment_id = *meta.deployment_id();
-            let cloned_client = self.clone();
-            req_waiter.spawn(async move {
-                cloned_client
-                    .client
-                    .response_code_metrics_api()
-                    .create_response_code_metrics(
-                        workspace_id,
-                        application_id,
-                        deployment_id,
-                        req_body,
-                    )
-                    .await
-            });
+
+            status_codes.push(metrics);
         }
-        let results = req_waiter.join_all().await;
-        let result: std::result::Result<Vec<CreateResponseCodeMetricsSuccess>, _> =
-            results.into_iter().collect();
-        result
-            .map(|_| ())
-            .map_err(|err| miette!("Error uploading observation: {err}"))
-            .inspect(|_| trace!("Uploading observation to backend"))
+
+        let req_body = CreateResponseCodeMetricsRequest { status_codes };
+
+        let workspace_id = *meta.workspace_id();
+        let application_id = *meta.application_id();
+        let deployment_id = *meta.deployment_id();
+
+        self.client
+            .response_code_metrics_api()
+            .create_response_code_metrics(workspace_id, application_id, deployment_id, req_body)
+            .await
+            .into_diagnostic()?;
+
+        trace!("Observations uploaded successfully");
+        Ok(())
     }
 
     /// Return information about the workspace given its name.

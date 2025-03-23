@@ -31,10 +31,10 @@ const DEFAULT_MAX_BATCH_SIZE: usize = 512;
 /// For AWS Cloudwatch, they update their autocollcted metrics every
 /// minute. So polling every 30s cuts down on the time between
 /// when the data is uploaded and when we receive it.
-const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(30);
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// The frequency with which we emit data from the controller,
 /// (usually to go to the backend).
-const DEFAULT_EMIT_INTERVAL: Duration = Duration::from_secs(60);
+const DEFAULT_EMIT_INTERVAL: Duration = Duration::from_secs(30);
 
 pub const MONITOR_CONTROLLER_SUBSYSTEM_NAME: &str = "controller/monitor";
 
