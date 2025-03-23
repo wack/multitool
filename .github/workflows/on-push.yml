@@ -3,6 +3,10 @@ name: "On Push"
 on:
   push:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Do not change this job's name without also changing "pr-ready"'s
   # job name in "on-merge.yml". These jobs must have the same name.

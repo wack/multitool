@@ -1,2 +1,5 @@
 /target
 *.zip
+
+# Robbie's local helper script for `multi proxy`
+/ping.sh
