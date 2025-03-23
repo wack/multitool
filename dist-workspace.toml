@@ -10,7 +10,7 @@ ci = "github"
 # Whether to enable GitHub Attestations
 github-attestations = true
 # Set up code to run before building our artifacts.
-github-build-setup = "release-prebuild.yml"
+github-build-setup = "release-prebuild.yml.stub"
 # The installers to generate for each app
 installers = ["shell", "homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
