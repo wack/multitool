@@ -23,8 +23,6 @@ install-updater = true
 tap = "wack/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
-# Which actions to run on pull requests
-pr-run-mode = "upload"
 
 # Override the default runner image. Ubuntu-20.04 builds
 # with too old of a C compiler, and breaks some cryptography
