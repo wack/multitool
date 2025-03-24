@@ -8,7 +8,7 @@ use multitool_sdk::models::DeploymentStateType::{
 use tokio::time::Duration;
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::WholePercent;
 use crate::adapters::LockedState;

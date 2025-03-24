@@ -13,7 +13,7 @@ use miette::Result;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::Terminal;
 
@@ -48,7 +48,7 @@ impl Run {
     }
 
     pub fn dispatch(self) -> Result<()> {
-        debug!("Executing the `run` command...");
+        info!("Starting MultiTool!");
         let rt = Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
@@ -91,6 +91,8 @@ impl Run {
                 .platform(conf.platform)
                 .meta(metadata)
                 .build();
+
+            info!("Starting the deployment...");
 
             // Let's capture the shutdown signal from the OS.
             Toplevel::new(|s| async move {

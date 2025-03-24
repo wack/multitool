@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bon::bon;
 use miette::{IntoDiagnostic as _, Result, miette};
-use tracing::debug;
+use tracing::info;
 
 use crate::{
     Shutdownable, artifacts::LambdaZip, subsystems::ShutdownResult, utils::load_default_aws_config,
@@ -38,7 +38,7 @@ impl LambdaPlatform {
 impl Platform for LambdaPlatform {
     /// Update the Lambda code with the zip we're holding.
     async fn deploy(&mut self) -> Result<String> {
-        debug!("Deploying lambda...");
+        info!("Deploying Lambda!");
         // First, we need to deploy the new version of the lambda
         // Parse the bytes into the format AWS wants
         let code = Blob::from(self.artifact.as_ref());
