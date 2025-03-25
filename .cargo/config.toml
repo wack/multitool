@@ -1,0 +1,2 @@
+# This is required to integrate with 1Password's ssh-agent.
+net.git-fetch-with-cli = true
