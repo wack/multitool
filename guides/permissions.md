@@ -118,8 +118,8 @@ To use MultiTool end-to-end from creating AWS resources to running a deployment,
 }
 ```
 
----
+## 📬 Need help?
 
-# Support
+If you have questions, ideas, or bugs to report:
 
-If you have any questions, ideas, or bugs to report, please reach out to [support@multitool.run](mailto:support@multitool.run)!
+👉 [support@multitool.run](mailto:support@multitool.run)!

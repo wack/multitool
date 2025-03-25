@@ -1,123 +1,128 @@
-# MultiTool Getting Started Guide
+# Getting started: Deploy a Lambda function with MultiTool
 
-In this guide, you'll learn how to safely deploy an AWS Lambda function as an API endpoint using the AWS API Gateway.
+This tutorial walks through deploying a simple AWS Lambda function behind an API Gateway. You’ll simulate user traffic to the API, and the MultiTool agent will automatically decide whether to promote or roll back the deployment based on the observed error rate.
 
-We will be creating an:
+You will:
 
-- <a href="https://aws.amazon.com/lambda/" target="_blank">AWS Lambda Function</a>
-  - Lambda is a serverless compute service that runs your code in response to events and automatically manages the compute resources.
-  - This guide uses Lambda to run our sample server code.
-- <a href="https://aws.amazon.com/api-gateway/" target="_blank">AWS API Gateway REST API</a>
-  - API Gateway is a fully managed service that makes it easy for developers to create, publish, maintain, monitor, and secure APIs at any scale.
-  - This guide uses API Gateway to make our Lambda function publicly accessible to the internet.
+1. Create and package sample Lambda code
+2. Deploy to AWS with API Gateway
+3. Connect to MultiTool and run a canary deployment
 
-We will be using:
+## 🛠 Tools
 
-- <a href="https://aws.amazon.com/cloudwatch/" target="_blank">AWS CloudWatch</a>
-  - CloudWatch is a service that monitors applications in AWS.
-  - This guide uses CloudWatch to read application metrics and send them to the MultiTool agent to decided whether to promote or rollback your deployments.
+- <a href="https://aws.amazon.com/lambda/" target="_blank">AWS Lambda</a> - to run sample server code
 
-# Prerequisites
+- <a href="https://aws.amazon.com/api-gateway/" target="_blank">AWS API Gateway REST API</a> - to make the Lambda function publicly accessible
 
-- [ ] <a href="https://app.multitool.run/create-account" target="_blank">Create a free MultiTool account.</a>
+- <a href="https://aws.amazon.com/cloudwatch/" target="_blank">AWS CloudWatch</a> - to read metrics used by MultiTool during deployment
 
-- [ ] Create an AWS account with at least read and write permissions for Lambda, API Gateway, and CloudWatch
+- <a href="https://app.multitool.run/create-account" target="_blank">MultiTool</a> - to automate safe deployments
 
-- [ ] <a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" target="_blank">Install the AWS CLI.</a>
+## ✅ Prerequisites
 
-  - [ ] To login, you'll need to create an Access Key. <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access-key-self-managed.html#Using_CreateAccessKey" target="_blank">Click here for instructions on how to create a new Access Key.</a>
+- [ ] <a href="https://app.multitool.run/create-account" target="_blank">A free MultiTool account</a>
 
-  - [ ] Next, we'll use the key you created to login to the AWS CLI. Run `aws configure` and follow the prompts to login to AWS.
+- [ ] An AWS account with read and write permissions for Lambda, API Gateway, and CloudWatch
 
-- [ ] <a href="https://github.com/wack/multitool/releases" target="_blank">Install the MultiTool CLI.</a>
+- [ ] <a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" target="_blank">AWS CLI installed</a>
 
-- [ ] Login to the MultiTool CLI. Run `multi login` and follow the prompts.
+  - [ ] Create an <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access-key-self-managed.html#Using_CreateAccessKey" target="_blank">Access Key</a>
 
----
+  - [ ] Run `aws configure` and follow the prompts to login to AWS
 
-# Getting Started with AWS Lambda and API Gateway
+- [ ] <a href="https://github.com/wack/multitool/releases" target="_blank">MultiTool CLI installed</a>
 
-## Package code as a zip file
+  - [ ] Run `multi login` to authenticate
 
-The easiest way to deploy our lambda is to package it as a zip file and upload it in the next step. We've provided 2 sample NodeJS servers that simply return a 200 or 400 HTTP response code to simulate random failures in an application.
+## 📦 Step 1: Create and package the Lambda code
 
-📝 **Note:** The filename **must** be `index.js`, any other name will fail to execute correctly
+This tutorial simulates two versions of a Lambda function:
 
-Package the code with no random failures:
+- A “healthy” version that always returns a `200` HTTP status code
+- A “buggy” version that randomly fails with a `400` HTTP status code 10% of the time
+
+📝 **Note:** File **must** be named `index.js` to execute correctly.
+
+### Create the healthy version
+
+This version always returns a `200` HTTP status code response.
 
 ```bash
 cat << EOF > index.js
 exports.handler = function (_, context) {
-  return context.succeed({
-    statusCode: 200,
-    body: JSON.stringify({
-      message: "Hello World",
-    }),
-  });
+return context.succeed({
+statusCode: 200,
+body: JSON.stringify({
+message: "Hello World",
+}),
+});
 };
 EOF
 ```
 
-and zip the code:
+Zip the code:
 
 ```bash
 zip -j 0%_failures.zip index.js
 ```
 
-and package the code with 10% random failures:
+### Create the buggy version
+
+This version introduces a simulated bug by returning a `400` HTTP status code 10% of the time.
 
 ```bash
 cat << EOF > index.js
 exports.handler = function (_, context) {
-  const rand = Math.random();
-
-  if (rand < 0.9) {
-    return context.succeed({
-      statusCode: 200,
-      body: JSON.stringify({
-        message: "Hello World",
-      }),
-    });
-  } else {
-    return context.succeed({
-      statusCode: 400,
-      body: JSON.stringify({
-        error: "Something went wrong",
-      }),
-    });
-  }
+const rand = Math.random();
+if (rand < 0.9) {
+return context.succeed({
+statusCode: 200,
+body: JSON.stringify({
+message: "Hello World",
+}),
+});
+} else {
+return context.succeed({
+statusCode: 400,
+body: JSON.stringify({
+error: "Something went wrong",
+}),
+});
+}
 };
 EOF
 ```
 
-and zip the code:
+Zip the code:
 
 ```
 zip -j 10%_failures.zip index.js
 ```
 
-## Create a Lambda execution IAM role
+## ➕ Step 2: Create a Lambda execution IAM role
 
-Before we create a Lambda, we need to create an IAM role that allows us to execute the function code as needed.
+AWS needs permission to run the Lambda function.
+
+Create a new IAM role for Lambda execution:
 
 ```bash
 LAMBDA_EXECUTION_ROLE_ARN=$(aws iam create-role \
-  --role-name lambda-execution \
-  --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}' --output text --query Role.Arn)
+--role-name lambda-execution \
+--assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}' --output text --query Role.Arn)
 ```
 
-Alternatively, if you've already created an execution role in the past, find the Amazon Resource Name (ARN) with this command:
+If you’ve already created this role before, you can retrieve it instead:
 
 ```bash
 LAMBDA_EXECUTION_ROLE_ARN=$(aws iam get-role \
-  --role-name lambda-execution \
-  --output text \
-  --query Role.Arn)
+--role-name lambda-execution \
+--output text \
+--query Role.Arn)
 ```
 
-## Create a Lambda Function
+## λ Step 3: Create the Lambda function
 
-After we have our code as a Zip file and an execution role created, we can now create our Lambda function.
+Upload the healthy version of the code to create the function in AWS:
 
 ```bash
 LAMBDA_ARN=$(aws lambda create-function \
@@ -131,15 +136,15 @@ LAMBDA_ARN=$(aws lambda create-function \
 --query FunctionArn)
 ```
 
-## Test that our Lambda is working
+## 🧪 Step 4: Test that the Lambda is working
 
-Before moving on to the next step, we want to make sure our Lambda can be invoked and returns the correct response.
+Before moving on, make sure the Lambda function returns the expected response.
 
 ```bash
 aws lambda invoke --function-name multitool-quickstart-lambda out.txt >/dev/null && cat out.txt
 ```
 
-Your output should look like this:
+You should see:
 
 ```json
 {
@@ -148,67 +153,61 @@ Your output should look like this:
 }
 ```
 
-## Create an API Gateway
+## ⚙️ Step 5: Set up API Gateway
 
-After we have successfully created our Lambda function and tested it, we'll need to create and set up an API Gateway so we can invoke our function from a public API endpoint.
+Expose the Lambda to the public internet by creating an API Gateway REST API:
 
 ```bash
 API_ID=$(aws apigateway create-rest-api --name multitool-quickstart-apig --output text --query id)
 ```
 
-## Get the Root resource's auto-generated ID
-
-Next, we need to get the auto-generated `/` endpoint's resource ID to use it in the next command.
+Get the auto-generated root resource ID:
 
 ```bash
 ROOT_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id ${API_ID} --output text --query 'items[0].id')
 ```
 
-## Create a resource in the gateway
+Next, create an API resource and route.
 
-Now that we have the root resource's id, we need to create a new resource. In this case, it's a new endpoint called `/demo`.
+Create the new path:
 
 ```bash
 RESOURCE_ID=$(aws apigateway create-resource --rest-api-id ${API_ID} --parent-id ${ROOT_RESOURCE_ID} --path-part "demo" --output text --query 'id')
 ```
 
-## Add a GET endpoint method to the resource
-
-Now that we've created our new `/demo` resource, we need to assign it to a `GET` request.
+Add a GET method:
 
 ```bash
 aws apigateway put-method --rest-api-id ${API_ID} --resource-id ${RESOURCE_ID} --http-method GET --authorization-type "NONE"
 ```
 
-## Update the API Gateway to point at the Lambda we created
+## 🤝 Step 6: Connect API Gateway to Lambda
 
-Finally, we can point our new resource to our lambda, which will enable us to invoke the lambda from calling the API Gateway endpoint.
+Link the API Gateway to the Lambda so it can forward incoming requests:
 
 ```bash
 aws apigateway put-integration \
-    --rest-api-id ${API_ID} \
-    --resource-id ${RESOURCE_ID} \
-    --http-method GET \
-    --type AWS_PROXY \
-    --integration-http-method POST \
-    --uri arn:aws:apigateway:${AWS_REGION:=us-east-2}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations
+--rest-api-id ${API_ID} \
+--resource-id ${RESOURCE_ID} \
+--http-method GET \
+--type AWS_PROXY \
+--integration-http-method POST \
+--uri arn:aws:apigateway:${AWS_REGION:=us-east-2}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations
 ```
 
-## Create an API Gateway deployment
-
-When updating the integration, we need to create a new deployment.
+Deploy the API:
 
 ```bash
 aws apigateway create-deployment --rest-api-id $API_ID --stage-name prod
 ```
 
-## Get our API Gateway URL
+Get the new public URL:
 
 ```bash
 MY_URL="https://${API_ID}.execute-api.${AWS_REGION:=us-east-2}.amazonaws.com/prod/demo"
 ```
 
-and save that url as a file that we can use later:
+Save the URL to a file for later:
 
 ```bash
 cat << EOF > url.txt
@@ -216,25 +215,24 @@ $MY_URL
 EOF
 ```
 
-## Give permissions for the API Gateway to invoke the Lambda
+Finally, give API Gateway permission to invoke the Lambda:
 
 ```bash
 aws lambda add-permission \
-    --function-name multitool-quickstart-lambda \
-    --statement-id apigateway-permission-${API_ID} \
-    --action lambda:InvokeFunction \
-    --principal apigateway.amazonaws.com
+--function-name multitool-quickstart-lambda \
+--statement-id apigateway-permission-${API_ID} \
+--action lambda:InvokeFunction \
+--principal apigateway.amazonaws.com
 ```
 
----
+## 🖥️ Step 7: Connect the app to MultiTool
 
-# Getting Started with MultiTool
+Now that the Lambda is deployed and accessible via API Gateway, create the app in MultiTool.
 
-Now that we have a Lambda function and an API Gateway that can be publicly accessed, we can simulate a buggy update by pushing updated lambda code that randomly returns an error some percent of the time.
+From the MultiTool web dashboard:
 
-## Setup your application
-
-Once you have logged into the MultiTool dashboard, create a workspace, then create an application using these values. If you updated any of the values in the steps above, be sure to use the updated values when creating your application.
+1. Create a workspace
+2. Create an application with the following values:
 
 | Name                  | Value                           |
 | --------------------- | ------------------------------- |
@@ -246,54 +244,55 @@ Once you have logged into the MultiTool dashboard, create a workspace, then crea
 | Resource path         | **/demo**                       |
 | Lambda name           | **multitool-quickstart-lambda** |
 
-## Login with the MultiTool CLI
-
-Once you've created your application, run the login command to connect the MultiTool CLI with your dashboard.
+After the application is set up, login to the MultiTool CLI if needed:
 
 ```bash
 multi login
 ```
 
-## Deploy using MultiTool and Simulate Traffic
+## 🚢 Step 8: Deploy with MultiTool and simulate traffic
 
-Use `multi run` to upload your updated lambda code and start the canary deployment.
+Deploy either version of the code using MultiTool:
 
-If you want to test a scenario that causes a **deployment**, deploy the `0%_failures.zip` code with MultiTool.
+- To test a healthy deployment, use the `0%_failures.zip` file.
+- To test a buggy deployment, use the `10%_failures.zip` file.
 
-If you want to test a scenario that causes a **rollback**, deploy the `10%_failures.zip` code with MultiTool.
+Both will be progressively released and MultiTool will promote the deployment if the app is stable, or roll back if error rates spike.
 
-In order to see MultiTool in action, we'll need to simulate some traffic to our `/demo` endpoint. We can do that automatically with a tool like [Bombardier](https://github.com/codesenberg/bombardier) or manually with an API Client like `curl`, [Insomnia](https://insomnia.rest/), or [Postman](https://www.postman.com/).
-
-1. Start your deployment
+Start the deployment by replacing the placeholder with your MultiTool workspace name:
 
 ```bash
-multi run --workspace ${MY_WORKSPACE_NAME} --application ${MY_APPLICATION_NAME} 0%_failures.zip
+multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 0%_failures.zip
 ```
 
-2. In a new terminal window, simulate traffic
+This kicks off a deployment and tells MultiTool to begin gradually shifting traffic to the new version.
 
-In a new terminal window, first pull your url from the file we previously saved:
+Now, in a separate terminal window, load the public URL from Step 6 to use in the next step:
 
 ```bash
 MY_URL=$(cat url.txt)
 ```
 
-then run one of these commands to start sending traffic to our endpoint:
+Simulate traffic to the `/demo` endpoint using one of these options:
+
+### Option A: Using curl
 
 ```bash
-# Using curl
 for i in $(seq 1 1500);do echo -n "Request $i completed with status: ";code=$(curl -s -o /dev/null -w "%{http_code}" "$MY_URL");echo "$code";sleep 1;done
+```
 
-OR
+### Option B: Using Bombardier
 
-# Using bombardier
+```bash
 bombardier -c 5 -n 20 ${MY_URL}
 ```
 
-And that's it 🎉 Your code will be automatically deployed and progressively released while testing its stability.
+When deploying the buggy version (`10%failures.zip`), MultiTool will automatically roll back. When deploying the healthy version (`0%_failures.zip`), MultiTool will fully promote the new version.
 
----
+And that’s it! 🎉
 
-# Support
+## 📬 Need help?
 
-If you have any questions, ideas, or bugs to report, please reach out to [support@multitool.run](mailto:support@multitool.run)!
+If you have questions, ideas, or bugs to report:
+
+👉 [support@multitool.run](mailto:support@multitool.run)!

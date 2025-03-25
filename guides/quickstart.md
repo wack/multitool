@@ -40,8 +40,8 @@ Once you have a build artifact (zip file of Lambda code) that you would like to 
 multi run --workspace MY_WORKSPACE_NAME --application MY_APPLICATION_NAME my_code.zip
 ```
 
----
+## 📬 Need help?
 
-# Support
+If you have questions, ideas, or bugs to report:
 
-If you have any questions, ideas, or bugs to report, please reach out to [support@multitool.run](mailto:support@multitool.run)!
+👉 [support@multitool.run](mailto:support@multitool.run)!
