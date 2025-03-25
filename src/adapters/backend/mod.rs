@@ -4,7 +4,7 @@ use std::sync::Arc;
 use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode};
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
 use multitool_sdk::models::{
@@ -253,6 +253,7 @@ impl BackendClient {
                 status_2xx_count: item.get_count(&ResponseStatusCode::_2XX) as u32,
                 status_4xx_count: item.get_count(&ResponseStatusCode::_4XX) as u32,
                 status_5xx_count: item.get_count(&ResponseStatusCode::_5XX) as u32,
+                created_at: Utc::now().to_rfc3339(),
             };
 
             status_codes.push(metrics);
