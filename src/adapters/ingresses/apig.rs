@@ -100,6 +100,28 @@ impl AwsApiGateway {
 
         Ok(resource.clone())
     }
+
+    async fn remove_canary_settings(&mut self) -> Result<()> {
+        let api = self.get_api_id_by_name(&self.gateway_name).await?;
+        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
+
+        // Updates the stage to delete any canary settings from the API Gateway
+        let patch_op = PatchOperation::builder()
+            .op(Op::Remove)
+            .path("/canarySettings")
+            .build();
+
+        self.apig_client
+            .update_stage()
+            .rest_api_id(api_id)
+            .stage_name(&self.stage_name)
+            .patch_operations(patch_op)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -197,25 +219,7 @@ impl Ingress for AwsApiGateway {
 
     async fn rollback_canary(&mut self) -> Result<()> {
         info!("Rolling back canary deployment in API Gateway.");
-        let api = self.get_api_id_by_name(&self.gateway_name).await?;
-        let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
-
-        // Updates the stage to delete any canary settings from the API Gateway
-        let patch_op = PatchOperation::builder()
-            .op(Op::Remove)
-            .path("/canarySettings")
-            .build();
-
-        self.apig_client
-            .update_stage()
-            .rest_api_id(api_id)
-            .stage_name(&self.stage_name)
-            .patch_operations(patch_op)
-            .send()
-            .await
-            .into_diagnostic()?;
-
-        Ok(())
+        self.remove_canary_settings().await
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
@@ -256,7 +260,7 @@ impl Ingress for AwsApiGateway {
 impl Shutdownable for AwsApiGateway {
     async fn shutdown(&mut self) -> ShutdownResult {
         // When we get the shutdown signal, we should delete any Canary settings we've set
-        self.rollback_canary().await?;
+        self.remove_canary_settings().await?;
         Ok(())
     }
 }
