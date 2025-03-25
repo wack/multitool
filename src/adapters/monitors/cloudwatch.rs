@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bon::bon;
 use multitool_sdk::models::CloudWatchDimensions;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     Shutdownable,
@@ -172,7 +172,7 @@ impl Monitor for CloudWatch {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
 
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
-        debug!("Querying CloudWatch for metrics...");
+        info!("Querying CloudWatch for new metrics.");
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
         // compiles them into a list, then generates the correct number of
         // CategoricalObservations for each response code

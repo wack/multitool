@@ -127,7 +127,7 @@ impl AwsApiGateway {
 #[async_trait]
 impl Ingress for AwsApiGateway {
     async fn release_canary(&mut self, platform_id: String) -> Result<()> {
-        debug!("Releasing canary deployment...");
+        debug!("Releasing canary deployment in API Gateway!");
         // Get the auto-generated API ID and Resource ID
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of API Gateway"))?;
