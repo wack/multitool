@@ -3,8 +3,10 @@ use derive_getters::Getters;
 use miette::{IntoDiagnostic, Result};
 use multitool_sdk::models::DeploymentState;
 use std::sync::Arc;
-use tokio::{sync::mpsc, time::Duration};
-use tracing::trace;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Duration,
+};
 
 pub(crate) type WorkspaceId = u32;
 pub(crate) type ApplicationId = u32;
@@ -29,7 +31,7 @@ pub(crate) struct LockedState {
     /// on the state. This channel signals to the thread managing
     /// the lock that it can tell the backend to release
     /// the lock because the state has been effected.
-    task_done: Arc<mpsc::Sender<()>>,
+    task_done: Arc<mpsc::Sender<oneshot::Sender<()>>>,
 }
 
 #[bon]
@@ -38,7 +40,7 @@ impl LockedState {
     pub(crate) fn new(
         state: DeploymentState,
         frequency: Duration,
-        task_done: mpsc::Sender<()>,
+        task_done: mpsc::Sender<oneshot::Sender<()>>,
     ) -> Self {
         Self {
             state,
@@ -48,6 +50,8 @@ impl LockedState {
     }
 
     pub(crate) async fn mark_done(&mut self) -> Result<()> {
-        self.task_done.send(()).await.into_diagnostic()
+        let (sender, receiver) = oneshot::channel();
+        self.task_done.send(sender).await.into_diagnostic()?;
+        receiver.await.into_diagnostic()
     }
 }

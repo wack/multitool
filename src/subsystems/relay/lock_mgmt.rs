@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use bon::bon;
+use miette::miette;
 use miette::{Report, Result};
 use multitool_sdk::models::DeploymentState;
 use tokio::select;
 use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::oneshot;
 use tokio::time::{Interval, interval};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
@@ -29,7 +31,7 @@ pub(super) struct LockManager {
     /// by the ingress/platform. It signals to us to let the
     /// backend know the state has been achieved, and we can
     /// shutdown.
-    task_done: Receiver<()>,
+    task_done: Receiver<oneshot::Sender<()>>,
 }
 
 #[bon]
@@ -65,14 +67,17 @@ impl IntoSubsystem<Report> for LockManager {
         loop {
             select! {
                 // NOTE: the order matters here
-                _ = self.task_done.recv() => {
-                    // Tell the backend that the task has been completed.
-                    // Don't call `shutdown` since that's for abnormal
-                    // termination in this case. We don't need to release
-                    // the lock on the state, since we just marked it as completed
-                    // instead.
-                    return self.backend.mark_state_completed(&self.meta, &self.state).await;
-                }
+                done = self.task_done.recv() => {
+                    if let Some(responder) = done {
+                        // Tell the backend that the task has been completed.
+                        // Don't call `shutdown` since that's for abnormal
+                        // termination in this case. We don't need to release
+                        // the lock on the state, since we just marked it as completed
+                        // instead.
+                        self.backend.mark_state_completed(&self.meta, &self.state).await?;
+                        return responder.send(()).map_err(|_|miette!("Channel closed before completing"));
+                    }
+                 }
                 _ = subsys.on_shutdown_requested() => {
                     // Release the lock.
                     return self.shutdown().await;

@@ -13,6 +13,7 @@ use multitool_sdk::models::{
 };
 use multitool_sdk::models::{DeploymentState, UpdateDeploymentStateRequest};
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 use tokio::time::Duration;
 
 pub(crate) use deploy_meta::*;
@@ -71,7 +72,7 @@ impl BackendClient {
         &self,
         meta: &DeploymentMetadata,
         state: &DeploymentState,
-        done_sender: Sender<()>,
+        done_sender: Sender<oneshot::Sender<()>>,
     ) -> Result<LockedState> {
         trace!("Locking state {}...", state.state_type);
         self.client
