@@ -120,6 +120,11 @@ impl Run {
             .new_deployment(workspace_id, application_id)
             .await?;
 
+        info!(
+            "New deployment created! Follow along in the dashboard here: https://app.multitool.run/workspaces/{}/applications/{}/activity/{}/events",
+            workspace_id, application_id, deployment_id
+        );
+
         debug!("Creating new deployment metadata...");
         let meta = DeploymentMetadata::builder()
             .workspace_id(workspace_id)
