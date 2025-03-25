@@ -1,24 +1,37 @@
-# MultiTool Quickstart Guide
+# MultiTool Getting Started Guide
 
 In this guide, you'll learn how to safely deploy an AWS Lambda function as an API endpoint using the AWS API Gateway.
 
-TODO: add details about what we're creating, etc.
+We will be creating an:
+
+- <a href="https://aws.amazon.com/lambda/" target="_blank">AWS Lambda Function</a>
+  - Lambda is a serverless compute service that runs your code in response to events and automatically manages the compute resources.
+  - This guide uses Lambda to run our sample server code.
+- <a href="https://aws.amazon.com/api-gateway/" target="_blank">AWS API Gateway REST API</a>
+  - API Gateway is a fully managed service that makes it easy for developers to create, publish, maintain, monitor, and secure APIs at any scale.
+  - This guide uses API Gateway to make our Lambda function publicly accessible to the internet.
+
+We will be using:
+
+- <a href="https://aws.amazon.com/cloudwatch/" target="_blank">AWS CloudWatch</a>
+  - CloudWatch is a service that monitors applications in AWS.
+  - This guide uses CloudWatch to read application metrics and send them to the MultiTool agent to decided whether to promote or rollback your deployments.
 
 # Prerequisites
 
-- [ ] Create a MultiTool account. [Click here to create a free account](https://app.multitool.run/create-account)
+- [ ] <a href="https://app.multitool.run/create-account" target="_blank">Create a free MultiTool account.</a>
 
-- [ ] You must have an AWS account with at least read and write permissions for Lambda, API Gateway, and Cloudwatch
+- [ ] Create an AWS account with at least read and write permissions for Lambda, API Gateway, and CloudWatch
 
-- [ ] Install the AWS CLI. [Click here for instructions.](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) and login.
+- [ ] <a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" target="_blank">Install the AWS CLI.</a>
 
-  - [ ] To login, you'll need to create an Access Token and a Secret Key. [Click here for instructions on how to create a new token.](https://docs.aws.amazon.com/IAM/latest/UserGuide/access-key-self-managed.html#Using_CreateAccessKey)
+  - [ ] To login, you'll need to create an Access Key. <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access-key-self-managed.html#Using_CreateAccessKey" target="_blank">Click here for instructions on how to create a new Access Key.</a>
 
-  - [ ] Next, we'll use the key you created to login to the AWS CLI. Run `aws configure` and follow the prompts to login.
+  - [ ] Next, we'll use the key you created to login to the AWS CLI. Run `aws configure` and follow the prompts to login to AWS.
 
-- [ ] Install the MultiTool CLI. [Click here for instructions.](https://github.com/wack/multitool/releases)
+- [ ] <a href="https://github.com/wack/multitool/releases" target="_blank">Install the MultiTool CLI.</a>
 
-- [ ] Login to the MultiTool CLI. Run `multi login`
+- [ ] Login to the MultiTool CLI. Run `multi login` and follow the prompts.
 
 ---
 
@@ -30,7 +43,7 @@ The easiest way to deploy our lambda is to package it as a zip file and upload i
 
 📝 **Note:** The filename **must** be `index.js`, any other name will fail to execute correctly
 
-To package the code with no random failures:
+Package the code with no random failures:
 
 ```bash
 cat << EOF > index.js
@@ -45,13 +58,13 @@ exports.handler = function (_, context) {
 EOF
 ```
 
-and to zip the code
+and zip the code:
 
 ```bash
 zip -j 0%_failures.zip index.js
 ```
 
-and to package the code with 10% random failures:
+and package the code with 10% random failures:
 
 ```bash
 cat << EOF > index.js
@@ -77,7 +90,7 @@ exports.handler = function (_, context) {
 EOF
 ```
 
-and to zip the code
+and zip the code:
 
 ```
 zip -j 10%_failures.zip index.js
@@ -93,7 +106,7 @@ LAMBDA_EXECUTION_ROLE_ARN=$(aws iam create-role \
   --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}' --output text --query Role.Arn)
 ```
 
-Alternatively, if you've already created an execution role in the past, find the arn with this command:
+Alternatively, if you've already created an execution role in the past, find the Amazon Resource Name (ARN) with this command:
 
 ```bash
 LAMBDA_EXECUTION_ROLE_ARN=$(aws iam get-role \
@@ -102,7 +115,7 @@ LAMBDA_EXECUTION_ROLE_ARN=$(aws iam get-role \
   --query Role.Arn)
 ```
 
-## Create a Lambda
+## Create a Lambda Function
 
 After we have our code as a Zip file and an execution role created, we can now create our Lambda function.
 
@@ -167,9 +180,9 @@ Now that we've created our new `/demo` resource, we need to assign it to a `GET`
 aws apigateway put-method --rest-api-id ${API_ID} --resource-id ${RESOURCE_ID} --http-method GET --authorization-type "NONE"
 ```
 
-## Update the API Gateway to point at the lambda we created
+## Update the API Gateway to point at the Lambda we created
 
-Finally, we can point our new resource to our lambda, which will enable us to invoke the lambda from calling the API Gateway resource.
+Finally, we can point our new resource to our lambda, which will enable us to invoke the lambda from calling the API Gateway endpoint.
 
 ```bash
 aws apigateway put-integration \
@@ -181,7 +194,7 @@ aws apigateway put-integration \
     --uri arn:aws:apigateway:${AWS_REGION:=us-east-2}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations
 ```
 
-## Create a deployment
+## Create an API Gateway deployment
 
 When updating the integration, we need to create a new deployment.
 
@@ -241,19 +254,15 @@ Once you've created your application, run the login command to connect the Multi
 multi login
 ```
 
-## Package updated code as a zip file
-
-Before we use MultiTool to canary this deployment, we need to package our updated code.
-
-If you want to test a scenario that causes a **deployment**, deploy the `0%_failures.zip` code with MultiTool.
-
-If you want to test a scenario that causes a **rollback**, deploy the `10%_failures` code with MultiTool.
-
-## Run MultiTool and Simulate Traffic
+## Deploy using MultiTool and Simulate Traffic
 
 Use `multi run` to upload your updated lambda code and start the canary deployment.
 
-In order to see MultiTool in action, we'll need to simulate some traffic to our `/demo` endpoint. We can do that automatically with a tool like [Bombardier](https://github.com/codesenberg/bombardier) or manually with an API Client like Curl, [Insomnia](https://insomnia.rest/) or [Postman](https://www.postman.com/).
+If you want to test a scenario that causes a **deployment**, deploy the `0%_failures.zip` code with MultiTool.
+
+If you want to test a scenario that causes a **rollback**, deploy the `10%_failures.zip` code with MultiTool.
+
+In order to see MultiTool in action, we'll need to simulate some traffic to our `/demo` endpoint. We can do that automatically with a tool like [Bombardier](https://github.com/codesenberg/bombardier) or manually with an API Client like `curl`, [Insomnia](https://insomnia.rest/), or [Postman](https://www.postman.com/).
 
 1. Start your deployment
 
@@ -261,24 +270,30 @@ In order to see MultiTool in action, we'll need to simulate some traffic to our 
 multi run --workspace ${MY_WORKSPACE_NAME} --application ${MY_APPLICATION_NAME} 0%_failures.zip
 ```
 
-3. In a separate terminal window, we need to simulate traffic
+2. In a new terminal window, simulate traffic
 
-Pull your url from the file we previously saved in the new terminal window:
+In a new terminal window, first pull your url from the file we previously saved:
 
 ```bash
 MY_URL=$(cat url.txt)
 ```
 
+then run one of these commands to start sending traffic to our endpoint:
+
 ```bash
-# Using bombardier
-bombardier -c 5 -n 20 ${MY_URL}
+# Using curl
+for i in $(seq 1 1500);do echo -n "Request $i completed with status: ";code=$(curl -s -o /dev/null -w "%{http_code}" "$MY_URL");echo "$code";sleep 1;done
 
 OR
 
-# Using curl
-for i in $(seq 1 1500);do echo -n "Request $i completed with status: ";code=$(curl -s -o /dev/null -w "%{http_code}" "$MY_URL");echo "$code";sleep 1;done
+# Using bombardier
+bombardier -c 5 -n 20 ${MY_URL}
 ```
 
 And that's it 🎉 Your code will be automatically deployed and progressively released while testing its stability.
+
+---
+
+# Support
 
 If you have any questions, ideas, or bugs to report, please reach out to [support@multitool.run](mailto:support@multitool.run)!
