@@ -217,7 +217,7 @@ aws lambda add-permission \
 --principal apigateway.amazonaws.com
 ```
 
-# 🖥️ Step 7: Connect the app to MultiTool
+## 🖥️ Step 7: Connect the app to MultiTool
 
 Now that the Lambda is deployed and accessible via API Gateway, create the app in MultiTool.
 
