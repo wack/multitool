@@ -4,12 +4,8 @@ default_to_workspace = false
 [env]
 CARGO_MAKE_CLIPPY_ARGS = "-- --no-deps"
 CARGO_MAKE_COVERAGE_PROVIDER = "llvm-cov"
+CARGO_MAKE_CARGO_BUILD_TEST_FLAGS = "--verbose"
 
-[tasks.build]
-description = "Runs the rust compiler."
-category = "Build"
-command = "cargo"
-args = ["build", "--verbose"]
 
 [tasks.dev-test-flow]
 dependencies = [
