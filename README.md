@@ -14,8 +14,8 @@ MultiTool is a progressive delivery tool that helps teams catch production bugs 
 
 - [What is MultiTool?](#-what-is-multitool)
 - [Table of contents](#-table-of-contents)
-- [Getting started](#-getting-started)
-- [Installation](#-installation)
+- [Getting started](#%EF%B8%8F-getting-started)
+- [Installation](#%EF%B8%8F-installation)
 - [Features](#-features)
 - [Mission](#-mission)
 - [Need help?](#-need-help)
