@@ -4,6 +4,8 @@ default_to_workspace = false
 [env]
 CARGO_MAKE_CLIPPY_ARGS = "-- --no-deps"
 CARGO_MAKE_COVERAGE_PROVIDER = "llvm-cov"
+CARGO_MAKE_CARGO_BUILD_TEST_FLAGS = ""
+
 
 [tasks.dev-test-flow]
 dependencies = [
@@ -46,12 +48,12 @@ dependencies = [
 workspace = true
 description = "Run our test suite"
 command = "cargo"
-args = [ 
-  "nextest", 
-  "run", 
+args = [
+  "nextest",
+  "run",
   "--locked",
-  "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)", 
-  "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )"
+  "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)",
+  "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
 
 [tasks.help]
@@ -60,10 +62,10 @@ description = "List help text for wack executable"
 category = "Development"
 args = [
   "run",
-  "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)", 
+  "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
   "--",
-  "--help"
+  "--help",
 ]
 
 [tasks.outdated]
@@ -82,7 +84,7 @@ workspace = true
 description = "Calculate the LoC in src."
 category = "Development"
 command = "tokei"
-args = [ "." ]
+args = ["."]
 
 [tasks.sort-ci]
 description = "Assert that Cargo.toml is sorted."
@@ -104,5 +106,5 @@ args = [
   "nextest",
   "--",
   "--lib",
-  "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )"
+  "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
