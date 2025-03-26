@@ -10,6 +10,6 @@ pub struct LoginSubcommand {
     #[clap(long)]
     password: Option<String>,
 
-    #[arg(long, short = 'o', default_value = Some("http://127.0.0.1:8080"))]
+    #[arg(long, short = 'o', default_value = Some("https://staging.api.multitool.run"))]
     origin: Option<String>,
 }
