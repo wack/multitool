@@ -18,6 +18,7 @@ MultiTool is a progressive delivery tool that helps teams catch production bugs 
 - [Installation](#installation)
 - [Features](#features)
 - [Mission](#mission)
+- [Need help?](#need-help)
 
 ## 🏎️ Getting started
 
@@ -77,4 +78,4 @@ We help teams take a more proactive approach to progressive delivery by using ag
 
 If you have questions, ideas, or bugs to report:
 
-👉 [support@multitool.run](mailto:support@multitool.run)!
+👉 [support@multitool.run](mailto:support@multitool.run)
