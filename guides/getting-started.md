@@ -250,24 +250,17 @@ After the application is set up, login to the MultiTool CLI if needed:
 multi login
 ```
 
-## 🚢 Step 8: Deploy with MultiTool and simulate traffic
+## 🚀 Step 8: Deploy healthy code and simulate stable traffic
 
-Deploy either version of the code using MultiTool:
+To test a successful deployment, use the `0%_failures.zip` file. 
 
-- To test a healthy deployment, use the `0%_failures.zip` file.
-- To test a buggy deployment, use the `10%_failures.zip` file.
-
-Both will be progressively released and MultiTool will promote the deployment if the app is stable, or roll back if error rates spike.
-
-Start the deployment by replacing the placeholder with your MultiTool workspace name:
+Start the deployment using the healhty build artifact and replacing the placeholder with your MultiTool workspace name:
 
 ```bash
 multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 0%_failures.zip
 ```
 
-This kicks off a deployment and tells MultiTool to begin gradually shifting traffic to the new version.
-
-Now, in a separate terminal window, load the public URL from Step 6 to use in the next step:
+In a separate terminal window, load the public URL from Step 6 to use in the next step:
 
 ```bash
 MY_URL=$(cat url.txt)
@@ -287,7 +280,38 @@ for i in $(seq 1 1500);do echo -n "Request $i completed with status: ";code=$(cu
 bombardier -c 5 -n 20 ${MY_URL}
 ```
 
-When deploying the buggy version (`10%failures.zip`), MultiTool will automatically roll back. When deploying the healthy version (`0%_failures.zip`), MultiTool will fully promote the new version.
+As traffic hits the new version, MultiTool will evaluate its behavior and promote it to 100% traffic once it confirms stability.
+
+## ⚠️ Step 9: Deploy buggy code and simulate errors
+
+To test a broken deployment, use the `10%_failures.zip` file. 
+
+Start the deployment using the buggy build artifact and replacing the placeholder with your MultiTool workspace name:
+
+```bash
+multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 10%_failures.zip
+```
+In a separate terminal window, load the public URL from Step 6 to use in the next step:
+
+```bash
+MY_URL=$(cat url.txt)
+```
+
+Simulate traffic to the `/demo` endpoint using one of these options:
+
+### Option A: Using curl
+
+```bash
+for i in $(seq 1 1500);do echo -n "Request $i completed with status: ";code=$(curl -s -o /dev/null -w "%{http_code}" "$MY_URL");echo "$code";sleep 1;done
+```
+
+### Option B: Using Bombardier
+
+```bash
+bombardier -c 5 -n 20 ${MY_URL}
+```
+
+MultiTool will detect the increase in errors and automatically trigger a rollback.
 
 And that’s it! 🎉
 
