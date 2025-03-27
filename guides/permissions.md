@@ -1,12 +1,14 @@
-# MultiTool Permissions
+# Required AWS permissions for MultiTool
 
-MultiTool was built with strict security principles in mind and **does not** store any AWS access keys or tokens. Instead, the CLI uses the logged in AWS CLI users' access token to interact with resources like AWS Lambda, AWS API Gateway, and AWS CloudWatch.
+MultiTool is designed to minimize security risk. <b>MultiTool never stores AWS credentials</b> and relies solely on an authenticated AWS CLI session for access.
 
-## Minimum set of AWS permissions
+This document lists the minimum set of permissions required for MultiTool to operate end-to-end, including creating AWS resources and running deployments.
 
-To use MultiTool end-to-end from creating AWS resources to running a deployment, you will need, at a minimum, this set of permissions.
+## Minimum IAM policy
 
-<a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create-console.html#access_policies_create-json-editor" target="_blank">To create a new policy in the AWS console follow instructions here.</a>
+💡 To create a new policy in the AWS console, <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create-console.html#access_policies_create-json-editor" target="_blank">follow these instructions</a>.
+
+The following IAM policy defines the least privilege access MultiTool needs to function correctly:
 
 ```json
 {
@@ -122,4 +124,4 @@ To use MultiTool end-to-end from creating AWS resources to running a deployment,
 
 If you have questions, ideas, or bugs to report:
 
-👉 [support@multitool.run](mailto:support@multitool.run)!
+👉 [support@multitool.run](mailto:support@multitool.run)
