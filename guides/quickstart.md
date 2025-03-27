@@ -1,47 +1,57 @@
-# MultiTool Quickstart
+# Quickstart: Deploy with MultiTool
 
-## Prerequisites
+This guide shows you how to deploy your own AWS Lambda code using MultiTool. You'll connect the CLI to your MultiTool dashboard and run a deployment using Lambda code packaged as a zip file.
 
-- [ ] <a href="https://app.multitool.run/create-account" target="_blank">Create a free MultiTool account.</a>
+## ✅ Prerequisites
 
-- [ ] Create a new Workspace in MultiTool.
+- [ ] <a href="https://app.multitool.run/create-account" target="_blank">Create a free MultiTool account</a>
 
-- [ ] Create a new Application in MultiTool.
+- [ ] Create a new workspace from the MultiTool web dashboard
 
-## Install the MultiTool CLI
+- [ ] Create a new application in your workspace
 
-To install the MultiTool CLI, use `curl`, <a href="https://brew.sh/" target="_blank">Homebrew</a>, or <a href="https://github.com/wack/multitool/releases/latest" target="_blank">vist our releases page</a> to download a pre-built binary .
+## ⚙️ Install the MultiTool CLI
 
-With `curl`
+You can install the CLI using `curl`, <a href="https://brew.sh/" target="_blank">Homebrew</a>, or by downloading a binary from the <a href="https://github.com/wack/multitool/releases/latest" target="_blank">releases page</a>.
+
+### Install with `curl`
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wack/multitool/releases/download/v0.1.1/multitool-installer.sh | sh
 ```
 
-<a href="https://brew.sh/" target="_blank">With `Homebrew`</a>
+### Install with <a href="https://brew.sh/" target="_blank">`Homebrew`</a>
 
 ```bash
 brew install wack/tap/multi
 ```
 
-## Login with the MultiTool CLI
+## 🔐 Login with the MultiTool CLI
 
-Run the login command to connect the MultiTool CLI with your dashboard.
+Connect the CLI to your MultiTool account:
 
 ```bash
 multi login
 ```
 
-## Deploy code using MultiTool
+## 🚀 Deploy your Lambda code
 
-Once you have a build artifact (zip file of Lambda code) that you would like to deploy, use the `multi run` command, passing in the Workspace name and Application name that you created during setup.
+Once you have a `.zip` file containing your Lambda code, run:
 
 ```bash
 multi run --workspace MY_WORKSPACE_NAME --application MY_APPLICATION_NAME my_code.zip
 ```
 
+Replace:
+
+- `MY_WORKSPACE_NAME` with the name of your MultiTool workspace
+
+- `MY_APPLICATION_NAME` with the name of your application
+
+- `my_code.zip` with the path to your build artifact
+
 ## 📬 Need help?
 
 If you have questions, ideas, or bugs to report:
 
-👉 [support@multitool.run](mailto:support@multitool.run)!
+👉 [support@multitool.run](mailto:support@multitool.run)
