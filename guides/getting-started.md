@@ -95,7 +95,7 @@ EOF
 
 Zip the code:
 
-```
+```bash
 zip -j 10%_failures.zip index.js
 ```
 
@@ -252,7 +252,7 @@ multi login
 
 ## 🚀 Step 8: Deploy healthy code and simulate stable traffic
 
-To test a successful deployment, use the `0%_failures.zip` file. 
+To test a successful deployment, use the `0%_failures.zip` file.
 
 Start the deployment using the healhty build artifact and replacing the placeholder with your MultiTool workspace name:
 
@@ -284,13 +284,14 @@ As traffic hits the new version, MultiTool will evaluate its behavior and promot
 
 ## ⚠️ Step 9: Deploy buggy code and simulate errors
 
-To test a broken deployment, use the `10%_failures.zip` file. 
+To test a broken deployment, use the `10%_failures.zip` file.
 
 Start the deployment using the buggy build artifact and replacing the placeholder with your MultiTool workspace name:
 
 ```bash
 multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 10%_failures.zip
 ```
+
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
 
 ```bash
@@ -314,6 +315,22 @@ bombardier -c 5 -n 20 ${MY_URL}
 MultiTool will detect the increase in errors and automatically trigger a rollback.
 
 And that’s it! 🎉
+
+## 🧹 Step 10: Cleanup
+
+After you've tested MultiTool, be sure to clean up the demo resources created as part of this guide.
+
+To delete the Lambda function:
+
+```bash
+aws lambda delete-function --function-name multitool-quickstart-lambda
+```
+
+and to delete the API Gateway:
+
+```bash
+aws apigateway delete-rest-api --rest-api-id ${API_ID}
+```
 
 ## 📬 Need help?
 
