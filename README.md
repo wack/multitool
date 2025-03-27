@@ -72,7 +72,7 @@ MultiTool supports deploying canaries for AWS Lambda functions running in AWS AP
 
 ## 🎯 Mission 
 
-We help teams take a more proactive approach to progressive delivery by using agentic deployments to catch regressions early. Today, operators either manually watch deployments in real time or rely on passive alerts to catch problems after they’ve hit users. WWe want to empower operators to *proactively* identify and rollback disruptive deployments *before* they cause widespread impact. MultiTool is bringing agentic deployments to everyone. Learn more about our team and vision at [our company website](https://www.multitool.run/company).
+We help teams take a more proactive approach to progressive delivery by using agentic deployments to catch regressions early. Today, operators either manually watch deployments in real time or rely on passive alerts to catch problems after they’ve hit users. We want to empower operators to *proactively* identify and rollback disruptive deployments *before* they cause widespread impact. MultiTool is bringing agentic deployments to everyone. Learn more about our team and vision at [our company website](https://www.multitool.run/company).
 
 ## 📬 Need help?
 
