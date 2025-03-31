@@ -6,7 +6,7 @@ This guide shows you how to deploy your own AWS Lambda code using MultiTool. You
 
 - [ ] <a href="https://app.multitool.run/create-account" target="_blank">Create a free MultiTool account</a>
 
-- [ ] Create a new workspace from the MultiTool web dashboard
+- [ ] Create a new workspace from the MultiTool app
 
 - [ ] Create a new application in your workspace
 
