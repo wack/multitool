@@ -229,7 +229,7 @@ aws lambda add-permission \
 
 Now that the Lambda is deployed and accessible via API Gateway, create the app in MultiTool.
 
-From the MultiTool web dashboard:
+From the MultiTool app:
 
 1. Create a workspace
 2. Create an application with the following values:
