@@ -1,7 +1,9 @@
+use std::cmp::max;
+
 use async_trait::async_trait;
 use bon::bon;
 use multitool_sdk::models::CloudWatchDimensions;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{
     Shutdownable,
@@ -157,6 +159,29 @@ impl CloudWatch {
             }
         }
     }
+
+    /// Checks if the number of metrics collected is low (< 20 per given period) and warn the user
+    fn check_metrics_count(
+        control_count: u32,
+        canary_count: u32,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+    ) {
+        if (control_count + canary_count) < 20 {
+            // Sometimes the elapsed_time is 59s and not 1 full minute, so we want to have a floor of at least 1 min
+            let elapsed_time = max(1, (end_time - start_time).num_minutes());
+            let elapsed_time_str = if elapsed_time > 1 {
+                format!("{elapsed_time} minutes")
+            } else {
+                format!("{elapsed_time} minute")
+            };
+            warn!(
+                "Warning: MultiTool has collected {} metrics in the past {}. More traffic will produce more accurate results.",
+                control_count + canary_count,
+                elapsed_time_str,
+            );
+        }
+    }
 }
 
 #[async_trait]
@@ -170,7 +195,6 @@ impl Shutdownable for CloudWatch {
 #[async_trait]
 impl Monitor for CloudWatch {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
-
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
         info!("Querying CloudWatch for new metrics.");
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
@@ -264,6 +288,9 @@ impl Monitor for CloudWatch {
         let control_2xx = control_count - (control_4xx + control_5xx);
         // Collate all of our canary/experimental metrics
         let canary_2xx = canary_count - (canary_4xx + canary_5xx);
+
+        // Print a warning message if we have low metrics
+        Self::check_metrics_count(control_count, canary_count, start_time, end_time);
 
         debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
 
