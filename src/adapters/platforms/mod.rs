@@ -31,6 +31,7 @@ impl Shutdownable for MockPlatform {
 
 mod builder;
 mod lambda;
+mod vercel;
 
 #[cfg(test)]
 mod tests {
