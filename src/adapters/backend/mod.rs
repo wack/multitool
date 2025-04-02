@@ -8,10 +8,10 @@ use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
 use multitool_sdk::models::{
-    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, DeploymentStateStatus,
+    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, RolloutStateStatus,
     LoginRequest, LoginSuccess, StatusCodeMetrics, WorkspaceSummary,
 };
-use multitool_sdk::models::{DeploymentState, UpdateDeploymentStateRequest};
+use multitool_sdk::models::{RolloutState, UpdateRolloutStateRequest};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -75,20 +75,20 @@ impl BackendClient {
 
     pub(crate) async fn lock_state(
         &self,
-        meta: &DeploymentMetadata,
-        state: &DeploymentState,
+        meta: &RolloutMetadata,
+        state: &RolloutState,
         done_sender: Sender<oneshot::Sender<()>>,
     ) -> Result<LockedState> {
         trace!("Locking state {}...", state.state_type);
         self.client
-            .deployment_states_api()
-            .update_deployment_state(
+            .rollout_states_api()
+            .update_rollout_state(
                 *meta.workspace_id(),
                 *meta.application_id(),
-                *meta.deployment_id(),
+                *meta.rollout_id(),
                 state.id,
-                UpdateDeploymentStateRequest {
-                    status: Some(Some(DeploymentStateStatus::InProgress)),
+                UpdateRolloutStateRequest {
+                    status: Some(Some(RolloutStateStatus::InProgress)),
                 },
             )
             .await
@@ -107,16 +107,16 @@ impl BackendClient {
 
     pub(crate) async fn refresh_lock(
         &self,
-        meta: &DeploymentMetadata,
+        meta: &RolloutMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
         trace!("Refreshing {} lock...", locked_state.state().state_type);
         self.client
-            .deployment_states_api()
-            .refresh_deployment_state(
+            .rollout_states_api()
+            .refresh_rollout_state(
                 *meta.workspace_id(),
                 *meta.application_id(),
-                *meta.deployment_id(),
+                *meta.rollout_id(),
                 locked_state.state().id,
             )
             .await
@@ -128,19 +128,19 @@ impl BackendClient {
     /// Release the lock on this state without completing it.
     pub(crate) async fn abandon_lock(
         &self,
-        meta: &DeploymentMetadata,
+        meta: &RolloutMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
         trace!("Abandoning {} lock", locked_state.state().state_type);
         self.client
-            .deployment_states_api()
-            .update_deployment_state(
+            .rollout_states_api()
+            .update_rollout_state(
                 *meta.workspace_id(),
                 *meta.application_id(),
-                *meta.deployment_id(),
+                *meta.rollout_id(),
                 locked_state.state().id,
-                UpdateDeploymentStateRequest {
-                    status: Some(Some(DeploymentStateStatus::Pending)),
+                UpdateRolloutStateRequest {
+                    status: Some(Some(RolloutStateStatus::Pending)),
                 },
             )
             .await
@@ -154,17 +154,17 @@ impl BackendClient {
     /// locked/claimed and thus are ready to be locked and processed.
     pub(crate) async fn poll_for_state(
         &self,
-        meta: &DeploymentMetadata,
-    ) -> Result<Vec<DeploymentState>> {
+        meta: &RolloutMetadata,
+    ) -> Result<Vec<RolloutState>> {
         trace!("Polling for new states...");
         let response = self
             .client
-            .deployment_states_api()
-            .list_deployment_states(
+            .rollout_states_api()
+            .list_rollout_states(
                 *meta.workspace_id(),
                 *meta.application_id(),
-                *meta.deployment_id(),
-                Some(DeploymentStateStatus::Pending),
+                *meta.rollout_id(),
+                Some(RolloutStateStatus::Pending),
             )
             .await
             .into_diagnostic()?;
@@ -175,7 +175,7 @@ impl BackendClient {
 
     pub(crate) async fn mark_state_completed(
         &self,
-        meta: &DeploymentMetadata,
+        meta: &RolloutMetadata,
         locked_state: &LockedState,
     ) -> Result<()> {
         trace!(
@@ -183,14 +183,14 @@ impl BackendClient {
             locked_state.state().state_type
         );
         self.client
-            .deployment_states_api()
-            .update_deployment_state(
+            .rollout_states_api()
+            .update_rollout_state(
                 *meta.workspace_id(),
                 *meta.application_id(),
-                *meta.deployment_id(),
+                *meta.rollout_id(),
                 locked_state.state().id,
-                UpdateDeploymentStateRequest {
-                    status: Some(Some(DeploymentStateStatus::Done)),
+                UpdateRolloutStateRequest {
+                    status: Some(Some(RolloutStateStatus::Done)),
                 },
             )
             .await
@@ -200,21 +200,21 @@ impl BackendClient {
         Ok(())
     }
 
-    pub async fn new_deployment(
+    pub async fn new_rollout(
         &self,
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
-    ) -> Result<DeploymentId> {
-        trace!("Creating a new deployment");
+    ) -> Result<RolloutId> {
+        trace!("Creating a new rollout");
         let response = self
             .client
-            .deployments_api()
-            .create_deployment(workspace_id, application_id)
+            .rollouts_api()
+            .create_rollout(workspace_id, application_id)
             .await
             .into_diagnostic()?;
 
-        trace!("Deployment created successfully");
-        Ok(response.deployment.id)
+        trace!("Rollout created successfully");
+        Ok(response.rollout.id)
     }
 
     /// This fuction logs the user into the backend by exchanging these credentials
@@ -242,7 +242,7 @@ impl BackendClient {
     /// Upload a batch of observations to the backend.
     pub(crate) async fn upload_observations(
         &self,
-        meta: &DeploymentMetadata,
+        meta: &RolloutMetadata,
         data: Vec<StatusCode>,
     ) -> Result<()> {
         trace!("Uploading observations to backend");
@@ -268,11 +268,11 @@ impl BackendClient {
 
         let workspace_id = *meta.workspace_id();
         let application_id = *meta.application_id();
-        let deployment_id = *meta.deployment_id();
+        let rollout_id = *meta.rollout_id();
 
         self.client
             .response_code_metrics_api()
-            .create_response_code_metrics(workspace_id, application_id, deployment_id, req_body)
+            .create_response_code_metrics(workspace_id, application_id, rollout_id, req_body)
             .await
             .into_diagnostic()?;
 

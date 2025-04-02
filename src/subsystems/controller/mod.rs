@@ -5,7 +5,7 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use tracing::{debug, trace};
 
 use crate::adapters::{
-    BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, DeploymentMetadata,
+    BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata,
 };
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
 use crate::{IngressSubsystem, PlatformSubsystem};
@@ -27,9 +27,9 @@ pub struct ControllerSubsystem {
     monitor: BoxedMonitor,
     ingress: BoxedIngress,
     platform: BoxedPlatform,
-    /// This field contains context about the current deployment
+    /// This field contains context about the current rollout
     /// and is frequently passed to the backend.
-    meta: DeploymentMetadata,
+    meta: RolloutMetadata,
 }
 
 #[bon]
@@ -40,7 +40,7 @@ impl ControllerSubsystem {
         monitor: BoxedMonitor,
         ingress: BoxedIngress,
         platform: BoxedPlatform,
-        meta: DeploymentMetadata,
+        meta: RolloutMetadata,
     ) -> Self {
         trace!("Creating a new controller subsystem...");
 

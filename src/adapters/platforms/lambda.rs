@@ -87,7 +87,7 @@ impl Platform for LambdaPlatform {
         Ok(())
     }
 
-    async fn promote_deployment(&mut self) -> Result<()> {
+    async fn promote_rollout(&mut self) -> Result<()> {
         todo!("I don't think Lambdas promote until we support Lambda Aliases.")
     }
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
 use crate::adapters::{
-    ApplicationConfig, DeploymentMetadata, IngressBuilder, MonitorBuilder, PlatformBuilder,
+    ApplicationConfig, RolloutMetadata, IngressBuilder, MonitorBuilder, PlatformBuilder,
 };
 use crate::fs::{FileSystem, SessionFile};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
@@ -79,8 +79,8 @@ impl Run {
                 monitor: MonitorBuilder::new(*application.monitor).build().await,
             };
 
-            // Create a new deployment.
-            let metadata = self.create_deployment(workspace.id, application.id).await?;
+            // Create a new rollout.
+            let metadata = self.create_rollout(workspace.id, application.id).await?;
 
             // Build the ControllerSubsystem using the boxed objects.
             debug!("Building controller...");
@@ -92,7 +92,7 @@ impl Run {
                 .meta(metadata)
                 .build();
 
-            info!("Starting the deployment...");
+            info!("Starting the rollout...");
 
             // Let's capture the shutdown signal from the OS.
             Toplevel::new(|s| async move {
@@ -109,27 +109,27 @@ impl Run {
         })
     }
 
-    async fn create_deployment(
+    async fn create_rollout(
         &self,
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
-    ) -> Result<DeploymentMetadata> {
-        debug!("Creating new deployment...");
-        let deployment_id = self
+    ) -> Result<RolloutMetadata> {
+        debug!("Creating new rollout...");
+        let rollout_id = self
             .backend
-            .new_deployment(workspace_id, application_id)
+            .new_rollout(workspace_id, application_id)
             .await?;
 
         info!(
-            "New deployment created! Follow along in the dashboard here: https://app.multitool.run/workspaces/{}/applications/{}/activity/{}/events",
-            workspace_id, application_id, deployment_id
+            "New rollout created! Follow along in the dashboard here: https://app.multitool.run/workspaces/{}/applications/{}/activity/{}/events",
+            workspace_id, application_id, rollout_id
         );
 
-        debug!("Creating new deployment metadata...");
-        let meta = DeploymentMetadata::builder()
+        debug!("Creating new rollout metadata...");
+        let meta = RolloutMetadata::builder()
             .workspace_id(workspace_id)
             .application_id(application_id)
-            .deployment_id(deployment_id)
+            .rollout_id(rollout_id)
             .build();
         Ok(meta)
     }
