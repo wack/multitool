@@ -19,6 +19,11 @@ use tokio::time::Duration;
 pub(crate) use deploy_meta::*;
 use tracing::trace;
 
+/// Write the CLI's version to a
+const USER_AGENT: &str = concat!("multi/", env!("CARGO_PKG_VERSION"));
+
+pub mod deploy_meta;
+
 // WARNING: This code seriously needs to be cleaned up.
 // I wrote this in a sloppy fit while trying to yak shave
 // about a million other things.
@@ -50,7 +55,7 @@ impl BackendClient {
     pub fn new(origin: Option<&str>, session: Option<Session>) -> Result<Self> {
         let conf = BackendConfig::new(origin, session.clone());
 
-        let raw_conf: Configuration = conf.clone().into();
+        let mut raw_conf: Configuration = conf.clone().into();
 
         let client = ApiClient::new(Arc::new(raw_conf.clone()));
         Ok(Self {
@@ -369,6 +374,7 @@ impl BackendConfig {
         });
         let conf = Configuration {
             base_path: origin.unwrap_or("https://api.multitool.run".to_string()),
+            user_agent: Some(USER_AGENT.to_owned()),
             bearer_access_token: jwt,
             ..Configuration::default()
         };
@@ -402,8 +408,6 @@ impl From<LoginSuccess> for UserCreds {
         )
     }
 }
-
-pub mod deploy_meta;
 
 #[cfg(test)]
 mod tests {
