@@ -16,7 +16,7 @@ use aws_sdk_lambda::client::Client as LambdaClient;
 use super::Ingress;
 
 /// AwsApiGateway is the Ingress implementation for AWS API Gateway + Lambda.
-/// It's responsible for creating canary deployments on API Gateway, updating their
+/// It's responsible for creating canary rollouts on API Gateway, updating their
 /// traffic and promoting them, and deploying Lambda functions.
 pub struct AwsApiGateway {
     apig_client: GatewayClient,
@@ -127,7 +127,7 @@ impl AwsApiGateway {
 #[async_trait]
 impl Ingress for AwsApiGateway {
     async fn release_canary(&mut self, platform_id: String) -> Result<()> {
-        debug!("Releasing canary deployment in API Gateway!");
+        debug!("Releasing canary rollout in API Gateway!");
         // Get the auto-generated API ID and Resource ID
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of API Gateway"))?;
@@ -171,7 +171,7 @@ impl Ingress for AwsApiGateway {
             .await
             .into_diagnostic()?;
 
-        // Create a deployment with canary settings to deploy our new lambda
+        // Create a rollout with canary settings to deploy our new lambda
         self.apig_client
             .create_deployment()
             .rest_api_id(api_id)
@@ -218,24 +218,24 @@ impl Ingress for AwsApiGateway {
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
-        info!("Rolling back canary deployment in API Gateway.");
+        info!("Rolling back canary rollout in API Gateway.");
         self.remove_canary_settings().await
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
-        info!("Promoting canary deployment in API Gateway!");
+        info!("Promoting canary rollout in API Gateway!");
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
 
-        // Overwrite the main deployment's ID with the canary's
-        let replace_deployment_op = PatchOperation::builder()
+        // Overwrite the main rollout's ID with the canary's
+        let replace_rollout_op = PatchOperation::builder()
             .op(Op::Copy)
-            .from("/canarySettings/deploymentId")
-            .path("/deploymentId")
+            .from("/canarySettings/rolloutId")
+            .path("/rolloutId")
             .build();
 
         // Deletes all canary settings from the API Gateway so we're ready for the next
-        // canary deployment
+        // canary rollout
         let delete_canary_op = PatchOperation::builder()
             .op(Op::Remove)
             .path("/canarySettings")
@@ -246,7 +246,7 @@ impl Ingress for AwsApiGateway {
             .update_stage()
             .rest_api_id(api_id)
             .stage_name(&self.stage_name)
-            .patch_operations(replace_deployment_op)
+            .patch_operations(replace_rollout_op)
             .patch_operations(delete_canary_op)
             .send()
             .await

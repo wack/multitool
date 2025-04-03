@@ -19,7 +19,7 @@ pub trait Platform: Shutdownable {
     /// destroys the resoruces we created.
     async fn delete_canary(&mut self) -> Result<()>;
     /// Make the canary app the new baseline.
-    async fn promote_deployment(&mut self) -> Result<()>;
+    async fn promote_rollout(&mut self) -> Result<()>;
 }
 
 #[async_trait]

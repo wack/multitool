@@ -1,7 +1,7 @@
 use bon::{Builder, bon};
 use derive_getters::Getters;
 use miette::{IntoDiagnostic, Result};
-use multitool_sdk::models::DeploymentState;
+use multitool_sdk::models::RolloutState;
 use std::sync::Arc;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -10,21 +10,21 @@ use tokio::{
 
 pub(crate) type WorkspaceId = u32;
 pub(crate) type ApplicationId = u32;
-pub(crate) type DeploymentId = u64;
+pub(crate) type RolloutId = u64;
 
-/// DeploymentMetadata captures the relevant parameters for a particular
-/// deployment. This struct is mostly used in conjuction with a `BackendClient`
-/// to hold the context for the current deployment.
+/// RolloutMetadata captures the relevant parameters for a particular
+/// rollout. This struct is mostly used in conjuction with a `BackendClient`
+/// to hold the context for the current rollout.
 #[derive(Builder, Getters, Clone)]
-pub(crate) struct DeploymentMetadata {
+pub(crate) struct RolloutMetadata {
     workspace_id: WorkspaceId,
     application_id: ApplicationId,
-    deployment_id: DeploymentId,
+    rollout_id: RolloutId,
 }
 
 #[derive(Getters, Clone)]
 pub(crate) struct LockedState {
-    state: DeploymentState,
+    state: RolloutState,
     /// How often the lease must be renewed.
     frequency: Duration,
     /// When the state has been effected, release the lock we have
@@ -38,7 +38,7 @@ pub(crate) struct LockedState {
 impl LockedState {
     #[builder]
     pub(crate) fn new(
-        state: DeploymentState,
+        state: RolloutState,
         frequency: Duration,
         task_done: mpsc::Sender<oneshot::Sender<()>>,
     ) -> Self {

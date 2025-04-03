@@ -23,15 +23,15 @@ pub trait Ingress: Shutdownable {
     /// in the event of a rollback. Unlike `Platform::yank_canary`,
     /// which removes the canary from the platform, this method
     /// cuts traffic to the canary and removes it from the ingress,
-    /// but it doesn't remove the deployment from the platform.
+    /// but it doesn't remove the rollout from the platform.
     ///
     /// In the "build, deploy, release" model of application lifecycle,
     /// this is effectively cutting the release without affecting the
-    /// deployment.
+    /// rollout.
     async fn rollback_canary(&mut self) -> Result<()>;
     /// This method promotes the canary to the new baseline within
     /// the context of the ingress. It does not affect the underlying
-    /// deployment.
+    /// rollout.
     async fn promote_canary(&mut self) -> Result<()>;
 }
 

@@ -60,7 +60,7 @@ impl PlatformSubsystem {
             PlatformMail::DeployCanary(params) => self.handle_deploy(params).await,
             PlatformMail::YankCanary(params) => self.handle_yank(params).await,
             PlatformMail::DeleteCanary(params) => self.handle_delete(params).await,
-            PlatformMail::PromoteDeployment(params) => self.handle_promote(params).await,
+            PlatformMail::PromoteRollout(params) => self.handle_promote(params).await,
         }
     }
 

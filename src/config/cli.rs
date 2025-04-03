@@ -5,7 +5,7 @@ use tracing::level_filters::LevelFilter;
 use super::colors::EnableColors;
 use super::command::MultiCommand;
 
-/// multi is a cloud deployment multitool.
+/// multi is a cloud rollout multitool.
 #[derive(Getters, Parser)]
 pub struct Cli {
     /// The subcommand to execute

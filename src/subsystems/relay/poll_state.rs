@@ -5,10 +5,10 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::{
     Shutdownable,
-    adapters::{BackendClient, DeploymentMetadata},
+    adapters::{BackendClient, RolloutMetadata},
     subsystems::{ShutdownResult, TakenOptionalError},
 };
-use multitool_sdk::models::DeploymentState;
+use multitool_sdk::models::RolloutState;
 use tokio::{
     select,
     sync::mpsc::{self, Receiver, Sender},
@@ -28,21 +28,21 @@ pub struct StatePoller {
     /// This timer ticks every so often, letting us know
     /// its time to poll the backend for new state.
     timer: Interval,
-    /// This field describes the current active deployment. It's
+    /// This field describes the current active rollout. It's
     /// context we pass to the backend on each request.
-    meta: DeploymentMetadata,
+    meta: RolloutMetadata,
     /// This is where we write new messages when we have them.
-    outbox: Sender<DeploymentState>,
+    outbox: Sender<RolloutState>,
     /// We give this to the caller so it can stream new
     /// messages.
-    stream: Option<Receiver<DeploymentState>>,
+    stream: Option<Receiver<RolloutState>>,
 }
 
 #[bon]
 impl StatePoller {
     #[builder]
     pub(super) fn new(
-        meta: DeploymentMetadata,
+        meta: RolloutMetadata,
         backend: BackendClient,
         freq: Option<Duration>,
     ) -> Self {
@@ -58,7 +58,7 @@ impl StatePoller {
         }
     }
 
-    pub fn take_stream(&mut self) -> Result<Receiver<DeploymentState>> {
+    pub fn take_stream(&mut self) -> Result<Receiver<RolloutState>> {
         self.stream.take().ok_or(TakenOptionalError.into())
     }
 }

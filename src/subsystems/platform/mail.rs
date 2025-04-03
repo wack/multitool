@@ -10,7 +10,7 @@ pub(super) enum PlatformMail {
     DeployCanary(DeployParams),
     YankCanary(YankParams),
     DeleteCanary(DeleteParams),
-    PromoteDeployment(PromoteParams),
+    PromoteRollout(PromoteParams),
 }
 
 #[async_trait]
@@ -39,10 +39,10 @@ impl Platform for PlatformHandle {
         receiver.await.into_diagnostic()?
     }
 
-    async fn promote_deployment(&mut self) -> Result<()> {
+    async fn promote_rollout(&mut self) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
         let params = PromoteParams::new(sender);
-        let mail = PlatformMail::PromoteDeployment(params);
+        let mail = PlatformMail::PromoteRollout(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
     }

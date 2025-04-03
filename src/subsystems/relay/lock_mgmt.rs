@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::miette;
 use miette::{Report, Result};
-use multitool_sdk::models::DeploymentState;
+use multitool_sdk::models::RolloutState;
 use tokio::select;
 use tokio::sync::mpsc::{self, Receiver};
 use tokio::sync::oneshot;
@@ -11,7 +11,7 @@ use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 
 use crate::{
     Shutdownable,
-    adapters::{BackendClient, DeploymentMetadata},
+    adapters::{BackendClient, RolloutMetadata},
     subsystems::ShutdownResult,
 };
 
@@ -20,9 +20,9 @@ use super::LockedState;
 pub(super) struct LockManager {
     /// We use this client to refresh locks.
     backend: BackendClient,
-    /// This field describes the current active deployment.
+    /// This field describes the current active rollout.
     /// This is context we pass to the backend on each request.
-    meta: DeploymentMetadata,
+    meta: RolloutMetadata,
     /// This is the state that this manager is locking.
     state: LockedState,
     /// This timer ticks every time we should refresh the lock.
@@ -39,8 +39,8 @@ impl LockManager {
     #[builder]
     pub(super) async fn new(
         backend: BackendClient,
-        metadata: DeploymentMetadata,
-        state: DeploymentState,
+        metadata: RolloutMetadata,
+        state: RolloutState,
     ) -> Result<Self> {
         let (done_sender, task_done) = mpsc::channel(1);
         // Take the initial lock.

@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result, miette};
-use multitool_sdk::models::DeploymentStateData;
-use multitool_sdk::models::DeploymentStateType::{
+use multitool_sdk::models::RolloutStateData;
+use multitool_sdk::models::RolloutStateType::{
     DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
 };
 use tokio::time::Duration;
@@ -13,7 +13,7 @@ use tracing::debug;
 use crate::WholePercent;
 use crate::adapters::LockedState;
 use crate::{
-    adapters::{BackendClient, BoxedIngress, BoxedPlatform, DeploymentMetadata, StatusCode},
+    adapters::{BackendClient, BoxedIngress, BoxedPlatform, RolloutMetadata, StatusCode},
     stats::Observation,
 };
 
@@ -35,10 +35,10 @@ pub struct RelaySubsystem<T: Observation + Send + 'static> {
     // Pin<Box<Stream<Item=T: Observation>>
     // NB: This should probably happen in its own thread.
     observations: Receiver<Vec<T>>,
-    /// This field provides context about the current deployment,
+    /// This field provides context about the current rollout,
     /// and is frequently serialized and passed to the backend on
     /// each request.
-    meta: DeploymentMetadata,
+    meta: RolloutMetadata,
     platform: BoxedPlatform,
     ingress: BoxedIngress,
     backend_poll_frequency: Option<Duration>,
@@ -49,7 +49,7 @@ impl<T: Observation + Send + 'static> RelaySubsystem<T> {
     #[builder]
     pub fn new(
         backend: BackendClient,
-        meta: DeploymentMetadata,
+        meta: RolloutMetadata,
         observations: Receiver<Vec<T>>,
         platform: BoxedPlatform,
         ingress: BoxedIngress,
@@ -154,7 +154,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                             },
                             SetCanaryTraffic => {
                                 let percent_traffic = if let Some(data) = locked_state.state().data.clone().flatten() {
-                                    let DeploymentStateData::DeploymentStateDataOneOf(state_data) = *data;
+                                    let RolloutStateData::RolloutStateDataOneOf(state_data) = *data;
                                     state_data.set_canary_traffic.percent_traffic
                                 } else{
                                     return Err(miette!("No data found in state"));
