@@ -8,8 +8,8 @@ use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
 use multitool_sdk::models::{
-    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, RolloutStateStatus,
-    LoginRequest, LoginSuccess, StatusCodeMetrics, WorkspaceSummary,
+    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
+    LoginSuccess, RolloutStateStatus, StatusCodeMetrics, WorkspaceSummary,
 };
 use multitool_sdk::models::{RolloutState, UpdateRolloutStateRequest};
 use tokio::sync::mpsc::Sender;
@@ -152,10 +152,7 @@ impl BackendClient {
 
     /// Poll the backend for pending states that have not yet been
     /// locked/claimed and thus are ready to be locked and processed.
-    pub(crate) async fn poll_for_state(
-        &self,
-        meta: &RolloutMetadata,
-    ) -> Result<Vec<RolloutState>> {
+    pub(crate) async fn poll_for_state(&self, meta: &RolloutMetadata) -> Result<Vec<RolloutState>> {
         trace!("Polling for new states...");
         let response = self
             .client

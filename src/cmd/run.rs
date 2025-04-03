@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
 use crate::adapters::{
-    ApplicationConfig, RolloutMetadata, IngressBuilder, MonitorBuilder, PlatformBuilder,
+    ApplicationConfig, IngressBuilder, MonitorBuilder, PlatformBuilder, RolloutMetadata,
 };
 use crate::fs::{FileSystem, SessionFile};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;

@@ -9,7 +9,7 @@ use crate::{
 
 use aws_sdk_apigateway::{
     client::Client as GatewayClient,
-    types::{RolloutCanarySettings, Op, PatchOperation, Resource, RestApi},
+    types::{Op, PatchOperation, Resource, RestApi, RolloutCanarySettings},
 };
 use aws_sdk_lambda::client::Client as LambdaClient;
 

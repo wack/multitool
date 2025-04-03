@@ -1,5 +1,5 @@
 pub use backend::{ApplicationConfig, BackendClient};
-pub(crate) use backend::{RolloutMetadata, LockedState};
+pub(crate) use backend::{LockedState, RolloutMetadata};
 
 pub use ingresses::*;
 pub use monitors::*;
