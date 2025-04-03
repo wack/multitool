@@ -9,7 +9,7 @@ use crate::{
 
 use aws_sdk_apigateway::{
     client::Client as GatewayClient,
-    types::{Op, PatchOperation, Resource, RestApi, RolloutCanarySettings},
+    types::{DeploymentCanarySettings, Op, PatchOperation, Resource, RestApi},
 };
 use aws_sdk_lambda::client::Client as LambdaClient;
 
@@ -173,11 +173,11 @@ impl Ingress for AwsApiGateway {
 
         // Create a rollout with canary settings to deploy our new lambda
         self.apig_client
-            .create_rollout()
+            .create_deployment()
             .rest_api_id(api_id)
             .stage_name(&self.stage_name)
             .canary_settings(
-                RolloutCanarySettings::builder()
+                DeploymentCanarySettings::builder()
                     // This is set to 0 explicitly here since the first step of the pipeline
                     // is to collecty baseline traffic
                     .percent_traffic(0.0)

@@ -55,7 +55,7 @@ impl BackendClient {
     pub fn new(origin: Option<&str>, session: Option<Session>) -> Result<Self> {
         let conf = BackendConfig::new(origin, session.clone());
 
-        let mut raw_conf: Configuration = conf.clone().into();
+        let raw_conf: Configuration = conf.clone().into();
 
         let client = ApiClient::new(Arc::new(raw_conf.clone()));
         Ok(Self {
