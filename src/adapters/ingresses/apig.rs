@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{IntoDiagnostic as _, Result, miette};
+use miette::{Result, miette};
 use tracing::{debug, info};
 
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
 
 use aws_sdk_apigateway::{
     client::Client as GatewayClient,
+    error::SdkError,
     types::{DeploymentCanarySettings, Op, PatchOperation, Resource, RestApi},
 };
 use aws_sdk_lambda::client::Client as LambdaClient;
@@ -61,7 +62,23 @@ impl AwsApiGateway {
             .get_rest_apis()
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!("Failed to get API Gateway: {}", error_message)
+            })?;
 
         let api = all_apis
             .items()
@@ -87,7 +104,23 @@ impl AwsApiGateway {
             .rest_api_id(api_id)
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!("Failed to get API Gateway Resource: {}", error_message)
+            })?;
 
         let resource = all_resources
             .items()
@@ -118,7 +151,26 @@ impl AwsApiGateway {
             .patch_operations(patch_op)
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!(
+                    "Failed to remove canary settings from API Gateway: {}",
+                    error_message
+                )
+            })?;
 
         Ok(())
     }
@@ -127,7 +179,7 @@ impl AwsApiGateway {
 #[async_trait]
 impl Ingress for AwsApiGateway {
     async fn release_canary(&mut self, platform_id: String) -> Result<()> {
-        debug!("Releasing canary rollout in API Gateway!");
+        debug!("Releasing canary in API Gateway!");
         // Get the auto-generated API ID and Resource ID
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of API Gateway"))?;
@@ -149,7 +201,26 @@ impl Ingress for AwsApiGateway {
             .principal("apigateway.amazonaws.com")
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!(
+                    "Failed to add invoke permission to Lambda: {}",
+                    error_message
+                )
+            })?;
 
         // Update our API Gateway to point at our new lambda version
         let patch_op = PatchOperation::builder()
@@ -169,7 +240,26 @@ impl Ingress for AwsApiGateway {
             .patch_operations(patch_op)
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!(
+                    "Failed to update API Gateway integration request: {}",
+                    error_message
+                )
+            })?;
 
         // Create a rollout with canary settings to deploy our new lambda
         self.apig_client
@@ -185,7 +275,26 @@ impl Ingress for AwsApiGateway {
             )
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!(
+                    "Failed to update API Gateway canary settings: {}",
+                    error_message
+                )
+            })?;
 
         Ok(())
     }
@@ -212,7 +321,26 @@ impl Ingress for AwsApiGateway {
             .patch_operations(patch_op)
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!(
+                    "Failed to update API Gateway canary traffic: {}",
+                    error_message
+                )
+            })?;
 
         Ok(())
     }
@@ -250,7 +378,23 @@ impl Ingress for AwsApiGateway {
             .patch_operations(delete_canary_op)
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!("Failed to promote canary in API Gateway: {}", error_message)
+            })?;
 
         Ok(())
     }

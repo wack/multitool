@@ -2280,6 +2280,7 @@ dependencies = [
  "aws-sdk-apigateway",
  "aws-sdk-cloudwatch",
  "aws-sdk-lambda",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "bigdecimal",
  "bon",
