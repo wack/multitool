@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{IntoDiagnostic as _, Result, miette};
+use miette::{Result, miette};
 use tracing::info;
 
 use crate::{
     Shutdownable, artifacts::LambdaZip, subsystems::ShutdownResult, utils::load_default_aws_config,
 };
-use aws_sdk_lambda::{client::Client, primitives::Blob, types::FunctionCode};
+use aws_sdk_lambda::{client::Client, error::SdkError, primitives::Blob, types::FunctionCode};
 
 use super::Platform;
 
@@ -58,7 +58,23 @@ impl Platform for LambdaPlatform {
             .zip_file(zip_file.clone())
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!("Failed to deploy Lambda: {}", error_message)
+            })?;
 
         let function_arn = res
             .function_arn()
@@ -82,7 +98,23 @@ impl Platform for LambdaPlatform {
             .function_name(self.arn.as_ref().ok_or(miette!("Lambda ARN not set"))?)
             .send()
             .await
-            .into_diagnostic()?;
+            .map_err(|err| {
+                let error_message = match err {
+                    SdkError::ServiceError(service_err) => {
+                        // Extract the specific service error details
+                        format!(
+                            "{}",
+                            service_err
+                                .err()
+                                .meta()
+                                .message()
+                                .unwrap_or("No error message found")
+                        )
+                    }
+                    _ => format!("{:?}", err),
+                };
+                miette!("Failed to delete Lambda: {}", error_message)
+            })?;
 
         Ok(())
     }

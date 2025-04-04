@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "multitool"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2280,6 +2280,7 @@ dependencies = [
  "aws-sdk-apigateway",
  "aws-sdk-cloudwatch",
  "aws-sdk-lambda",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "bigdecimal",
  "bon",
