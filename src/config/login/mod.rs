@@ -1,6 +1,8 @@
 use clap::Args;
 use derive_getters::Getters;
 
+use crate::MULTITOOL_ORIGIN;
+
 #[derive(Args, Getters, Clone)]
 pub struct LoginSubcommand {
     /// The email of the account
@@ -10,6 +12,6 @@ pub struct LoginSubcommand {
     #[clap(long)]
     password: Option<String>,
 
-    #[arg(long, short = 'o', default_value = Some("https://staging.api.multitool.run"))]
+    #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]
     origin: Option<String>,
 }

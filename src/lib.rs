@@ -8,6 +8,8 @@ pub use subsystems::{
     ControllerSubsystem, IngressSubsystem, MonitorSubsystem, PlatformSubsystem, Shutdownable,
 };
 
+const MULTITOOL_ORIGIN: &str = "https://api.multitool.run";
+
 mod adapters;
 /// For loading and handling various artifacts.
 /// Currently, we expect all artifacts to be  zipped

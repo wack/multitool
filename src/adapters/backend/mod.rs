@@ -2,6 +2,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
+use crate::MULTITOOL_ORIGIN;
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode};
 use chrono::{DateTime, Utc};
@@ -370,7 +371,7 @@ impl BackendConfig {
             Session::User(creds) => Some(creds.jwt),
         });
         let conf = Configuration {
-            base_path: origin.unwrap_or("https://api.multitool.run".to_string()),
+            base_path: origin.unwrap_or(MULTITOOL_ORIGIN.to_string()),
             user_agent: Some(USER_AGENT.to_owned()),
             bearer_access_token: jwt,
             ..Configuration::default()
