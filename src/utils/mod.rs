@@ -1,4 +1,7 @@
 use aws_config::{BehaviorVersion, SdkConfig};
+use aws_sdk_lambda::error::ProvideErrorMetadata;
+use aws_smithy_runtime_api::client::result::SdkError;
+use miette::miette;
 use tokio::sync::OnceCell;
 
 /// Load AWS configuration using their standard rules. e.g. AWS_ACCESS_KEY_ID,
@@ -21,3 +24,22 @@ async fn load_config() -> SdkConfig {
 }
 
 static AWS_CONFIG_CELL: OnceCell<SdkConfig> = OnceCell::const_new();
+
+pub fn map_aws_error<E: ProvideErrorMetadata + std::fmt::Debug, R: std::fmt::Debug>(
+    err: SdkError<E, R>,
+) -> miette::Report {
+    match err {
+        SdkError::ServiceError(service_err) => {
+            // Extract the specific service error details
+            miette!(
+                "{:?}",
+                service_err
+                    .err()
+                    .meta()
+                    .message()
+                    .unwrap_or("No error message found")
+            )
+        }
+        _ => miette!("{:?}", err),
+    }
+}

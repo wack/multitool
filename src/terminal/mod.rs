@@ -38,7 +38,7 @@ impl Terminal {
         miette::set_hook(Box::new(move |_| {
             if allow_color {
                 // TODO: Add brand colors using ``::new_themed()`
-                Box::new(GraphicalReportHandler::new())
+                Box::new(GraphicalReportHandler::new().with_cause_chain())
             } else {
                 Box::new(DebugReportHandler)
             }

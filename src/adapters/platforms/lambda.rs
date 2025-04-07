@@ -1,10 +1,13 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{Result, miette};
+use miette::{Result, WrapErr, miette};
 use tracing::info;
 
 use crate::{
-    Shutdownable, artifacts::LambdaZip, subsystems::ShutdownResult, utils::load_default_aws_config,
+    Shutdownable,
+    artifacts::LambdaZip,
+    subsystems::ShutdownResult,
+    utils::{load_default_aws_config, map_aws_error},
 };
 use aws_sdk_lambda::{client::Client, error::SdkError, primitives::Blob, types::FunctionCode};
 
@@ -58,23 +61,8 @@ impl Platform for LambdaPlatform {
             .zip_file(zip_file.clone())
             .send()
             .await
-            .map_err(|err| {
-                let error_message = match err {
-                    SdkError::ServiceError(service_err) => {
-                        // Extract the specific service error details
-                        format!(
-                            "{}",
-                            service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found")
-                        )
-                    }
-                    _ => format!("{:?}", err),
-                };
-                miette!("Failed to deploy Lambda: {}", error_message)
-            })?;
+            .map_err(map_aws_error)
+            .wrap_err("Failed to deploy lambda")?;
 
         let function_arn = res
             .function_arn()
