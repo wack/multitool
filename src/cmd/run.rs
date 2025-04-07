@@ -9,9 +9,13 @@ use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
-use miette::Result;
+use miette::{Diagnostic, Result};
+use thiserror::Error;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
+use tokio_graceful_shutdown::errors::GracefulShutdownError::ShutdownTimeout;
+use tokio_graceful_shutdown::errors::GracefulShutdownError::SubsystemsFailed;
+use tokio_graceful_shutdown::errors::SubsystemError;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
 use tracing::{debug, info};
 
@@ -28,6 +32,21 @@ pub struct Run {
     workspace_name: String,
     application_name: String,
     backend: BackendClient,
+}
+
+#[derive(Debug, Error, Diagnostic)]
+#[error("Rollout failed to complete successfully.")]
+pub struct RunError {
+    #[related]
+    subsystem_errors: Vec<SubsystemError>,
+}
+
+impl<T: IntoIterator<Item = SubsystemError>> From<T> for RunError {
+    fn from(subsystem_errors: T) -> Self {
+        Self {
+            subsystem_errors: subsystem_errors.into_iter().collect(),
+        }
+    }
 }
 
 impl Run {
@@ -105,7 +124,12 @@ impl Run {
             .catch_signals()
             .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
             .await
-            .map_err(Into::into)
+            .map_err(|err| match err {
+                SubsystemsFailed(errs) => RunError::from(errs),
+                ShutdownTimeout(errs) => RunError::from(errs),
+            })?;
+
+            Ok(())
         })
     }
 

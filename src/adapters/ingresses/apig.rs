@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use bon::bon;
-use miette::{Result, miette};
+use miette::{Result, WrapErr, miette};
 use tracing::{debug, info};
 
 use crate::{
-    Shutdownable, WholePercent, subsystems::ShutdownResult, utils::load_default_aws_config,
+    Shutdownable, WholePercent,
+    subsystems::ShutdownResult,
+    utils::{load_default_aws_config, map_aws_error},
 };
 
 use aws_sdk_apigateway::{
@@ -201,26 +203,8 @@ impl Ingress for AwsApiGateway {
             .principal("apigateway.amazonaws.com")
             .send()
             .await
-            .map_err(|err| {
-                let error_message = match err {
-                    SdkError::ServiceError(service_err) => {
-                        // Extract the specific service error details
-                        format!(
-                            "{}",
-                            service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found")
-                        )
-                    }
-                    _ => format!("{:?}", err),
-                };
-                miette!(
-                    "Failed to add invoke permission to Lambda: {}",
-                    error_message
-                )
-            })?;
+            .map_err(map_aws_error)
+            .wrap_err_with(|| "Failed to add invoke permission to Lambda")?;
 
         // Update our API Gateway to point at our new lambda version
         let patch_op = PatchOperation::builder()
