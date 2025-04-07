@@ -145,10 +145,10 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 // First, we deploy the canary to the platform. At
                                 // this point, it won't have any traffic, and the ingress doesn't
                                 // know anything about it.
-                                let platform_id = self.platform.deploy().await.inspect(|res| debug!("Result: {res:?}"))?;
+                                let platform_id = self.platform.deploy().await?;
                                 // Next, we need the ingress to acknowledge the platform's existance,
                                 // creating a CanarySettings objects with zero traffic.
-                                self.ingress.release_canary(platform_id).await.inspect(|res| debug!("Result: {res:?}"))?;
+                                self.ingress.release_canary(platform_id).await?;
 
                                 locked_state.mark_done().await?;
                             },
