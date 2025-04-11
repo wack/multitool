@@ -1,12 +1,12 @@
-# Getting started: Deploy a Lambda function with MultiTool
+# Getting started: Roll out a Lambda function with MultiTool
 
-This tutorial walks through deploying a simple AWS Lambda function behind an API Gateway. You’ll simulate user traffic to the API, and the MultiTool agent will automatically decide whether to promote or roll back the deployment based on the observed error rate.
+This tutorial walks through rolling out a simple AWS Lambda function behind an API Gateway. You’ll simulate user traffic to the API, and the MultiTool agent will automatically decide whether to promote or roll out based on the observed error rate.
 
 You will:
 
 1. Create and package sample Lambda code
 2. Deploy to AWS with API Gateway
-3. Connect to MultiTool and run a canary deployment
+3. Connect to MultiTool and run a canary rollout
 
 ## 🛠 Tools
 
@@ -14,11 +14,13 @@ You will:
 
 - <a href="https://aws.amazon.com/api-gateway/" target="_blank">AWS API Gateway REST API</a> - to make the Lambda function publicly accessible
 
-- <a href="https://aws.amazon.com/cloudwatch/" target="_blank">AWS CloudWatch</a> - to read metrics used by MultiTool during deployment
+- <a href="https://aws.amazon.com/cloudwatch/" target="_blank">AWS CloudWatch</a> - to read metrics used by MultiTool during rollout
 
-- <a href="https://app.multitool.run/create-account" target="_blank">MultiTool</a> - to automate safe deployments
+- <a href="https://app.multitool.run/create-account" target="_blank">MultiTool</a> - to automate safe rollouts
 
 ## ✅ Prerequisites
+
+📝 **Note:** This tutorial is compatible with macOS and Linux systems. For Windows users, we recommend using <a href="https://learn.microsoft.com/en-us/windows/wsl/about" target="_blank">Windows Subsystem for Linux (WSL)</a>.
 
 - [ ] <a href="https://app.multitool.run/create-account" target="_blank">A free MultiTool account</a>
 
@@ -50,12 +52,12 @@ This version always returns a `200` HTTP status code response.
 ```bash
 cat << EOF > index.js
 exports.handler = function (_, context) {
-return context.succeed({
-statusCode: 200,
-body: JSON.stringify({
-message: "Hello World",
-}),
-});
+  return context.succeed({
+    statusCode: 200,
+    body: JSON.stringify({
+      message: "Hello World",
+    }),
+  });
 };
 EOF
 ```
@@ -73,22 +75,22 @@ This version introduces a simulated bug by returning a `400` HTTP status code 10
 ```bash
 cat << EOF > index.js
 exports.handler = function (_, context) {
-const rand = Math.random();
-if (rand < 0.9) {
-return context.succeed({
-statusCode: 200,
-body: JSON.stringify({
-message: "Hello World",
-}),
-});
-} else {
-return context.succeed({
-statusCode: 400,
-body: JSON.stringify({
-error: "Something went wrong",
-}),
-});
-}
+  const rand = Math.random();
+  if (rand < 0.9) {
+    return context.succeed({
+      statusCode: 200,
+      body: JSON.stringify({
+        message: "Hello World",
+      }),
+    });
+  } else {
+    return context.succeed({
+      statusCode: 400,
+      body: JSON.stringify({
+        error: "Something went wrong",
+      }),
+    });
+  }
 };
 EOF
 ```
@@ -107,17 +109,19 @@ Create a new IAM role for Lambda execution:
 
 ```bash
 LAMBDA_EXECUTION_ROLE_ARN=$(aws iam create-role \
---role-name lambda-execution \
---assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}' --output text --query Role.Arn)
+  --role-name lambda-execution \
+  --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}' \
+  --output text \
+  --query Role.Arn)
 ```
 
 If you’ve already created this role before, you can retrieve it instead:
 
 ```bash
 LAMBDA_EXECUTION_ROLE_ARN=$(aws iam get-role \
---role-name lambda-execution \
---output text \
---query Role.Arn)
+  --role-name lambda-execution \
+  --output text \
+  --query Role.Arn)
 ```
 
 ## λ Step 3: Create the Lambda function
@@ -126,14 +130,14 @@ Upload the healthy version of the code to create the function in AWS:
 
 ```bash
 LAMBDA_ARN=$(aws lambda create-function \
---function-name multitool-quickstart-lambda \
---runtime nodejs22.x \
---handler index.handler \
---role ${LAMBDA_EXECUTION_ROLE_ARN} \
---zip-file fileb://0%_failures.zip \
---publish \
---output text \
---query FunctionArn)
+  --function-name multitool-quickstart-lambda \
+  --runtime nodejs22.x \
+  --handler index.handler \
+  --role ${LAMBDA_EXECUTION_ROLE_ARN} \
+  --zip-file fileb://0%_failures.zip \
+  --publish \
+  --output text \
+  --query FunctionArn)
 ```
 
 ## 🧪 Step 4: Test that the Lambda is working
@@ -187,12 +191,12 @@ Link the API Gateway to the Lambda so it can forward incoming requests:
 
 ```bash
 aws apigateway put-integration \
---rest-api-id ${API_ID} \
---resource-id ${RESOURCE_ID} \
---http-method GET \
---type AWS_PROXY \
---integration-http-method POST \
---uri arn:aws:apigateway:${AWS_REGION:=us-east-2}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations
+  --rest-api-id ${API_ID} \
+  --resource-id ${RESOURCE_ID} \
+  --http-method GET \
+  --type AWS_PROXY \
+  --integration-http-method POST \
+  --uri arn:aws:apigateway:${AWS_REGION:=us-east-2}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations
 ```
 
 Deploy the API:
@@ -219,10 +223,10 @@ Finally, give API Gateway permission to invoke the Lambda:
 
 ```bash
 aws lambda add-permission \
---function-name multitool-quickstart-lambda \
---statement-id apigateway-permission-${API_ID} \
---action lambda:InvokeFunction \
---principal apigateway.amazonaws.com
+  --function-name multitool-quickstart-lambda \
+  --statement-id apigateway-permission-${API_ID} \
+  --action lambda:InvokeFunction \
+  --principal apigateway.amazonaws.com
 ```
 
 ## 🖥️ Step 7: Connect the app to MultiTool
@@ -250,11 +254,13 @@ After the application is set up, login to the MultiTool CLI if needed:
 multi login
 ```
 
-## 🚀 Step 8: Deploy healthy code and simulate stable traffic
+## 🚀 Step 8: Roll out healthy code and simulate stable traffic
 
-To test a successful deployment, use the `0%_failures.zip` file.
+📝 **Note:** Exiting the terminal before a CLI operation finishes can leave your rollout in a stuck state due to a known bug. Please wait for the operation to complete before closing the terminal. If you've already run into this issue, contact support@wack.run and we’ll help resolve it. A fix is on the way.
 
-Start the deployment using the healhty build artifact and replacing the placeholder with your MultiTool workspace name:
+To test a successful rollout, use the `0%_failures.zip` file.
+
+Start the rollout using the healhty build artifact and replacing the placeholder with your MultiTool workspace name:
 
 ```bash
 multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 0%_failures.zip
@@ -282,11 +288,11 @@ bombardier -c 5 -n 20 ${MY_URL}
 
 As traffic hits the new version, MultiTool will evaluate its behavior and promote it to 100% traffic once it confirms stability.
 
-## ⚠️ Step 9: Deploy buggy code and simulate errors
+## ⚠️ Step 9: Roll out buggy code and simulate errors
 
-To test a broken deployment, use the `10%_failures.zip` file.
+To test a broken rollout, use the `10%_failures.zip` file.
 
-Start the deployment using the buggy build artifact and replacing the placeholder with your MultiTool workspace name:
+Start the rollout using the buggy build artifact and replacing the placeholder with your MultiTool workspace name:
 
 ```bash
 multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 10%_failures.zip
