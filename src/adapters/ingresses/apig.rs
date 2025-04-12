@@ -358,8 +358,8 @@ impl Ingress for AwsApiGateway {
         // Overwrite the main rollout's ID with the canary's
         let replace_rollout_op = PatchOperation::builder()
             .op(Op::Copy)
-            .from("/canarySettings/rolloutId")
-            .path("/rolloutId")
+            .from("/canarySettings/deploymentId")
+            .path("/deploymentId")
             .build();
 
         // Deletes all canary settings from the API Gateway so we're ready for the next
