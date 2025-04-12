@@ -115,21 +115,21 @@ impl Run {
         application_id: ApplicationId,
     ) -> Result<RolloutMetadata> {
         debug!("Creating new rollout...");
-        let rollout_id = self
+        let rollout = self
             .backend
             .new_rollout(workspace_id, application_id)
             .await?;
 
         info!(
-            "New rollout created! Follow along in the dashboard here: https://app.multitool.run/workspaces/{}/applications/{}/activity/{}/events",
-            workspace_id, application_id, rollout_id
+            "New rollout created! Follow along in the dashboard:\nhttps://app.multitool.run/workspaces/{}/applications/{}/activity/{}/events",
+            workspace_id, application_id, rollout.number
         );
 
         debug!("Creating new rollout metadata...");
         let meta = RolloutMetadata::builder()
             .workspace_id(workspace_id)
             .application_id(application_id)
-            .rollout_id(rollout_id)
+            .rollout_id(rollout.id)
             .build();
         Ok(meta)
     }

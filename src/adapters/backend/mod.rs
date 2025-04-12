@@ -10,7 +10,7 @@ use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
 use multitool_sdk::models::{
     ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
-    LoginSuccess, RolloutStateStatus, StatusCodeMetrics, WorkspaceSummary,
+    LoginSuccess, Rollout, RolloutStateStatus, StatusCodeMetrics, WorkspaceSummary,
 };
 use multitool_sdk::models::{RolloutState, UpdateRolloutStateRequest};
 use tokio::sync::mpsc::Sender;
@@ -202,7 +202,7 @@ impl BackendClient {
         &self,
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
-    ) -> Result<RolloutId> {
+    ) -> Result<Rollout> {
         trace!("Creating a new rollout");
         let response = self
             .client
@@ -212,7 +212,7 @@ impl BackendClient {
             .into_diagnostic()?;
 
         trace!("Rollout created successfully");
-        Ok(response.rollout.id)
+        Ok(*response.rollout)
     }
 
     /// This fuction logs the user into the backend by exchanging these credentials
