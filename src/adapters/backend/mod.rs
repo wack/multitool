@@ -4,15 +4,15 @@ use std::sync::Arc;
 use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::MULTITOOL_ORIGIN;
 use crate::fs::UserCreds;
-use crate::{fs::Session, metrics::ResponseStatusCode};
+use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::CircuitBreaker};
 use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
 use multitool_sdk::models::{
     ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
-    LoginSuccess, Rollout, RolloutStateStatus, StatusCodeMetrics, WorkspaceSummary,
+    LoginSuccess, Rollout, RolloutState, RolloutStateStatus, StatusCodeMetrics,
+    UpdateRolloutStateRequest, WorkspaceSummary,
 };
-use multitool_sdk::models::{RolloutState, UpdateRolloutStateRequest};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -268,11 +268,13 @@ impl BackendClient {
         let application_id = *meta.application_id();
         let rollout_id = *meta.rollout_id();
 
-        self.client
+        let req = self
+            .client
             .response_code_metrics_api()
-            .create_response_code_metrics(workspace_id, application_id, rollout_id, req_body)
-            .await
-            .into_diagnostic()?;
+            .create_response_code_metrics(workspace_id, application_id, rollout_id, req_body);
+
+        let circuit_breaker = CircuitBreaker::new();
+        circuit_breaker.call(req).await?;
 
         trace!("Observations uploaded successfully");
         Ok(())

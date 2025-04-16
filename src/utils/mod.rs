@@ -1,6 +1,8 @@
 use aws_config::{BehaviorVersion, SdkConfig};
 use tokio::sync::OnceCell;
 
+pub mod circuit_breaker;
+
 /// Load AWS configuration using their standard rules. e.g. AWS_ACCESS_KEY_ID,
 /// or session profile information, etc. This function fetches the data only
 /// once, the first time it's called, and memoized the results, so all future
