@@ -10,6 +10,7 @@ use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
 use miette::Result;
+use miette::{WrapErr, miette};
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
@@ -100,6 +101,17 @@ impl Run {
                 s.start(SubsystemBuilder::new(
                     CONTROLLER_SUBSYSTEM_NAME,
                     controller.into_subsystem(),
+                ));
+                s.start(SubsystemBuilder::new(
+                    CONTROLLER_SUBSYSTEM_NAME,
+                    |handle| async {
+                        let mut err: Result<()> = Err(miette!("Root Cause"));
+                        for i in 0..8 {
+                            let msg = format!("Error level {i}");
+                            err = err.wrap_err(msg);
+                        }
+                        return err;
+                    },
                 ));
             })
             .catch_signals()

@@ -1,4 +1,5 @@
 use miette::Result;
+use miette::WrapErr;
 
 use crate::Terminal;
 
@@ -17,6 +18,23 @@ impl Version {
 
     /// Print the version and exit.
     pub fn dispatch(self) -> Result<()> {
-        self.terminal.print_version(CLI_VERSION)
+        let mut err: Result<()> = Err(InnerError.into());
+        for i in 0..8 {
+            let msg = format!("Error level {i}");
+            err = err.wrap_err(msg);
+        }
+        return err;
+        // let second_error = inner.wrap_err("Wrapper message.");
+        // let third_error = second_error.wrap_err("Third layer");
+        // let fourth
+        // return third_error;
+        // self.terminal.print_version(CLI_VERSION)
     }
 }
+
+use miette::Diagnostic;
+use thiserror::Error;
+
+#[derive(Error, Diagnostic, Debug)]
+#[error("Inner error")]
+struct InnerError;
