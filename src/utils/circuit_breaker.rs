@@ -38,7 +38,7 @@ where
     /// Some errors might be fatal, so we use a function to discriminate.
     /// The function must return true if the error is retriable, and false
     /// otherwise.
-    failure_predicate: Box<dyn Fn(&E) -> bool + Send>,
+    failure_predicate: Box<dyn Fn(&E) -> bool + Send + Sync>,
 }
 
 #[bon]
@@ -65,7 +65,7 @@ where
     #[builder]
     pub fn new(
         func: F,
-        failure_predicate: Option<Box<dyn Fn(&E) -> bool + Send>>,
+        failure_predicate: Option<Box<dyn Fn(&E) -> bool + Send + Sync>>,
         retries: Option<NonZeroUsize>,
         backoff_start: Option<Duration>,
         backoff_end: Option<Duration>,
@@ -101,7 +101,7 @@ where
             // Create the next future, passing it into the breaker
             // to await.
             let next_fut = (self.func)();
-            let exec_result = circuit_breaker.call(next_fut);
+            let exec_result = circuit_breaker.call_with(&*self.failure_predicate, next_fut);
             // Inspect the error, if any, and capture it before
             // retrying.
             match exec_result.await {

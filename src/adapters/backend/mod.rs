@@ -5,17 +5,17 @@ use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::MULTITOOL_ORIGIN;
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::HttpCircuitBreaker};
-use aws_sdk_apigateway::operation::create_vpc_link::builders::CreateVpcLinkFluentBuilder;
-use aws_sdk_cloudwatch::error::SdkError;
 use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, bail};
-use multitool_sdk::apis::response_code_metrics_api::CreateResponseCodeMetricsError;
-use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
-use multitool_sdk::models::{
-    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
-    LoginSuccess, Rollout, RolloutState, RolloutStateStatus, StatusCodeMetrics,
-    UpdateRolloutStateRequest, WorkspaceSummary,
+use multitool_sdk::{
+    apis::{Api, ApiClient, configuration::Configuration},
+    models::{
+        ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
+        LoginSuccess, Rollout, RolloutState, RolloutStateStatus, StatusCodeMetrics,
+        UpdateRolloutStateRequest, WorkspaceSummary,
+    },
 };
+
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -55,6 +55,12 @@ impl Clone for BackendClient {
 }
 
 impl BackendClient {
+    const RETRIABLE_CODES: [reqwest::StatusCode; 3] = [
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        reqwest::StatusCode::TOO_MANY_REQUESTS,
+        reqwest::StatusCode::GATEWAY_TIMEOUT,
+    ];
+
     /// Return a new backend client for the MultiTool backend.
     pub fn new(origin: Option<&str>, session: Option<Session>) -> Result<Self> {
         let conf = BackendConfig::new(origin, session.clone());
@@ -287,11 +293,12 @@ impl BackendClient {
                 .await
         };
 
-        // let failure_is_retriable = |err: &SdkError<CreateResponseCodeMetricsError>| {
-        //     matches!(err, SdkError::ResponseError(e) if [503, 429, 504, 522].contains(e.status.as_u16()));
-        // };
+        let failure_is_retriable = |err: &_| matches!(err, multitool_sdk::apis::Error::ResponseError(e) if Self::RETRIABLE_CODES.contains(&e.status));
 
-        let breaker = HttpCircuitBreaker::builder().func(req).build();
+        let breaker = HttpCircuitBreaker::builder()
+            .func(req)
+            .failure_predicate(Box::new(failure_is_retriable))
+            .build();
         breaker.call().await?;
 
         trace!("Observations uploaded successfully");
