@@ -267,32 +267,25 @@ impl BackendClient {
         let workspace_id = *meta.workspace_id();
         let application_id = *meta.application_id();
         let rollout_id = *meta.rollout_id();
-
         let cloned = self.clone();
 
-        // let req = async || {
-        //     self.client
-        //         .response_code_metrics_api()
-        //         .create_response_code_metrics(workspace_id, application_id, rollout_id, req_body)
-        //         .await
-        //         .into_diagnostic()
-        // };
+        // Build a replayable future that sends the request.
+        // That way, we can retry the future on failure.
+        let req = async move || {
+            cloned
+                .client
+                .response_code_metrics_api()
+                .create_response_code_metrics(
+                    workspace_id,
+                    application_id,
+                    rollout_id,
+                    req_body.clone(),
+                )
+                .await
+                .into_diagnostic()
+        };
 
-        let breaker = HttpCircuitBreaker::builder()
-            .func(async move || {
-                cloned
-                    .client
-                    .response_code_metrics_api()
-                    .create_response_code_metrics(
-                        workspace_id,
-                        application_id,
-                        rollout_id,
-                        req_body.clone(),
-                    )
-                    .await
-                    .into_diagnostic()
-            })
-            .build();
+        let breaker = HttpCircuitBreaker::builder().func(req).build();
         breaker.call().await?;
 
         trace!("Observations uploaded successfully");
