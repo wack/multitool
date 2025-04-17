@@ -4,15 +4,18 @@ use std::sync::Arc;
 use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::MULTITOOL_ORIGIN;
 use crate::fs::UserCreds;
-use crate::{fs::Session, metrics::ResponseStatusCode};
+use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::HttpCircuitBreaker};
 use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, bail};
-use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
-use multitool_sdk::models::{
-    ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
-    LoginSuccess, Rollout, RolloutStateStatus, StatusCodeMetrics, WorkspaceSummary,
+use multitool_sdk::{
+    apis::{Api, ApiClient, configuration::Configuration},
+    models::{
+        ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
+        LoginSuccess, Rollout, RolloutState, RolloutStateStatus, StatusCodeMetrics,
+        UpdateRolloutStateRequest, WorkspaceSummary,
+    },
 };
-use multitool_sdk::models::{RolloutState, UpdateRolloutStateRequest};
+
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -52,6 +55,12 @@ impl Clone for BackendClient {
 }
 
 impl BackendClient {
+    const RETRIABLE_CODES: [reqwest::StatusCode; 3] = [
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        reqwest::StatusCode::TOO_MANY_REQUESTS,
+        reqwest::StatusCode::GATEWAY_TIMEOUT,
+    ];
+
     /// Return a new backend client for the MultiTool backend.
     pub fn new(origin: Option<&str>, session: Option<Session>) -> Result<Self> {
         let conf = BackendConfig::new(origin, session.clone());
@@ -267,12 +276,24 @@ impl BackendClient {
         let workspace_id = *meta.workspace_id();
         let application_id = *meta.application_id();
         let rollout_id = *meta.rollout_id();
+        let cloned = self.clone();
 
-        self.client
-            .response_code_metrics_api()
-            .create_response_code_metrics(workspace_id, application_id, rollout_id, req_body)
-            .await
-            .into_diagnostic()?;
+        // Build a replayable future that sends the request.
+        // That way, we can retry the future on failure.
+        let req = async move || {
+            cloned
+                .client
+                .response_code_metrics_api()
+                .create_response_code_metrics(
+                    workspace_id,
+                    application_id,
+                    rollout_id,
+                    req_body.clone(),
+                )
+                .await
+        };
+
+        Self::call_with_retries(req).await?;
 
         trace!("Observations uploaded successfully");
         Ok(())
@@ -344,6 +365,24 @@ impl BackendClient {
             .map(|success| *success.application)
             .into_diagnostic()
             .inspect(|_| trace!("Successfully acquired the workspace id"))
+    }
+
+    async fn call_with_retries<T, F, E>(req: F) -> Result<T>
+    where
+        T: 'static,
+        F: AsyncFn() -> Result<T, multitool_sdk::apis::Error<E>> + 'static,
+        E: std::fmt::Debug + Send + Sync + 'static,
+    {
+        HttpCircuitBreaker::builder()
+            .failure_predicate(Self::failure_is_retriable)
+            .func(req)
+            .build()
+            .call()
+            .await
+    }
+
+    fn failure_is_retriable<E>(err: &multitool_sdk::apis::Error<E>) -> bool {
+        matches!(err, multitool_sdk::apis::Error::ResponseError(e) if Self::RETRIABLE_CODES.contains(&e.status))
     }
 }
 

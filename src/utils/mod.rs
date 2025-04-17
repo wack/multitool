@@ -1,5 +1,9 @@
 use aws_config::{BehaviorVersion, SdkConfig};
+use miette::Diagnostic;
+use thiserror::Error;
 use tokio::sync::OnceCell;
+
+pub mod circuit_breaker;
 
 /// Load AWS configuration using their standard rules. e.g. AWS_ACCESS_KEY_ID,
 /// or session profile information, etc. This function fetches the data only
@@ -10,7 +14,7 @@ pub async fn load_default_aws_config() -> &'static SdkConfig {
     AWS_CONFIG_CELL.get_or_init(load_config).await
 }
 
-/// Private, delegate function to be called only within a OnceCell to ensure
+/// Private, delegate function to be called only within a [`OnceCell`] to ensure
 /// its locked. When Rust supports async closures, we can move this into a closure
 /// to guarantee its only ever called in one place.
 async fn load_config() -> SdkConfig {
@@ -21,3 +25,16 @@ async fn load_config() -> SdkConfig {
 }
 
 static AWS_CONFIG_CELL: OnceCell<SdkConfig> = OnceCell::const_new();
+
+#[derive(Debug, Error, Diagnostic, Default)]
+#[error("The following errors occurred during execution")]
+pub struct ManyError {
+    #[related]
+    collection: Vec<miette::Error>,
+}
+
+impl ManyError {
+    pub fn append(&mut self, err: miette::Error) {
+        self.collection.push(err);
+    }
+}
