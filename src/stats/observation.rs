@@ -28,8 +28,7 @@ pub struct CategoricalObservation<const N: usize, Cat: Categorical<N>> {
     /// The outcome of the observation, bucketed into a specific category.
     /// e.g. a response status code's highest order digit, 2XX, 5XX, etc.
     histogram: Histogram<N, Cat>,
-    /// The time these obersations were recorded
-    created_at: DateTime<Utc>,
+    /// The time these observations were recorded
 }
 
 impl<const N: usize, Cat: Categorical<N>> CategoricalObservation<N, Cat> {
