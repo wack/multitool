@@ -293,13 +293,7 @@ impl BackendClient {
                 .await
         };
 
-        let failure_is_retriable = |err: &_| matches!(err, multitool_sdk::apis::Error::ResponseError(e) if Self::RETRIABLE_CODES.contains(&e.status));
-
-        let breaker = HttpCircuitBreaker::builder()
-            .func(req)
-            .failure_predicate(&failure_is_retriable)
-            .build();
-        breaker.call().await?;
+        Self::call_with_retries(req).await?;
 
         trace!("Observations uploaded successfully");
         Ok(())
@@ -371,6 +365,24 @@ impl BackendClient {
             .map(|success| *success.application)
             .into_diagnostic()
             .inspect(|_| trace!("Successfully acquired the workspace id"))
+    }
+
+    async fn call_with_retries<T, F, E>(req: F) -> Result<T>
+    where
+        T: 'static,
+        F: AsyncFn() -> Result<T, multitool_sdk::apis::Error<E>> + 'static,
+        E: std::fmt::Debug + Send + Sync + 'static,
+    {
+        HttpCircuitBreaker::builder()
+            .failure_predicate(Self::failure_is_retriable)
+            .func(req)
+            .build()
+            .call()
+            .await
+    }
+
+    fn failure_is_retriable<E>(err: &multitool_sdk::apis::Error<E>) -> bool {
+        matches!(err, multitool_sdk::apis::Error::ResponseError(e) if Self::RETRIABLE_CODES.contains(&e.status))
     }
 }
 

@@ -23,7 +23,7 @@ use super::ManyError;
 /// pattern specialized for HTTP requests. HTTP requests typically fail
 /// due to network hiccups and timeouts, so this circuit breaker retries
 /// with exponential backoff since these errors are typically transient.
-pub struct HttpCircuitBreaker<'a, T, F, E>
+pub struct HttpCircuitBreaker<T, F, E>
 where
     T: 'static,
     F: AsyncFn() -> Result<T, E> + 'static,
@@ -38,11 +38,11 @@ where
     /// Some errors might be fatal, so we use a function to discriminate.
     /// The function must return true if the error is retriable, and false
     /// otherwise.
-    failure_predicate: &'a (dyn Fn(&E) -> bool + Send + Sync),
+    failure_predicate: Box<dyn Fn(&E) -> bool + Send + Sync>,
 }
 
 #[bon]
-impl<'a, T, F, E> HttpCircuitBreaker<'a, T, F, E>
+impl<T, F, E> HttpCircuitBreaker<T, F, E>
 where
     T: 'static,
     F: AsyncFn() -> Result<T, E> + 'static,
@@ -63,17 +63,24 @@ where
     }
 
     #[builder]
-    pub fn new(
+    pub fn new<P>(
         func: F,
-        failure_predicate: Option<&'a (dyn Fn(&E) -> bool + Send + Sync)>,
+        failure_predicate: Option<P>,
         retries: Option<NonZeroUsize>,
         backoff_start: Option<Duration>,
         backoff_end: Option<Duration>,
-    ) -> Self {
+    ) -> Self
+    where
+        P: Fn(&E) -> bool + Send + Sync + 'static,
+    {
         // Coalsence the optional arguments with the default values.
         let backoff_start = backoff_start.unwrap_or(Self::DEFAULT_BACKOFF_START);
         let backoff_end = backoff_end.unwrap_or(Self::DEFAULT_BACKOFF_END);
-        let predicate = failure_predicate.unwrap_or(&Self::default_predicate);
+        let predicate: Box<dyn Fn(&_) -> bool + Send + Sync> = match failure_predicate {
+            None => Box::new(Self::default_predicate),
+            Some(pred) => Box::new(pred),
+        };
+
         let retry_count: u32 = retries
             .map(NonZeroUsize::get)
             .unwrap_or(Self::DEFAULT_HTTP_RETRIES) as u32;
@@ -90,9 +97,6 @@ where
 
     pub async fn call(self) -> Result<T> {
         let circuit_breaker = self.config.build();
-        // let check_err = |err: &SDKError<_>| matches!(err, SDKError::ResponseError(e) if [503, 429, 504, 522].contains(&e.status.as_u16()) );
-        // let check_err = |err: | false;
-
         // Now, we try the future repeatedly until either it succeeds
         // or the circuit breaks.
         // If it breaks, we return the list of errors we received.
