@@ -25,7 +25,8 @@ use super::ManyError;
 /// with exponential backoff since these errors are typically transient.
 pub struct HttpCircuitBreaker<T, F, E>
 where
-    F: AsyncFn() -> Result<T, E>,
+    T: 'static,
+    F: AsyncFn() -> Result<T, E> + 'static,
     E: std::error::Error + Send + Sync + 'static,
 {
     config: Config<ConsecutiveFailures<Exponential>, ()>,
@@ -33,12 +34,18 @@ where
     /// context, and call the closure multiple times to reconstitute
     /// the future.
     func: F,
+    /// This callback is used to determine whether an error is retriable.
+    /// Some errors might be fatal, so we use a function to discriminate.
+    /// The function must return true if the error is retriable, and false
+    /// otherwise.
+    failure_predicate: Box<dyn Fn(&E) -> bool + Send>,
 }
 
 #[bon]
 impl<T, F, E> HttpCircuitBreaker<T, F, E>
 where
-    F: AsyncFn() -> Result<T, E>,
+    T: 'static,
+    F: AsyncFn() -> Result<T, E> + 'static,
     E: std::error::Error + Send + Sync + 'static,
 {
     /// This is the number of retries we attempt before breaking the circuit.
@@ -51,16 +58,22 @@ where
     /// not clear what the exponential constant is.
     const DEFAULT_BACKOFF_END: Duration = Duration::from_secs(5);
 
+    fn default_predicate(_: &E) -> bool {
+        false
+    }
+
     #[builder]
     pub fn new(
+        func: F,
+        failure_predicate: Option<Box<dyn Fn(&E) -> bool + Send>>,
         retries: Option<NonZeroUsize>,
         backoff_start: Option<Duration>,
         backoff_end: Option<Duration>,
-        func: F,
     ) -> Self {
         // Coalsence the optional arguments with the default values.
         let backoff_start = backoff_start.unwrap_or(Self::DEFAULT_BACKOFF_START);
         let backoff_end = backoff_end.unwrap_or(Self::DEFAULT_BACKOFF_END);
+        let predicate = failure_predicate.unwrap_or_else(|| Box::new(Self::default_predicate));
         let retry_count: u32 = retries
             .map(NonZeroUsize::get)
             .unwrap_or(Self::DEFAULT_HTTP_RETRIES) as u32;
@@ -68,7 +81,11 @@ where
         let backoff = backoff::exponential(backoff_start, backoff_end);
         let retry_policy = failure_policy::consecutive_failures(retry_count, backoff);
         let config = Config::new().failure_policy(retry_policy);
-        Self { config, func }
+        Self {
+            config,
+            func,
+            failure_predicate: predicate,
+        }
     }
 
     pub async fn call(self) -> Result<T> {

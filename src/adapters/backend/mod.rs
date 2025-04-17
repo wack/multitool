@@ -5,8 +5,11 @@ use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::MULTITOOL_ORIGIN;
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::HttpCircuitBreaker};
+use aws_sdk_apigateway::operation::create_vpc_link::builders::CreateVpcLinkFluentBuilder;
+use aws_sdk_cloudwatch::error::SdkError;
 use chrono::{DateTime, Utc};
 use miette::{IntoDiagnostic, Result, bail};
+use multitool_sdk::apis::response_code_metrics_api::CreateResponseCodeMetricsError;
 use multitool_sdk::apis::{Api, ApiClient, configuration::Configuration};
 use multitool_sdk::models::{
     ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
@@ -283,6 +286,10 @@ impl BackendClient {
                 )
                 .await
         };
+
+        // let failure_is_retriable = |err: &SdkError<CreateResponseCodeMetricsError>| {
+        //     matches!(err, SdkError::ResponseError(e) if [503, 429, 504, 522].contains(e.status.as_u16()));
+        // };
 
         let breaker = HttpCircuitBreaker::builder().func(req).build();
         breaker.call().await?;
