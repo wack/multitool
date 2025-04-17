@@ -282,7 +282,6 @@ impl BackendClient {
                     req_body.clone(),
                 )
                 .await
-                .into_diagnostic()
         };
 
         let breaker = HttpCircuitBreaker::builder().func(req).build();

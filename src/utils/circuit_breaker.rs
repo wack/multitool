@@ -12,9 +12,8 @@ use failsafe::backoff::Exponential;
 use failsafe::failure_policy::ConsecutiveFailures;
 use failsafe::futures::CircuitBreaker as AsyncCircuitBreaker;
 use failsafe::{Config, Error, backoff, failure_policy};
-use futures_core::TryFuture;
+use miette::Report;
 use miette::{Result, bail};
-use multitool_sdk::apis::Error as SDKError;
 use tokio::time::Duration;
 use tracing::debug;
 
@@ -24,9 +23,10 @@ use super::ManyError;
 /// pattern specialized for HTTP requests. HTTP requests typically fail
 /// due to network hiccups and timeouts, so this circuit breaker retries
 /// with exponential backoff since these errors are typically transient.
-pub struct HttpCircuitBreaker<T, F>
+pub struct HttpCircuitBreaker<T, F, E>
 where
-    F: AsyncFn() -> Result<T>,
+    F: AsyncFn() -> Result<T, E>,
+    E: std::error::Error + Send + Sync + 'static,
 {
     config: Config<ConsecutiveFailures<Exponential>, ()>,
     /// A retriable future, encoded as a closure so we can include
@@ -36,9 +36,10 @@ where
 }
 
 #[bon]
-impl<T, F> HttpCircuitBreaker<T, F>
+impl<T, F, E> HttpCircuitBreaker<T, F, E>
 where
-    F: AsyncFn() -> Result<T>,
+    F: AsyncFn() -> Result<T, E>,
+    E: std::error::Error + Send + Sync + 'static,
 {
     /// This is the number of retries we attempt before breaking the circuit.
     const DEFAULT_HTTP_RETRIES: usize = 4;
@@ -90,7 +91,8 @@ where
                 Ok(ok) => return Ok(ok),
                 Err(Error::Inner(e)) => {
                     debug!("Got an error, retrying...");
-                    err.append(e);
+                    let report = Report::msg(e);
+                    err.append(report);
                 }
                 Err(Error::Rejected) => {
                     debug!("Got too many errors, giving up...");

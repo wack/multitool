@@ -14,7 +14,7 @@ pub async fn load_default_aws_config() -> &'static SdkConfig {
     AWS_CONFIG_CELL.get_or_init(load_config).await
 }
 
-/// Private, delegate function to be called only within a OnceCell to ensure
+/// Private, delegate function to be called only within a [`OnceCell`] to ensure
 /// its locked. When Rust supports async closures, we can move this into a closure
 /// to guarantee its only ever called in one place.
 async fn load_config() -> SdkConfig {
@@ -36,9 +36,5 @@ pub struct ManyError {
 impl ManyError {
     pub fn append(&mut self, err: miette::Error) {
         self.collection.push(err);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.collection.is_empty()
     }
 }
