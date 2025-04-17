@@ -268,13 +268,32 @@ impl BackendClient {
         let application_id = *meta.application_id();
         let rollout_id = *meta.rollout_id();
 
-        let req = self
-            .client
-            .response_code_metrics_api()
-            .create_response_code_metrics(workspace_id, application_id, rollout_id, req_body);
+        let cloned = self.clone();
 
-        let circuit_breaker = CircuitBreaker::new();
-        circuit_breaker.call(req).await?;
+        // let req = async || {
+        //     self.client
+        //         .response_code_metrics_api()
+        //         .create_response_code_metrics(workspace_id, application_id, rollout_id, req_body)
+        //         .await
+        //         .into_diagnostic()
+        // };
+
+        let breaker = HttpCircuitBreaker::builder()
+            .func(async move || {
+                cloned
+                    .client
+                    .response_code_metrics_api()
+                    .create_response_code_metrics(
+                        workspace_id,
+                        application_id,
+                        rollout_id,
+                        req_body.clone(),
+                    )
+                    .await
+                    .into_diagnostic()
+            })
+            .build();
+        breaker.call().await?;
 
         trace!("Observations uploaded successfully");
         Ok(())

@@ -24,18 +24,22 @@ use super::ManyError;
 /// pattern specialized for HTTP requests. HTTP requests typically fail
 /// due to network hiccups and timeouts, so this circuit breaker retries
 /// with exponential backoff since these errors are typically transient.
-pub struct HttpCircuitBreaker
-// <T, F>
-// where
-//     F: AsyncFn() -> Result<T>,
+pub struct HttpCircuitBreaker<T, F>
+where
+    F: AsyncFn() -> Result<T>,
 {
     config: Config<ConsecutiveFailures<Exponential>, ()>,
-    // A retriable future.
-    //    fut: F,
+    /// A retriable future, encoded as a closure so we can include
+    /// context, and call the closure multiple times to reconstitute
+    /// the future.
+    func: F,
 }
 
 #[bon]
-impl HttpCircuitBreaker {
+impl<T, F> HttpCircuitBreaker<T, F>
+where
+    F: AsyncFn() -> Result<T>,
+{
     /// This is the number of retries we attempt before breaking the circuit.
     const DEFAULT_HTTP_RETRIES: usize = 4;
     /// This is the default starting point for exponential backoff. The first request
@@ -47,10 +51,11 @@ impl HttpCircuitBreaker {
     const DEFAULT_BACKOFF_END: Duration = Duration::from_secs(5);
 
     #[builder]
-    fn new(
+    pub fn new(
         retries: Option<NonZeroUsize>,
         backoff_start: Option<Duration>,
         backoff_end: Option<Duration>,
+        func: F,
     ) -> Self {
         // Coalsence the optional arguments with the default values.
         let backoff_start = backoff_start.unwrap_or(Self::DEFAULT_BACKOFF_START);
@@ -62,13 +67,10 @@ impl HttpCircuitBreaker {
         let backoff = backoff::exponential(backoff_start, backoff_end);
         let retry_policy = failure_policy::consecutive_failures(retry_count, backoff);
         let config = Config::new().failure_policy(retry_policy);
-        Self { config }
+        Self { config, func }
     }
 
-    async fn call<T, F>(self, func: F) -> Result<T>
-    where
-        F: AsyncFn() -> Result<T>,
-    {
+    pub async fn call(self) -> Result<T> {
         let circuit_breaker = self.config.build();
         // let check_err = |err: &SDKError<_>| matches!(err, SDKError::ResponseError(e) if [503, 429, 504, 522].contains(&e.status.as_u16()) );
         // let check_err = |err: | false;
@@ -80,7 +82,7 @@ impl HttpCircuitBreaker {
             let mut err = ManyError::default();
             // Create the next future, passing it into the breaker
             // to await.
-            let next_fut = func();
+            let next_fut = (self.func)();
             let exec_result = circuit_breaker.call(next_fut);
             // Inspect the error, if any, and capture it before
             // retrying.
@@ -98,34 +100,3 @@ impl HttpCircuitBreaker {
         }
     }
 }
-
-// impl CircuitBreaker {
-//     pub fn new() -> Self {
-//         let backoff = backoff::exponential(Duration::from_secs(1), Duration::from_secs(4));
-//         let policy = failure_policy::consecutive_failures(3, backoff);
-//         let config = Config::new().failure_policy(policy);
-//         Self { config }
-//     }
-
-//     pub async fn call<T, F: AsyncFn() -> Result<T>>(self, func: F) -> Result<T> {
-//         let circuit_breaker = self.config.build();
-
-//         let check_err = |err: &SDKError<_>| matches!(err, SDKError::ResponseError(e) if [503, 429, 504, 522].contains(&e.status.as_u16()) );
-
-//         loop {
-//             let mut last_err = None;
-
-//             match circuit_breaker.call_with(check_err, func).await {
-//                 Err(Error::Inner(e)) => {
-//                     debug!("Got an error, retrying...");
-//                     last_err = Some(e);
-//                 }
-//                 Err(Error::Rejected) => {
-//                     debug!("Got too many errors, giving up...");
-//                     bail!(last_err.unwrap());
-//                 }
-//                 Ok(res) => return res,
-//             }
-//         }
-//     }
-// }
