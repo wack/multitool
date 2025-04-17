@@ -265,7 +265,7 @@ impl BackendClient {
                 status_2xx_count: item.get_count(&ResponseStatusCode::_2XX) as u32,
                 status_4xx_count: item.get_count(&ResponseStatusCode::_4XX) as u32,
                 status_5xx_count: item.get_count(&ResponseStatusCode::_5XX) as u32,
-                created_at: Utc::now().to_rfc3339(),
+                created_at: item.created_at().to_rfc3339(),
             };
 
             status_codes.push(metrics);

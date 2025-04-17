@@ -307,8 +307,9 @@ impl Monitor for CloudWatch {
 
         debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
 
-        let mut baseline = CategoricalObservation::new(Group::Control);
-        let mut canary = CategoricalObservation::new(Group::Experimental);
+        let utc_now = Utc::now();
+        let mut baseline = CategoricalObservation::new(Group::Control, utc_now);
+        let mut canary = CategoricalObservation::new(Group::Experimental, utc_now);
 
         baseline.increment_by(&ResponseStatusCode::_2XX, control_2xx);
         baseline.increment_by(&ResponseStatusCode::_4XX, control_4xx);
