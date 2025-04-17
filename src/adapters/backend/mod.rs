@@ -297,7 +297,7 @@ impl BackendClient {
 
         let breaker = HttpCircuitBreaker::builder()
             .func(req)
-            .failure_predicate(Box::new(failure_is_retriable))
+            .failure_predicate(&failure_is_retriable)
             .build();
         breaker.call().await?;
 

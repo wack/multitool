@@ -23,7 +23,7 @@ use super::ManyError;
 /// pattern specialized for HTTP requests. HTTP requests typically fail
 /// due to network hiccups and timeouts, so this circuit breaker retries
 /// with exponential backoff since these errors are typically transient.
-pub struct HttpCircuitBreaker<T, F, E>
+pub struct HttpCircuitBreaker<'a, T, F, E>
 where
     T: 'static,
     F: AsyncFn() -> Result<T, E> + 'static,
@@ -38,11 +38,11 @@ where
     /// Some errors might be fatal, so we use a function to discriminate.
     /// The function must return true if the error is retriable, and false
     /// otherwise.
-    failure_predicate: Box<dyn Fn(&E) -> bool + Send + Sync>,
+    failure_predicate: &'a (dyn Fn(&E) -> bool + Send + Sync),
 }
 
 #[bon]
-impl<T, F, E> HttpCircuitBreaker<T, F, E>
+impl<'a, T, F, E> HttpCircuitBreaker<'a, T, F, E>
 where
     T: 'static,
     F: AsyncFn() -> Result<T, E> + 'static,
@@ -65,7 +65,7 @@ where
     #[builder]
     pub fn new(
         func: F,
-        failure_predicate: Option<Box<dyn Fn(&E) -> bool + Send + Sync>>,
+        failure_predicate: Option<&'a (dyn Fn(&E) -> bool + Send + Sync)>,
         retries: Option<NonZeroUsize>,
         backoff_start: Option<Duration>,
         backoff_end: Option<Duration>,
@@ -73,7 +73,7 @@ where
         // Coalsence the optional arguments with the default values.
         let backoff_start = backoff_start.unwrap_or(Self::DEFAULT_BACKOFF_START);
         let backoff_end = backoff_end.unwrap_or(Self::DEFAULT_BACKOFF_END);
-        let predicate = failure_predicate.unwrap_or_else(|| Box::new(Self::default_predicate));
+        let predicate = failure_predicate.unwrap_or(&Self::default_predicate);
         let retry_count: u32 = retries
             .map(NonZeroUsize::get)
             .unwrap_or(Self::DEFAULT_HTTP_RETRIES) as u32;
