@@ -68,21 +68,21 @@ impl HttpCircuitBreaker {
     async fn call<T, F, O>(self, func: F) -> Result<T>
     where
         F: Fn() -> O,
-        O: TryFuture,
+        O: Future<Output = Result<T>>,
     {
         let circuit_breaker = self.config.build();
         // let check_err = |err: &SDKError<_>| matches!(err, SDKError::ResponseError(e) if [503, 429, 504, 522].contains(&e.status.as_u16()) );
-        let check_err = |err| false;
+        // let check_err = |err: | false;
 
         // Now, we try the future repeatedly until either it succeeds
         // or the circuit breaks.
         // If it breaks, we return the list of errors we received.
         loop {
-            let err = ManyError::default();
+            let mut err = ManyError::default();
             let next_fut = func();
             let exec_result = circuit_breaker.call(next_fut);
             match exec_result.await {
-                Ok(ok) => return ok,
+                Ok(ok) => return Ok(ok),
                 Err(Error::Inner(e)) => {
                     debug!("Got an error, retrying...");
                     err.append(e);
