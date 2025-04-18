@@ -1,5 +1,8 @@
 use std::fmt::Debug;
 
+use chrono::{DateTime, Utc};
+use derive_getters::Getters;
+
 use super::{Categorical, group::Group, histogram::Histogram};
 use std::fmt;
 
@@ -18,31 +21,30 @@ pub trait Observation: Debug {}
 /// For example, for a CoinFlip outcome (Heads vs. Tails), the variant Heads=0
 /// and Tails=1 by assignment in the type Cat. Therefore, we store the number
 /// of observed Heads in the array[0] and the number of observed tails in the array[1].
-#[derive(Clone)]
+#[derive(Clone, Getters)]
 pub struct CategoricalObservation<const N: usize, Cat: Categorical<N>> {
     /// The experimental group or the control group.
     group: Group,
     /// The outcome of the observation, bucketed into a specific category.
     /// e.g. a response status code's highest order digit, 2XX, 5XX, etc.
     histogram: Histogram<N, Cat>,
+    /// The time these observations were recorded
+    created_at: DateTime<Utc>,
 }
 
 impl<const N: usize, Cat: Categorical<N>> CategoricalObservation<N, Cat> {
     /// Create a new (empty) categorical observation. All bins are set to 0.
-    pub fn new(group: Group) -> Self {
+    pub fn new(group: Group, created_at: DateTime<Utc>) -> Self {
         Self {
             group,
             histogram: Histogram::default(),
+            created_at,
         }
     }
 
     /// Increase the stored count for the given category by the given number.
     pub fn increment_by(&mut self, category: &Cat, count: u32) {
         self.histogram.increment_by(category, count);
-    }
-
-    pub fn group(&self) -> Group {
-        self.group
     }
 
     pub fn get_count(&self, cat: &Cat) -> u32 {
