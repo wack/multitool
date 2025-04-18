@@ -35,7 +35,7 @@ publish-jobs = ["homebrew"]
 [dist.github-custom-runners]
 x86_64-unknown-linux-gnu = "ubuntu-22.04"
 aarch64-unknown-linux-gnu = "ubuntu-22.04-arm"
-global = "ubunutu-22.04"
+global = "ubuntu-22.04"
 
 # Also failing, but maybe unrelated?
 # x86_64-pc-windows-msvc = "ubuntu-22.04"
