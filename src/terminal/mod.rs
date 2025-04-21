@@ -35,14 +35,18 @@ impl Terminal {
     pub fn set_error_hook(&self) -> Result<()> {
         let allow_color = self.stderr.allow_color();
         // Set the hook and coerce the `InstallError` into an `ErrorReport`
+        println!("Set hook has been called.");
         miette::set_hook(Box::new(move |_| {
             if allow_color {
+                println!("Setting allow color.");
                 // TODO: Add brand colors using ``::new_themed()`
                 Box::new(GraphicalReportHandler::new())
             } else {
+                println!("Setting no color.");
                 Box::new(DebugReportHandler)
             }
         }))?;
+        println!("Returning successfully from setting the hook.");
 
         Ok(())
     }

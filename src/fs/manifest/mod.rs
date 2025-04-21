@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub use schema::{Dependency, DependencySection, Manifest, ManifestAlpha};
+pub use schema::Manifest;
 
 use super::{DirectoryType, file::StaticFile};
 

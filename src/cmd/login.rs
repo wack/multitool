@@ -14,6 +14,7 @@ pub struct Login {
 
 impl Login {
     pub fn new(terminal: Terminal, flags: LoginSubcommand) -> Result<Self> {
+        println!("Inside login command.");
         let origin = flags.origin().as_deref();
         let backend = BackendClient::new(origin, None)?;
 
@@ -25,6 +26,7 @@ impl Login {
     }
 
     pub fn dispatch(self) -> Result<()> {
+        println!("Inside login command dispatch.");
         let rt = Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {

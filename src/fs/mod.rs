@@ -2,7 +2,9 @@ use directories::ProjectDirs;
 use file::StaticFile;
 use miette::{Diagnostic, IntoDiagnostic, Result, miette};
 use std::fs;
+use std::{cell::OnceCell, sync::OnceLock};
 use thiserror::Error;
+use tracing::warn;
 
 use std::{
     io::{BufReader, Read, Write},
@@ -21,6 +23,23 @@ mod session;
 
 /// The name of the application as used on the filesystem for XDG conventions.
 const APPLICATION_NAME: &str = "multi";
+
+static ONCE: OnceLock<Manifest> = OnceLock::new();
+
+// TODO: This code smells bad. At the very least, these "global defaults"
+//       should be better named and be class methods on the Manifest type.
+//       I feel like there should be a better way to read in the config file
+//       as a global struct, perhaps as a const, but we have to go through the
+//       `FileSystem` type which can't operate in a const context.
+/// Get the workspace field in the config file provided by the default workspace.
+pub(crate) fn global_workspace() -> Option<&'static str> {
+    ONCE.get_or_init(Manifest::new_or_default).workspace()
+}
+
+/// Get the application field in config file provided by the default workspace.
+pub(crate) fn global_application() -> Option<&'static str> {
+    ONCE.get_or_init(Manifest::new_or_default).application()
+}
 
 /// An abstraction over the user's filesystem ensuring mediated
 /// access to the most commonly used files.
@@ -60,12 +79,18 @@ impl FileSystem {
         // • Attempt to load a TOML manifest. Fallback to JSON.
         let toml_manifest = self.load_file(TomlManifest);
         let json_manifest = self.load_file(JsonManifest);
-        let manifest_box = match (toml_manifest, json_manifest) {
-            (Ok(manifest), _) => manifest,
+        let manifest = match (toml_manifest, json_manifest) {
+            (Ok(toml), Ok(_)) => {
+                warn!(
+                    "Found two manifests, one with a TOML extension and one with a JSON extension. We're ignoring the JSON manifest, but consider using only one manifest file."
+                );
+                toml
+            }
+            (Ok(manifest), Err(_)) => manifest,
             (Err(_), Ok(manifest)) => manifest,
             (Err(_), Err(_)) => return Err(ManifestMissing.into()),
         };
-        Ok(manifest_box)
+        Ok(manifest)
     }
 
     /// The project directory is the first directory with a Wack manifest
