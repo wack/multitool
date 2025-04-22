@@ -5,7 +5,12 @@ default_to_workspace = false
 CARGO_MAKE_CLIPPY_ARGS = "-- --no-deps"
 CARGO_MAKE_COVERAGE_PROVIDER = "llvm-cov"
 CARGO_MAKE_CARGO_BUILD_TEST_FLAGS = ""
-
+# This is the directory where we generate the CLI's reference
+# documentation.
+CLI_REFERENCE_DIR = "target/debug/"
+# This is the name of the file containing the CLI's reference
+# documentation.
+CLI_REFERENCE_FILE_NAME = "reference.md"
 
 [tasks.dev-test-flow]
 dependencies = [
@@ -97,6 +102,15 @@ description = "Sort Cargo.toml"
 category = "Development"
 command = "cargo"
 args = ["sort"]
+
+[tasks.gen-cli-reference]
+description = "Generate the CLI's reference documentation in Markdown format"
+category = "Development"
+script_runner = "@shell"
+script = '''
+  mkdir -p $CLI_REFERENCE_DIR || true
+  cargo run --bin mkdown-docs --features=markdown > $CLI_REFERENCE_DIR/$CLI_REFERENCE_FILE_NAME
+'''
 
 [tasks.bacon]
 description = "Watch tests and rerun on file change."
