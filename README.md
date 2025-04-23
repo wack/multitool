@@ -4,7 +4,7 @@
 <p align="center"><b>Agentic deployments help teams catch production bugs before they impact users. Move fast without breaking things.</b></p>
 
 <p align="center">
-✨ <a href="https://app.multitool.run/create-account">Try the MultiTool beta for free</a> • 🏡 <a href="https://www.multitool.run/">MultiTool home</a> • ✍️ <a href="https://www.multitool.run/blog">The MultiTool Blog</a>
+🏡 <a href="https://www.multitool.run/">Home</a> • ✍️ <a href="https://www.multitool.run/blog">Blog</a> • 📚 <a href="https://docs.multitool.run/">Docs</a> • ✨ <a href="https://app.multitool.run/create-account">Try the MultiTool beta for free</a> 
 
 ## ❓ What is MultiTool?
 
@@ -22,9 +22,9 @@ MultiTool is a progressive delivery tool that helps teams catch production bugs 
 
 ## 🏎️ Getting started
 
-Check out our [quickstart guide](/guides/quickstart.md) to learn how to deploy with MultiTool!
+Check out our [quickstart guide](https://docs.multitool.run/quickstart) to learn how to deploy with MultiTool!
 
-Check out our [getting started tutorial](/guides/getting-started.md) to try out a guided demo of MultiTool!
+Check out our [getting started tutorial](https://docs.multitool.run/deploy-a-lambda-function) to try out a guided demo of MultiTool!
 
 
 ## ⚙️ Installation
