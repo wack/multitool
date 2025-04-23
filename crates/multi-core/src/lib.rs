@@ -18,6 +18,10 @@ impl ManyError {
     pub fn append(&mut self, err: miette::Error) {
         self.collection.push(err);
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.collection.is_empty()
+    }
 }
 
 #[cfg(test)]

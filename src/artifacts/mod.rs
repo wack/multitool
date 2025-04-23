@@ -4,6 +4,10 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
+pub(crate) use cloudflare::CloudFlareManifest;
+
+mod cloudflare;
+
 pub struct LambdaZip(Vec<u8>);
 
 impl LambdaZip {

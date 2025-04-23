@@ -2,9 +2,12 @@ use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::OnceLock;
 use tracing::error;
 use url::Url;
+
+use crate::artifacts::CloudFlareManifest;
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -15,6 +18,9 @@ fn init_url() -> Url {
 #[derive(Clone)]
 pub struct CloudFlareClient {
     client: Client,
+    /// This is the CloudFlare account id, typically loaded from
+    /// the environment.
+    account_id: String,
 }
 
 #[derive(Deserialize)]
@@ -33,7 +39,7 @@ struct CloudFlareDeployment {
 }
 
 impl CloudFlareClient {
-    pub fn new(token: &str) -> Self {
+    pub fn new(account_id: String, token: &str) -> Self {
         // TODO: Add a timeout.
         let mut default_headers = HeaderMap::new();
         let auth = format!("Bearer {token}");
@@ -44,17 +50,14 @@ impl CloudFlareClient {
             .default_headers(default_headers)
             .build()
             .expect("Must be able to construct client");
-        Self { client }
+        Self { client, account_id }
     }
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/create/
-    pub async fn upload_version(
-        &self,
-        account_id: String,
-        script_name: String,
-        metadata: Metadata,
-    ) -> Result<()> {
+    pub async fn upload_version(&self, script_name: String, metadata: Metadata) -> Result<()> {
+        let account_id = &self.account_id;
+        // TODO: I don't think this is the right path...
         let path =
             format!("/accounts/{account_id}/workers/scripts/{script_name}/assets-upload-session");
         let url = Self::url_with_path(&path);
@@ -64,13 +67,32 @@ impl CloudFlareClient {
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/
-    pub fn create_assets_upload_session(&self) -> Result<()> {
-        todo!();
+    pub async fn create_assets_upload_session(
+        &self,
+        script_name: String,
+        manifest: CloudFlareManifest,
+    ) -> Result<()> {
+        let account_id = &self.account_id;
+        let path =
+            format!("/accounts/{account_id}/workers/scripts/{script_name}/assets-upload-session");
+        let url = Self::url_with_path(&path);
+        // JSONify the CloudFlare Manifest.
+        let body = json!({
+            "manifest": manifest,
+        });
+        self.client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .into_diagnostic()?;
+        // TODO: Convert the response into a useful type.
+        Ok(())
     }
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/
-    pub fn upload_assets(&self) -> Result<()> {
+    pub async fn upload_assets(&self) -> Result<()> {
         todo!();
     }
 
@@ -112,7 +134,7 @@ impl CloudFlareClient {
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/create/
-    pub fn create_deployment(&self) -> Result<()> {
+    pub async fn create_deployment(&self) -> Result<()> {
         todo!();
     }
 
@@ -228,7 +250,6 @@ impl CloudFlareClient {
     }
 }
 
-/// Ugh, I started implementing this elsewhere but i dont have the code on my laptop right now.
 #[derive(Serialize, Deserialize)]
 pub struct Metadata;
 
