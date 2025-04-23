@@ -38,7 +38,7 @@ brew install wack/tap/multi
 **Installing with curl:**
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wack/multitool/releases/download/v0.1.1/multitool-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wack/multitool/releases/download/v0.2.5/multitool-installer.sh | sh
 ```
 
 Check the [releases page](https://github.com/wack/canary/releases) for pre-built binaries, checksums, and guides to install on additional platforms.
