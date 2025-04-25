@@ -18,6 +18,14 @@ path = "src/bin/markdown.rs"
 edition = "2024"
 required-features = ["markdown"]
 
+[workspace]
+members = ["crates/multi-core"]
+
+[workspace.package]
+authors = ["The MultiTool Team"]
+edition = "2024"
+version = "0.1.1"
+
 [dependencies]
 async-stream = "0.3.6"
 async-trait = "0.1.81"
@@ -65,9 +73,13 @@ tracing-subscriber = { version = "0.3.19", features = [
 ] }
 uuid = { version = "1.9", features = ["serde", "v4"] }
 
+[workspace.dependencies]
+pretty_assertions = "1.4"
+static_assertions = "1.1"
+
 [dev-dependencies]
-pretty_assertions = "1.4.0"
-static_assertions = "1.1.0"
+pretty_assertions.workspace = true
+static_assertions.workspace = true
 
 [features]
 proxy = ["dep:pingora"]

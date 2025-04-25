@@ -1,0 +1,22 @@
+[package]
+name = "multi-core"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+
+[lib]
+name = "multitool_stats"
+
+[dependencies]
+# bon.workspace = true
+# defer-rs.workspace = true
+# derive-getters.workspace = true
+# nutype.workspace = true
+# strum = { workspace = true, features = ["derive"] }
+# strum_macros.workspace = true
+# thiserror.workspace = true
+# tracing = { workspace = true, features = ["attributes"] }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+static_assertions.workspace = true
