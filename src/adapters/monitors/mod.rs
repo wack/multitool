@@ -27,3 +27,4 @@ pub trait Monitor: Shutdownable {
 
 mod builder;
 mod cloudwatch;
+mod cloudflare;

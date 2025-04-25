@@ -5,6 +5,7 @@ use mockall::automock;
 use crate::{Shutdownable, subsystems::ShutdownResult};
 pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
 
+pub (crate) use cloudflare::DeploymentVersion;
 pub(crate) use builder::PlatformBuilder;
 
 #[automock]
@@ -31,6 +32,7 @@ impl Shutdownable for MockPlatform {
 
 mod builder;
 mod lambda;
+mod cloudflare;
 
 #[cfg(test)]
 mod tests {

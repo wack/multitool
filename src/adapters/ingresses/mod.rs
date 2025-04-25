@@ -8,6 +8,7 @@ use crate::{Shutdownable, WholePercent};
 pub type BoxedIngress = Box<dyn Ingress + Send + Sync>;
 
 pub(crate) use builder::IngressBuilder;
+pub(crate) use cloudflare::GradualDeployment;
 
 /// Ingresses are responsible for (1) controlling how much traffic the canary
 /// gets (hence the name ingress, since it functions like a virtual LB) and
@@ -37,6 +38,7 @@ pub trait Ingress: Shutdownable {
 
 mod apig;
 mod builder;
+mod cloudflare;
 
 #[cfg(test)]
 mod tests {
