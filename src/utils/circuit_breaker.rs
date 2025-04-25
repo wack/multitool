@@ -17,7 +17,7 @@ use miette::{Result, bail};
 use tokio::time::Duration;
 use tracing::debug;
 
-use super::ManyError;
+use multi_core::ManyError;
 
 /// An `HttpCircuitBreaker` is an implementation of the `CircuitBreaker`
 /// pattern specialized for HTTP requests. HTTP requests typically fail
