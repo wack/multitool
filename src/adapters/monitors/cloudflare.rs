@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 
-use crate::{adapters::CloudFlareClient as Client, metrics::ResponseStatusCode, stats::CategoricalObservation, subsystems::ShutdownResult, Shutdownable};
+use crate::{
+    Shutdownable, adapters::CloudFlareClient as Client, metrics::ResponseStatusCode,
+    stats::CategoricalObservation, subsystems::ShutdownResult,
+};
 use miette::Result;
 
 use super::Monitor;
@@ -30,4 +33,3 @@ impl Shutdownable for CloudFlareMonitor {
         todo!();
     }
 }
-

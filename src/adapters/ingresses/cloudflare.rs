@@ -1,9 +1,10 @@
-use crate::{adapters::CloudFlareClient as Client, subsystems::ShutdownResult, Shutdownable, WholePercent};
+use crate::{
+    Shutdownable, WholePercent, adapters::CloudFlareClient as Client, subsystems::ShutdownResult,
+};
 
 use super::Ingress;
 use async_trait::async_trait;
 use miette::Result;
-
 
 pub struct GradualDeployment {
     client: Client,
@@ -28,7 +29,7 @@ impl Ingress for GradualDeployment {
     async fn rollback_canary(&mut self) -> Result<()> {
         todo!()
     }
-    
+
     async fn promote_canary(&mut self) -> Result<()> {
         todo!()
     }
@@ -40,4 +41,3 @@ impl Shutdownable for GradualDeployment {
         todo!();
     }
 }
-

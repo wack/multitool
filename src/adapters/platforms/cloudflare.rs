@@ -1,4 +1,6 @@
-use crate::{adapters::cloudflare::CloudFlareClient as Client, subsystems::ShutdownResult, Shutdownable};
+use crate::{
+    Shutdownable, adapters::cloudflare::CloudFlareClient as Client, subsystems::ShutdownResult,
+};
 
 use super::Platform;
 use async_trait::async_trait;

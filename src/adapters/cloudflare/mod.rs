@@ -1,9 +1,9 @@
 use miette::{IntoDiagnostic, Result};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::Client;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use url::Url;
-use serde::{Serialize, Deserialize};
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -15,7 +15,6 @@ fn init_url() -> Url {
 pub struct CloudFlareClient {
     client: Client,
 }
-
 
 impl CloudFlareClient {
     pub fn new(token: &str) -> Self {
@@ -34,7 +33,12 @@ impl CloudFlareClient {
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/create/
-    pub async fn upload_version(&self, account_id: String, script_name: String, metadata: Metadata) -> Result<()> {
+    pub async fn upload_version(
+        &self,
+        account_id: String,
+        script_name: String,
+        metadata: Metadata,
+    ) -> Result<()> {
         let path =
             format!("/accounts/{account_id}/workers/scripts/{script_name}/assets-upload-session");
         let url = Self::url_with_path(&path);
