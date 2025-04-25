@@ -29,11 +29,7 @@ dependencies = [
 ]
 
 [tasks.pre-build]
-dependencies = [
-  "sort-ci",
-  "format-toml-conditioned-flow",
-  "unused-dependencies-flow",
-]
+dependencies = ["format-toml-conditioned-flow", "unused-dependencies-flow"]
 
 [tasks.ci-flow]
 dependencies = [
@@ -93,18 +89,6 @@ description = "Calculate the LoC in src."
 category = "Development"
 command = "tokei"
 args = ["."]
-
-[tasks.sort-ci]
-description = "Assert that Cargo.toml is sorted."
-category = "Development"
-command = "cargo"
-args = ["sort", "--check"]
-
-[tasks.sort]
-description = "Sort Cargo.toml"
-category = "Development"
-command = "cargo"
-args = ["sort"]
 
 [tasks.gen-cli-reference]
 description = "Generate the CLI's reference documentation in Markdown format"
