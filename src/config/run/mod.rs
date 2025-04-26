@@ -1,20 +1,48 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Args;
 use derive_getters::Getters;
 
-use crate::MULTITOOL_ORIGIN;
+use crate::{MULTITOOL_ORIGIN, manifest::Manifest};
 
-#[derive(Args, Getters, Clone)]
+#[derive(Args, Clone)]
 pub struct RunSubcommand {
+    // #[arg(short, long, env = "MULTI_WORKSPACE", required = false, default_value = project_manifest().workspace())]
     #[arg(short, long, env = "MULTI_WORKSPACE")]
-    workspace: String,
+    workspace: Option<String>,
+    // #[arg(short, long, env = "MULTI_APPLICATION", required = false, default_value = project_manifest().application())]
     #[arg(short, long, env = "MULTI_APPLICATION")]
-    application: String,
+    application: Option<String>,
     /// The path to the zipped serverless function.
     #[arg(value_name = "FILE")]
     artifact_path: PathBuf,
 
     #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]
     origin: Option<String>,
+}
+
+impl RunSubcommand {
+    pub fn workspace(&self) -> Option<&str> {
+        self.workspace.as_deref()
+    }
+
+    pub fn application(&self) -> Option<&str> {
+        self.application.as_deref()
+    }
+
+    pub fn origin(&self) -> Option<&str> {
+        self.origin.as_deref()
+    }
+
+    pub fn artifact_path(&self) -> impl AsRef<Path> {
+        &self.artifact_path
+    }
+
+    /// Merge the values from this manifest file into this struct.
+    pub fn coalesce(&mut self, manifest: &Manifest) {
+        let workspace_fallback = manifest.workspace().map(|elem| elem.to_owned());
+        let application_fallback = manifest.application().map(|elem| elem.to_owned());
+        self.workspace = self.workspace.clone().or(workspace_fallback);
+        self.application = self.application.clone().or(application_fallback);
+    }
 }

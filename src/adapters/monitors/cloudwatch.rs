@@ -3,7 +3,7 @@ use std::cmp::max;
 use async_trait::async_trait;
 use bon::bon;
 use multitool_sdk::models::CloudWatchDimensions;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     Shutdownable,
@@ -155,7 +155,7 @@ impl CloudWatch {
                     .sum::<f64>() as u32)
             }
             Err(err) => {
-                println!(
+                error!(
                     "Error querying cloudwatch metrics for {:?} {:?}: {:?}",
                     metric_name, group, err
                 );

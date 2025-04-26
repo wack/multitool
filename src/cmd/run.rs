@@ -4,12 +4,13 @@ use crate::adapters::backend::{ApplicationId, WorkspaceId};
 use crate::adapters::{
     ApplicationConfig, IngressBuilder, MonitorBuilder, PlatformBuilder, RolloutMetadata,
 };
-use crate::fs::{FileSystem, SessionFile};
+use crate::fs::{FileSystem, SessionFile, project_manifest};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
-use miette::Result;
+use miette::{Diagnostic, Result};
+use thiserror::Error;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
@@ -30,20 +31,34 @@ pub struct Run {
     backend: BackendClient,
 }
 
+#[derive(Error, Debug, Diagnostic)]
+#[error(
+    "No workspace name found. You must provide the target workspace name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your config file"
+)]
+struct MissingWorkspace;
+
+#[derive(Error, Debug, Diagnostic)]
+#[error(
+    "No aplication name found. You must provide the target application name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your config file"
+)]
+struct MissingApplication;
+
 impl Run {
-    pub fn new(terminal: Terminal, args: RunSubcommand) -> Result<Self> {
+    pub fn new(terminal: Terminal, mut args: RunSubcommand) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
-        let origin = args.origin().as_deref();
-
-        let backend = BackendClient::new(origin, Some(session))?;
+        let manifest = project_manifest();
+        args.coalesce(manifest);
+        let workspace_name = args.workspace().ok_or(MissingWorkspace)?.to_owned();
+        let application_name = args.application().ok_or(MissingApplication)?.to_owned();
+        let backend = BackendClient::new(args.origin(), Some(session))?;
 
         Ok(Self {
             _terminal: terminal,
             backend,
-            artifact_path: args.artifact_path().to_owned(),
-            workspace_name: args.workspace().to_owned(),
-            application_name: args.application().to_owned(),
+            artifact_path: args.artifact_path().as_ref().to_owned(),
+            workspace_name,
+            application_name,
         })
     }
 
