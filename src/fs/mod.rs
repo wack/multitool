@@ -1,6 +1,6 @@
 use directories::ProjectDirs;
 use file::StaticFile;
-use miette::{Diagnostic, IntoDiagnostic, Result, miette};
+use miette::{Diagnostic, IntoDiagnostic, Report, Result, miette};
 use std::fs;
 use thiserror::Error;
 
@@ -10,6 +10,7 @@ use std::{
 };
 
 pub(crate) use file::File;
+pub(crate) use manifest::project_manifest;
 pub(crate) use session::{Session, SessionFile, UserCreds};
 
 use manifest::{JsonManifest, Manifest, TomlManifest};
@@ -31,10 +32,14 @@ pub struct FileSystem {
     xdg_dirs: ProjectDirs,
 }
 
+#[derive(Debug, Error, Diagnostic)]
+#[error("$HOME directory unavailable")]
+pub struct MissingHomeDirectory;
+
 impl FileSystem {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, MissingHomeDirectory> {
         let dirs = ProjectDirs::from("", "", APPLICATION_NAME);
-        let xdg_dirs = dirs.ok_or_else(|| miette!("$HOME directory unavailable"))?;
+        let xdg_dirs = dirs.ok_or(MissingHomeDirectory)?;
         Ok(Self { xdg_dirs })
     }
 
@@ -56,14 +61,14 @@ impl FileSystem {
 
     /// Load the project manifest file, looking for manifests in
     /// priority order up the file hierarchy.
-    pub fn project_manifest(&self) -> Result<Manifest> {
+    pub fn project_manifest(&self) -> Result<Manifest, ManifestMissing> {
         // • Attempt to load a TOML manifest. Fallback to JSON.
         let toml_manifest = self.load_file(TomlManifest);
         let json_manifest = self.load_file(JsonManifest);
         let manifest_box = match (toml_manifest, json_manifest) {
             (Ok(manifest), _) => manifest,
             (Err(_), Ok(manifest)) => manifest,
-            (Err(_), Err(_)) => return Err(ManifestMissing.into()),
+            (Err(_), Err(_)) => return Err(ManifestMissing),
         };
         Ok(manifest_box)
     }
