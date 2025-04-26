@@ -11,7 +11,7 @@ name = "multi_core"
 async-stream = { workspace = true }
 base64.workspace = true
 ignore.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
 twox-hash = { workspace = true, features = ["xxhash32"] }
 tokio = { workspace = true, features = ["full"] }
 miette.workspace = true

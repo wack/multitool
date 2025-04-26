@@ -79,7 +79,7 @@ pretty_assertions = "1.4"
 static_assertions = "1.1"
 base64 = "0.22"
 ignore = "0.4"
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["io"] }
 twox-hash = { version = "2.1", features = ["xxhash32"] }
 tokio = { version = "1.37.0", features = ["full"] }
 miette = { version = "7", features = ["fancy"] }
