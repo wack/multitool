@@ -30,15 +30,14 @@ impl Manifest {
     /// Attempts to read a config file for this project, and
     /// returns an empty manifest file if none is found.
     pub(crate) fn load_or_default() -> Self {
+        // TODO: I'm sure there's a way to clean this up but
+        //       I couldn't get it right the first time.
         if let Ok(fs) = FileSystem::new() {
             if let Ok(manifest) = fs.project_manifest() {
                 return manifest;
             }
         }
         Self::default()
-        // FileSystem::new()
-        //     .and_then(|fs| fs.project_manifest())
-        //     .unwrap_or_default()
     }
 
     pub fn workspace(&self) -> Option<&str> {

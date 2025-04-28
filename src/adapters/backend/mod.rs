@@ -299,6 +299,28 @@ impl BackendClient {
         Ok(())
     }
 
+    pub(crate) async fn list_workspaces(&self) -> Result<Vec<String>> {
+        println!("Calling is auth");
+        self.is_authenicated()?;
+        println!("Success");
+        println!("Calling list workspaces");
+
+        trace!("Listing workspaces");
+        let workspaces: Vec<_> = self
+            .client
+            .workspaces_api()
+            .list_workspaces(None)
+            .await
+            .into_diagnostic()?
+            .workspaces
+            .into_iter()
+            .map(|workspace| workspace.display_name)
+            .collect();
+        println!("Success: {workspaces:?}");
+
+        Ok(workspaces)
+    }
+
     /// Return information about the workspace given its name.
     pub(crate) async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
         self.is_authenicated()?;

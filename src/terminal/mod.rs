@@ -1,4 +1,5 @@
-use dialoguer::{Input, Password};
+use dialoguer::{Input, MultiSelect, Password, Select};
+use indexmap::Equivalent;
 use logging::setup_logger;
 use miette::{DebugReportHandler, GraphicalReportHandler, IntoDiagnostic, Result};
 
@@ -105,4 +106,32 @@ impl Terminal {
             .interact()
             .unwrap()
     }
+
+    pub fn prompt_new_workspace(&self) -> String {
+        Input::with_theme(self.stdout.theme())
+            .with_prompt("Workspace")
+            .interact()
+            .unwrap()
+    }
+
+    pub fn prompt_select_workspace_or_new(
+        &self,
+        mut workspaces: Vec<String>,
+    ) -> SelectWorkspaceOrNewOutput {
+        workspaces.extend(vec!["New Workspace".to_owned()].into_iter());
+        let selection = Select::with_theme(self.stdout.theme())
+            .with_prompt("Workspace")
+            .interact()
+            .unwrap();
+        if selection == workspaces.len() - 1 {
+            SelectWorkspaceOrNewOutput::NewWorkspace
+        } else {
+            SelectWorkspaceOrNewOutput::ExistingWorkspace(workspaces[selection].clone())
+        }
+    }
+}
+
+pub enum SelectWorkspaceOrNewOutput {
+    ExistingWorkspace(String),
+    NewWorkspace,
 }
