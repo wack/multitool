@@ -19,3 +19,11 @@ impl ManyError {
         self.collection.push(err);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tautology() {
+        assert_eq!(1 + 1, 2);
+    }
+}
