@@ -1,0 +1,23 @@
+[package]
+name = "multi-core"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+
+[lib]
+name = "multi_core"
+
+[dependencies]
+async-stream = { workspace = true }
+base64.workspace = true
+ignore.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
+twox-hash = { workspace = true, features = ["xxhash32"] }
+tokio = { workspace = true, features = ["full"] }
+miette.workspace = true
+tokio-stream = { workspace = true, features = ["time"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+static_assertions.workspace = true

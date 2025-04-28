@@ -25,16 +25,3 @@ async fn load_config() -> SdkConfig {
 }
 
 static AWS_CONFIG_CELL: OnceCell<SdkConfig> = OnceCell::const_new();
-
-#[derive(Debug, Error, Diagnostic, Default)]
-#[error("The following errors occurred during execution")]
-pub struct ManyError {
-    #[related]
-    collection: Vec<miette::Error>,
-}
-
-impl ManyError {
-    pub fn append(&mut self, err: miette::Error) {
-        self.collection.push(err);
-    }
-}

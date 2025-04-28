@@ -12,6 +12,9 @@ CLI_REFERENCE_DIR = "target/debug/"
 # documentation.
 CLI_REFERENCE_FILE_NAME = "reference.md"
 
+[env.development]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
 [tasks.dev-test-flow]
 dependencies = [
   "pre-build",
@@ -26,11 +29,7 @@ dependencies = [
 ]
 
 [tasks.pre-build]
-dependencies = [
-  "sort-ci",
-  "format-toml-conditioned-flow",
-  "unused-dependencies-flow",
-]
+dependencies = ["format-toml-conditioned-flow", "unused-dependencies-flow"]
 
 [tasks.ci-flow]
 dependencies = [
@@ -91,18 +90,6 @@ category = "Development"
 command = "tokei"
 args = ["."]
 
-[tasks.sort-ci]
-description = "Assert that Cargo.toml is sorted."
-category = "Development"
-command = "cargo"
-args = ["sort", "--check"]
-
-[tasks.sort]
-description = "Sort Cargo.toml"
-category = "Development"
-command = "cargo"
-args = ["sort"]
-
 [tasks.gen-cli-reference]
 description = "Generate the CLI's reference documentation in Markdown format"
 category = "Development"
@@ -119,6 +106,6 @@ command = "bacon"
 args = [
   "nextest",
   "--",
-  "--lib",
+  "--workspace",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
