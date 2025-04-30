@@ -16,6 +16,21 @@ pub struct CloudFlareClient {
     client: Client,
 }
 
+#[derive(Deserialize)]
+struct CloudFlareDeploymentResponse {
+    result: CloudFlareDeploymentResult,
+}
+
+#[derive(Deserialize)]
+struct CloudFlareDeploymentResult {
+    deployments: Vec<CloudFlareDeployment>,
+}
+
+#[derive(Deserialize)]
+struct CloudFlareDeployment {
+    id: String,
+}
+
 impl CloudFlareClient {
     pub fn new(token: &str) -> Self {
         // TODO: Add a timeout.
@@ -56,6 +71,42 @@ impl CloudFlareClient {
     // https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/
     pub fn upload_assets(&self) -> Result<()> {
         todo!();
+    }
+
+    // Corresponds to:
+    // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/get/
+    pub async fn get_current_version(
+        &self,
+        account_id: String,
+        script_name: String,
+    ) -> Result<String> {
+        let path = format!("/accounts/{account_id}/workers/scripts/{script_name}/deployments");
+        let url = Self::url_with_path(&path);
+
+        let response = self.client.get(url).send().await.into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette::miette!(
+                "Failed to get current worker version. Error: {:?}",
+                response
+                    .json()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string())
+            ));
+        }
+
+        let deployment_response = response
+            .json::<CloudFlareDeploymentResponse>()
+            .await
+            .into_diagnostic()?;
+
+        // The cloudflare API auto-sorts deployments so the first deployment listed is the currently active deployment
+        deployment_response
+            .result
+            .deployments
+            .first()
+            .map(|deployment| deployment.id.clone())
+            .ok_or_else(|| miette::miette!("No deployments found"))
     }
 
     // Corresponds to:
