@@ -2,8 +2,35 @@ use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::OnceLock;
 use url::Url;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloudFlareError {
+    pub code: i64,
+    pub message: String,
+    pub documentation_url: Option<String>,
+    #[serde(default)]
+    pub source: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloudFlareMessage {
+    pub code: i64,
+    pub message: String,
+    pub documentation_url: Option<String>,
+    #[serde(default)]
+    pub source: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloudFlareResponse<T> {
+    pub errors: Vec<CloudFlareError>,
+    pub messages: Vec<CloudFlareMessage>,
+    pub success: bool,
+    pub result: T,
+}
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -83,3 +110,65 @@ impl CloudFlareClient {
 /// Ugh, I started implementing this elsewhere but i dont have the code on my laptop right now.
 #[derive(Serialize, Deserialize)]
 pub struct Metadata;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cloudflare_response_serde() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct TestResult {
+            startup_time_ms: i64,
+        }
+
+        let json_str = r#"
+{
+    "errors": [
+        {
+            "code": 1000,
+            "message": "message",
+            "documentation_url": "documentation_url",
+            "source": {
+                "pointer": "pointer"
+            }
+        }
+    ],
+    "messages": [
+        {
+            "code": 1000,
+            "message": "message",
+            "documentation_url": "documentation_url",
+            "source": {
+                "pointer": "pointer"
+            }
+        }
+    ],
+    "success": true,
+    "result": {
+        "startup_time_ms": 10
+    }
+}"#;
+
+        // Test deserialization
+        let response: CloudFlareResponse<TestResult> = serde_json::from_str(json_str).unwrap();
+        
+        assert_eq!(response.success, true);
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].code, 1000);
+        assert_eq!(response.errors[0].message, "message");
+        assert_eq!(response.errors[0].documentation_url, Some("documentation_url".to_string()));
+        
+        assert_eq!(response.messages.len(), 1);
+        assert_eq!(response.messages[0].code, 1000);
+        assert_eq!(response.messages[0].message, "message");
+        assert_eq!(response.messages[0].documentation_url, Some("documentation_url".to_string()));
+        
+        assert_eq!(response.result.startup_time_ms, 10);
+
+        // Test serialization
+        let serialized = serde_json::to_string_pretty(&response).unwrap();
+        let deserialized: CloudFlareResponse<TestResult> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(response, deserialized);
+    }
+}
