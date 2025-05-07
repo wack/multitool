@@ -74,6 +74,10 @@ tracing-subscriber = { version = "0.3.19", features = [
 ] }
 url = "2.5.4"
 uuid = { version = "1.9", features = ["serde", "v4"] }
+rmcp = { version = "0.1", features = [
+  "server",
+  "transport-io",
+], optional = true }
 
 [workspace.dependencies]
 pretty_assertions = "1.4"
@@ -94,6 +98,7 @@ static_assertions.workspace = true
 
 [features]
 proxy = ["dep:pingora"]
+mcp = ["dep:rmcp"]
 markdown = ["dep:clap-markdown"] # Generate markdown docs for the CLI
 
 # The profile that 'dist' will build with

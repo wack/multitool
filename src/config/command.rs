@@ -3,6 +3,10 @@ use miette::Result;
 
 #[cfg(feature = "proxy")]
 use crate::cmd::Proxy;
+
+#[cfg(feature = "mcp")]
+use crate::cmd::Mcp;
+
 use crate::cmd::{Login, Logout, Run, Version};
 use crate::terminal::Terminal;
 
@@ -11,6 +15,9 @@ use super::{LoginSubcommand, RunSubcommand};
 #[cfg(feature = "proxy")]
 use super::ProxySubcommand;
 
+#[cfg(feature = "mcp")]
+use super::McpSubcommand;
+
 /// A `MultiCommand` is one of the top-level commands accepted by
 /// the multi CLI.
 #[derive(Subcommand, Clone)]
@@ -18,6 +25,9 @@ pub enum MultiCommand {
     /// Log in to the hosted SaaS.
     Login(LoginSubcommand),
     Logout,
+    #[cfg(feature = "mcp")]
+    #[command(subcommand)]
+    Mcp(McpSubcommand),
     #[cfg(feature = "proxy")]
     Proxy(ProxySubcommand),
     /// Run will execute `multi` in "runner mode", where it will
@@ -35,6 +45,8 @@ impl MultiCommand {
             Self::Logout => Logout::new(console).dispatch(),
             #[cfg(feature = "proxy")]
             Self::Proxy(flags) => Proxy::new(console, flags).dispatch(),
+            #[cfg(feature = "mcp")]
+            Self::Mcp(_) => Mcp::new(console).dispatch(),
             Self::Run(flags) => Run::new(console, flags)?.dispatch(),
             Self::Version => Version::new(console).dispatch(),
         }
