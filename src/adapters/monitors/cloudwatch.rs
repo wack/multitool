@@ -1,5 +1,3 @@
-use std::cmp::max;
-
 use async_trait::async_trait;
 use bon::bon;
 use multitool_sdk::models::CloudWatchDimensions;
@@ -17,7 +15,7 @@ use aws_sdk_cloudwatch::{
     types::{Dimension, Metric, MetricDataQuery, MetricStat},
 };
 use aws_smithy_types::DateTime as AwsDateTime;
-use chrono::{DateTime, Duration, TimeDelta, Utc};
+use chrono::{DateTime, Duration, Utc};
 use miette::Result;
 
 use super::Monitor;
@@ -156,34 +154,11 @@ impl CloudWatch {
             }
             Err(err) => {
                 error!(
-                    "Error querying cloudwatch metrics for {:?} {:?}: {:?}",
+                    "Error querying cloudwatch metrics for metric: {:?}, group: {:?}, error: {:?}",
                     metric_name, group, err
                 );
                 Ok(0)
             }
-        }
-    }
-
-    /// Checks if the number of metrics collected is low (< 20 per given period) and warn the user
-    fn check_metrics_count(
-        control_count: u32,
-        canary_count: u32,
-        start_time: DateTime<Utc>,
-        end_time: DateTime<Utc>,
-    ) {
-        if (control_count + canary_count) < 20 {
-            // Sometimes the elapsed_time is 59s and not 1 full minute, so we want to have a floor of at least 1 min
-            let elapsed_time = max(1, (end_time - start_time).num_minutes());
-            let elapsed_time_str = if elapsed_time > 1 {
-                format!("{elapsed_time} minutes")
-            } else {
-                format!("{elapsed_time} minute")
-            };
-            warn!(
-                "Warning: MultiTool has collected {} metrics in the past {}. More traffic will produce more accurate results.",
-                control_count + canary_count,
-                elapsed_time_str,
-            );
         }
     }
 }
@@ -290,21 +265,18 @@ impl Monitor for CloudWatch {
 
         // Collate all of our control metrics
         let control_2xx = control_count - (control_4xx + control_5xx);
-        // Collate all of our canary/experimental metrics
+        // Collate all of our canary metrics
         let canary_2xx = canary_count - (canary_4xx + canary_5xx);
 
-        // Print a warning message if we have low metrics, but only if it's been 3 minutes since we started
-        if (Utc::now() - self.start_time) > TimeDelta::minutes(3) {
-            Self::check_metrics_count(
-                control_count,
-                canary_count,
-                start_query_time,
-                end_query_time,
-            );
-        }
+        self.check_metrics_count(
+            control_count,
+            canary_count,
+            self.start_time,
+            start_query_time,
+            end_query_time,
+        );
 
         debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
-
         debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
 
         let utc_now = Utc::now();
