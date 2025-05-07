@@ -1,9 +1,9 @@
-use miette::{IntoDiagnostic, Result, miette};
+use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-use tracing::debug;
+use tracing::error;
 use url::Url;
 
 static URL: OnceLock<Url> = OnceLock::new();
@@ -139,7 +139,7 @@ impl CloudFlareClient {
 
         // If there's an error, just return 0 results
         if !response.status().is_success() {
-            debug!(
+            error!(
                 "Failed to query Cloudflare metrics for worker: {}, version: {}, status codes: {}, error: {}",
                 worker_name,
                 worker_version_id,

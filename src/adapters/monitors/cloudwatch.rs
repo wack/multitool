@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bon::bon;
 use multitool_sdk::models::CloudWatchDimensions;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
     Shutdownable,
@@ -153,7 +153,7 @@ impl CloudWatch {
                     .sum::<f64>() as u32)
             }
             Err(err) => {
-                debug!(
+                error!(
                     "Error querying cloudwatch metrics for metric: {:?}, group: {:?}, error: {:?}",
                     metric_name, group, err
                 );
