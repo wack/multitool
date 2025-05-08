@@ -120,6 +120,7 @@ mod tests {
 
     #[test]
     fn to_json() {
+        println!("Hello");
         let manifest = Manifest {
             root: PathBuf::from_str("/foo").unwrap(),
             files: vec![

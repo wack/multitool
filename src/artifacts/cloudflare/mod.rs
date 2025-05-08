@@ -1,7 +1,6 @@
 use std::io::Write;
 use std::path::Path;
 
-use base64::{Engine as _, engine::general_purpose};
 use base64::{engine::general_purpose::STANDARD, write::EncoderWriter};
 use futures_util::{StreamExt as _, TryFutureExt as _};
 use miette::{IntoDiagnostic, Result};

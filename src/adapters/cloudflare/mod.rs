@@ -1,7 +1,6 @@
 use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::OnceLock;
 use tracing::error;
