@@ -22,8 +22,6 @@ pub async fn read_file_as_b64<P: AsRef<Path>>(filepath: P, sink: &mut impl Write
         .map(ReaderStream::new)
         .into_diagnostic()?;
 
-    // BASE64_STANDARD_NO_PAD.encode(bytes)
-
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.into_diagnostic()?;
         encoder.write_all(bytes.as_ref()).unwrap();
