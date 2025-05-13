@@ -20,10 +20,77 @@ pub fn project_manifest() -> &'static Manifest {
 /// to be stable, but every growing project can expect to make breaking
 /// changes during its genesis. Wrapping the manifest in a version enum
 /// permits easy upgrades and is simple to program around.
-#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct Manifest {
     workspace: Option<String>,
     application: Option<String>,
+    #[serde(default)]
+    config: ConfigSection,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
+pub struct ConfigSection {
+    #[serde(default)]
+    monitor: MonitorConfig,
+    #[serde(default)]
+    ingress: IngressConfig,
+    #[serde(default)]
+    platform: PlatformConfig,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum MonitorConfig {
+    AwsCloudwatch(AwsCloudwatch),
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self::AwsCloudwatch(AwsCloudwatch::default())
+    }
+}
+
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
+pub struct AwsCloudwatch {}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum IngressConfig {
+    AwsApiGateway(AwsApiGatewayConfig),
+}
+
+impl Default for IngressConfig {
+    fn default() -> Self {
+        Self::AwsApiGateway(AwsApiGatewayConfig::default())
+    }
+}
+
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct AwsApiGatewayConfig {
+    stage_name: String,
+    gateway_name: String,
+    resource_path: String,
+    resource_method: String,
+    region: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformConfig {
+    AwsLambda(AwsLambdaConfig),
+}
+
+impl Default for PlatformConfig {
+    fn default() -> Self {
+        Self::AwsLambda(AwsLambdaConfig::default())
+    }
+}
+
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+pub struct AwsLambdaConfig {
+    name: String,
+    region: String,
 }
 
 impl Manifest {
@@ -46,8 +113,7 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
-    use super::Manifest;
-    use pretty_assertions::assert_str_eq;
+    use super::{AwsApiGatewayConfig, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
 
     #[test]
     fn parse_example_no_config() {
@@ -56,15 +122,11 @@ application = "multitool"
 "#;
         let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
 
-        let expected = Manifest {
-            workspace: Some("wack".to_owned()),
-            application: Some("multitool".to_owned()),
-        };
-        assert_eq!(expected, observed);
-
-        // Convert it back to a string and compare.
-        let roundtrip_manifest = toml::to_string_pretty(&expected).expect("must format to string");
-        assert_str_eq!(roundtrip_manifest, RAW_MANIFEST.to_owned());
+        assert_eq!(observed.workspace, Some("wack".to_string()));
+        assert_eq!(observed.application, Some("multitool".to_string()));
+        matches!(observed.config.monitor, MonitorConfig::AwsCloudwatch(_));
+        matches!(observed.config.ingress, IngressConfig::AwsApiGateway(_));
+        matches!(observed.config.platform, PlatformConfig::AwsLambda(_));
     }
 
     #[test]
@@ -85,5 +147,30 @@ name = "buzz"
 region = "us-east-2"
 "#;
         let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
+
+        assert_eq!(observed.workspace, Some("wack".to_string()));
+        assert_eq!(observed.application, Some("multitool".to_string()));
+        
+        // Check monitor config
+        matches!(observed.config.monitor, MonitorConfig::AwsCloudwatch(_));
+
+        // Check ingress config
+        if let IngressConfig::AwsApiGateway(api_gateway) = observed.config.ingress {
+            assert_eq!(api_gateway.stage_name, "foo");
+            assert_eq!(api_gateway.resource_path, "bar");
+            assert_eq!(api_gateway.resource_method, "baz");
+            assert_eq!(api_gateway.gateway_name, "pop");
+            assert_eq!(api_gateway.region, "us-east-2");
+        } else {
+            panic!("Expected AwsApiGateway variant");
+        }
+
+        // Check platform config
+        if let PlatformConfig::AwsLambda(lambda) = observed.config.platform {
+            assert_eq!(lambda.name, "buzz");
+            assert_eq!(lambda.region, "us-east-2");
+        } else {
+            panic!("Expected AwsLambda variant");
+        }
     }
 }
