@@ -50,7 +50,7 @@ mod tests {
     use pretty_assertions::assert_str_eq;
 
     #[test]
-    fn parse_example1() {
+    fn parse_example_no_config() {
         const RAW_MANIFEST: &str = r#"workspace = "wack"
 application = "multitool"
 "#;
@@ -65,5 +65,25 @@ application = "multitool"
         // Convert it back to a string and compare.
         let roundtrip_manifest = toml::to_string_pretty(&expected).expect("must format to string");
         assert_str_eq!(roundtrip_manifest, RAW_MANIFEST.to_owned());
+    }
+
+    #[test]
+    fn parse_config_example1() {
+        const RAW_MANIFEST: &str = r#"workspace = "wack"
+application = "multitool"
+config.monitor.aws-cloudwatch = {}
+
+[config.ingress.aws-api-gateway]
+stage-name = "foo"
+resource-path = "bar"
+resource-method = "baz"
+gateway-name = "pop"
+region = "us-east-2"
+
+[config.platform.aws-lambda]
+name = "buzz"
+region = "us-east-2"
+"#;
+        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
     }
 }
