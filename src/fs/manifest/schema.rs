@@ -45,18 +45,29 @@ pub enum MonitorConfig {
     // Struct variants
     AwsCloudwatch(AwsCloudwatch),
     CloudflareWorker(CloudflareWorker),
-    // String variants
-    #[serde(rename = "aws")]
-    Aws,
     #[serde(rename = "cloudflare-worker")]
     CloudflareWorkerReference,
 }
 
 impl MonitorConfig {
-    pub fn cloudflare_account_id(&self, reference: Option<&CloudflareWorker>) -> Option<&str> {
+    pub fn cloudflare_account_id<'a>(
+        &'a self,
+        reference: Option<&'a CloudflareWorker>,
+    ) -> Option<&'a str> {
         match self {
             Self::CloudflareWorker(worker) => Some(&worker.account_id),
-            Self::CloudflareWorkerReference => reference.map(|r| &r.account_id),
+            Self::CloudflareWorkerReference => reference.map(|r| r.account_id.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub fn cloudflare_worker_name<'a>(
+        &'a self,
+        reference: Option<&'a CloudflareWorker>,
+    ) -> Option<&'a str> {
+        match self {
+            Self::CloudflareWorker(worker) => Some(&worker.worker_name),
+            Self::CloudflareWorkerReference => reference.map(|r| r.worker_name.as_ref()),
             _ => None,
         }
     }
@@ -77,24 +88,25 @@ pub struct CloudflareWorker {
     account_id: String,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Debug)]
 #[serde(rename_all = "kebab-case")]
 #[serde(untagged)]
 pub enum IngressConfig {
     AwsApiGateway(AwsApiGateway),
+    CloudflareWorker(CloudflareWorker),
     #[serde(rename = "cloudflare-worker")]
     CloudflareWorkerReference,
 }
 
 impl Default for IngressConfig {
     fn default() -> Self {
-        Self::AwsApiGateway(AwsApiGatewayConfig::default())
+        Self::AwsApiGateway(AwsApiGateway::default())
     }
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
-pub struct AwsApiGatewayConfig {
+pub struct AwsApiGateway {
     stage_name: String,
     gateway_name: String,
     resource_path: String,
@@ -113,12 +125,12 @@ pub enum PlatformConfig {
 
 impl Default for PlatformConfig {
     fn default() -> Self {
-        Self::AwsLambda(AwsLambdaConfig::default())
+        Self::AwsLambda(AwsLambda::default())
     }
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
-pub struct AwsLambdaConfig {
+pub struct AwsLambda {
     name: String,
     region: String,
 }
@@ -143,7 +155,7 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
-    use super::{AwsApiGatewayConfig, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
+    use super::{IngressConfig, Manifest, MonitorConfig, PlatformConfig};
 
     #[test]
     fn parse_example_no_config() {
@@ -205,9 +217,9 @@ region = "us-east-2"
     }
 }
 
-    #[test]
-    fn parse_config_cloudflare_worker() {
-        const RAW_MANIFEST: &str = r#"workspace = "wack"
+#[test]
+fn parse_config_cloudflare_worker() {
+    const RAW_MANIFEST: &str = r#"workspace = "wack"
 application = "multitool"
 
 [config.monitor.cloudflare-worker]
@@ -229,114 +241,120 @@ region = "us-east-2"
 worker-name = "top-level-worker"
 account-id = "xyz789"
 "#;
-        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
+    let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
 
-        assert_eq!(observed.workspace, Some("wack".to_string()));
-        assert_eq!(observed.application, Some("multitool".to_string()));
+    assert_eq!(observed.workspace, Some("wack".to_string()));
+    assert_eq!(observed.application, Some("multitool".to_string()));
 
-        let config = observed.config.expect("Config should be present");
+    let config = observed.config.expect("Config should be present");
 
-        // Check monitor config
-        if let MonitorConfig::CloudflareWorker(worker) = config.monitor {
-            assert_eq!(worker.worker_name, "my-worker");
-            assert_eq!(worker.account_id, "abc123def456");
-        } else {
-            panic!("Expected CloudflareWorker variant");
-        }
-
-        // Check ingress config
-        if let IngressConfig::AwsApiGateway(api_gateway) = config.ingress {
-            assert_eq!(api_gateway.stage_name, "foo");
-            assert_eq!(api_gateway.resource_path, "bar");
-            assert_eq!(api_gateway.resource_method, "baz");
-            assert_eq!(api_gateway.gateway_name, "pop");
-            assert_eq!(api_gateway.region, "us-east-2");
-        } else {
-            panic!("Expected AwsApiGateway variant");
-        }
-
-        // Check platform config
-        if let PlatformConfig::AwsLambda(lambda) = config.platform {
-            assert_eq!(lambda.name, "buzz");
-            assert_eq!(lambda.region, "us-east-2");
-        } else {
-            panic!("Expected AwsLambda variant");
-        }
-
-        // Check top-level cloudflare worker config
-        let cloudflare = observed.cloudflare_worker.expect("Cloudflare worker config should be present");
-        assert_eq!(cloudflare.worker_name, "top-level-worker");
-        assert_eq!(cloudflare.account_id, "xyz789");
+    // Check monitor config
+    if let MonitorConfig::CloudflareWorker(worker) = config.monitor {
+        assert_eq!(worker.worker_name, "my-worker");
+        assert_eq!(worker.account_id, "abc123def456");
+    } else {
+        panic!("Expected CloudflareWorker variant");
     }
 
-    #[test]
-    fn parse_monitor_string_variants() {
-        // Test AWS string variant
-        const AWS_MANIFEST: &str = r#"
+    // Check ingress config
+    if let IngressConfig::AwsApiGateway(api_gateway) = config.ingress {
+        assert_eq!(api_gateway.stage_name, "foo");
+        assert_eq!(api_gateway.resource_path, "bar");
+        assert_eq!(api_gateway.resource_method, "baz");
+        assert_eq!(api_gateway.gateway_name, "pop");
+        assert_eq!(api_gateway.region, "us-east-2");
+    } else {
+        panic!("Expected AwsApiGateway variant");
+    }
+
+    // Check platform config
+    if let PlatformConfig::AwsLambda(lambda) = config.platform {
+        assert_eq!(lambda.name, "buzz");
+        assert_eq!(lambda.region, "us-east-2");
+    } else {
+        panic!("Expected AwsLambda variant");
+    }
+
+    // Check top-level cloudflare worker config
+    let cloudflare = observed
+        .cloudflare_worker
+        .expect("Cloudflare worker config should be present");
+    assert_eq!(cloudflare.worker_name, "top-level-worker");
+    assert_eq!(cloudflare.account_id, "xyz789");
+}
+
+#[test]
+fn parse_monitor_string_variants() {
+    // Test AWS string variant
+    const AWS_MANIFEST: &str = r#"
 config.monitor = "aws"
 "#;
-        let aws_config: Manifest = toml::from_str(AWS_MANIFEST).expect("manifest not parsable");
-        assert!(matches!(
-            aws_config.config.unwrap().monitor,
-            MonitorConfig::Aws
-        ));
+    let aws_config: Manifest = toml::from_str(AWS_MANIFEST).expect("manifest not parsable");
+    assert!(matches!(
+        aws_config.config.unwrap().monitor,
+        MonitorConfig::Aws
+    ));
 
-        // Test Cloudflare Worker string variant
-        const CLOUDFLARE_MANIFEST: &str = r#"
+    // Test Cloudflare Worker string variant
+    const CLOUDFLARE_MANIFEST: &str = r#"
 config.monitor = "cloudflare-worker"
 "#;
-        let cloudflare_config: Manifest = toml::from_str(CLOUDFLARE_MANIFEST).expect("manifest not parsable");
-        assert!(matches!(
-            cloudflare_config.config.unwrap().monitor,
-            MonitorConfig::CloudflareWorkerReference
-        ));
-    }
+    let cloudflare_config: Manifest =
+        toml::from_str(CLOUDFLARE_MANIFEST).expect("manifest not parsable");
+    assert!(matches!(
+        cloudflare_config.config.unwrap().monitor,
+        MonitorConfig::CloudflareWorkerReference
+    ));
+}
 
-    #[test]
-    fn parse_ingress_and_platform_references() {
-        const MANIFEST: &str = r#"
+#[test]
+fn parse_ingress_and_platform_references() {
+    const MANIFEST: &str = r#"
 [config]
 ingress = "cloudflare-worker"
 platform = "cloudflare-worker"
 "#;
-        let config: Manifest = toml::from_str(MANIFEST).expect("manifest not parsable");
-        let config_section = config.config.expect("Config should be present");
-        
-        assert!(matches!(
-            config_section.ingress,
-            IngressConfig::CloudflareWorkerReference
-        ));
-        
-        assert!(matches!(
-            config_section.platform,
-            PlatformConfig::CloudflareWorkerReference
-        ));
-    }
+    let config: Manifest = toml::from_str(MANIFEST).expect("manifest not parsable");
+    let config_section = config.config.expect("Config should be present");
 
-    #[test]
-    fn test_cloudflare_account_id() {
-        // Test CloudflareWorker variant
-        let worker = CloudflareWorker {
-            worker_name: "test-worker".to_string(),
-            account_id: "acc123".to_string(),
-        };
-        let config = MonitorConfig::CloudflareWorker(worker);
-        assert_eq!(config.cloudflare_account_id(None), Some("acc123"));
-        
-        // Test CloudflareWorkerReference variant with reference
-        let reference = CloudflareWorker {
-            worker_name: "ref-worker".to_string(),
-            account_id: "ref456".to_string(),
-        };
-        let config = MonitorConfig::CloudflareWorkerReference;
-        assert_eq!(config.cloudflare_account_id(Some(&reference)), Some("ref456"));
-        
-        // Test CloudflareWorkerReference variant without reference
-        assert_eq!(config.cloudflare_account_id(None), None);
-        
-        // Test other variants return None
-        let config = MonitorConfig::AwsCloudwatch(AwsCloudwatch::default());
-        assert_eq!(config.cloudflare_account_id(None), None);
-        let config = MonitorConfig::Aws;
-        assert_eq!(config.cloudflare_account_id(None), None);
-    }
+    assert!(matches!(
+        config_section.ingress,
+        IngressConfig::CloudflareWorkerReference
+    ));
+
+    assert!(matches!(
+        config_section.platform,
+        PlatformConfig::CloudflareWorkerReference
+    ));
+}
+
+#[test]
+fn test_cloudflare_account_id() {
+    // Test CloudflareWorker variant
+    let worker = CloudflareWorker {
+        worker_name: "test-worker".to_string(),
+        account_id: "acc123".to_string(),
+    };
+    let config = MonitorConfig::CloudflareWorker(worker);
+    assert_eq!(config.cloudflare_account_id(None), Some("acc123"));
+
+    // Test CloudflareWorkerReference variant with reference
+    let reference = CloudflareWorker {
+        worker_name: "ref-worker".to_string(),
+        account_id: "ref456".to_string(),
+    };
+    let config = MonitorConfig::CloudflareWorkerReference;
+    assert_eq!(
+        config.cloudflare_account_id(Some(&reference)),
+        Some("ref456")
+    );
+
+    // Test CloudflareWorkerReference variant without reference
+    assert_eq!(config.cloudflare_account_id(None), None);
+
+    // Test other variants return None
+    let config = MonitorConfig::AwsCloudwatch(AwsCloudwatch::default());
+    assert_eq!(config.cloudflare_account_id(None), None);
+    let config = MonitorConfig::Aws;
+    assert_eq!(config.cloudflare_account_id(None), None);
+}
