@@ -20,7 +20,6 @@ pub struct CreateDeploymentRequest {
     #[serde(default)]
     pub strategy: DeploymentStrategy,
     pub versions: Vec<DeploymentVersionConfig>,
-    pub message: Option<String>,
     pub annotations: Option<serde_json::Value>,
 }
 
@@ -63,7 +62,6 @@ mod tests {
             request.versions[0].version_id,
             "bcf48806-b317-4351-9ee7-36e7d557d4de"
         );
-        assert_eq!(request.message, None);
         assert_eq!(request.annotations, None);
 
         // Test case 2: Request with message and annotations
@@ -79,7 +77,6 @@ mod tests {
                     "version_id": "def456"
                 }
             ],
-            "message": "Deploying new version",
             "annotations": {
                 "key": "value"
             }
@@ -93,7 +90,6 @@ mod tests {
         assert_eq!(request.versions[0].version_id, "abc123");
         assert_eq!(request.versions[1].percentage, 20);
         assert_eq!(request.versions[1].version_id, "def456");
-        assert_eq!(request.message, Some("Deploying new version".to_string()));
         assert!(request.annotations.is_some());
 
         // Test case 3: Strategy should default to "percentage" when not provided
