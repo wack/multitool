@@ -2,9 +2,38 @@ use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::OnceLock;
 use tracing::error;
 use url::Url;
+
+use deployments::{CreateDeploymentRequest, DeploymentResult};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloudFlareError {
+    pub code: i64,
+    pub message: String,
+    pub documentation_url: Option<String>,
+    #[serde(default)]
+    pub source: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloudFlareMessage {
+    pub code: i64,
+    pub message: String,
+    pub documentation_url: Option<String>,
+    #[serde(default)]
+    pub source: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CloudFlareResponse<T> {
+    pub errors: Vec<CloudFlareError>,
+    pub messages: Vec<CloudFlareMessage>,
+    pub success: bool,
+    pub result: T,
+}
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -112,8 +141,25 @@ impl CloudFlareClient {
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/create/
-    pub fn create_deployment(&self) -> Result<()> {
-        todo!();
+    pub async fn create_deployment(
+        &self,
+        account_id: String,
+        script_name: String,
+        request: CreateDeploymentRequest,
+    ) -> Result<CloudFlareResponse<DeploymentResult>> {
+        let path = format!("accounts/{account_id}/workers/scripts/{script_name}/deployments");
+        let url = Self::url_with_path(&path);
+
+        let response = self
+            .client
+            .post(url)
+            .json(&request)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        let result = response.json().await.into_diagnostic()?;
+        Ok(result)
     }
 
     // For the monitor to grab metrics within a time range.
@@ -254,3 +300,5 @@ struct Aggregate {
     #[serde(default)]
     count: u32,
 }
+
+mod deployments;
