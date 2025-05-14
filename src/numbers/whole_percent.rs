@@ -3,11 +3,22 @@ use std::fmt;
 
 use super::OutOfRangeError;
 
+#[derive(Clone)]
 pub struct WholePercent(WholeNumber);
 
 impl fmt::Display for WholePercent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}%", self.0)
+    }
+}
+
+impl WholePercent {
+    pub fn as_i32(self) -> i32 {
+        self.0.as_i32()
+    }
+
+    pub fn as_u64(self) -> u64 {
+        self.0.as_u64()
     }
 }
 

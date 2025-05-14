@@ -346,12 +346,12 @@ impl Ingress for AwsApiGateway {
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
-        info!("Rolling back canary rollout in API Gateway.");
+        info!("Rolling back canary in API Gateway.");
         self.remove_canary_settings().await
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
-        info!("Promoting canary rollout in API Gateway!");
+        info!("Promoting canary in API Gateway!");
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
         let api_id = api.id().ok_or(miette!("Couldn't get ID of deployed API"))?;
 

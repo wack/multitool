@@ -1,5 +1,5 @@
 use crate::{
-    Shutdownable, adapters::cloudflare::CloudFlareClient as Client, subsystems::ShutdownResult,
+    Shutdownable, adapters::cloudflare::CloudflareClient as Client, subsystems::ShutdownResult,
 };
 
 use super::Platform;

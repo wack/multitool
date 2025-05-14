@@ -1,7 +1,6 @@
+use bon::Builder;
+use derive_getters::Getters;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use super::CloudFlareResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DeploymentStrategy {
@@ -15,7 +14,7 @@ impl Default for DeploymentStrategy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder, Getters)]
 pub struct CreateDeploymentRequest {
     #[serde(default)]
     pub strategy: DeploymentStrategy,
@@ -23,21 +22,26 @@ pub struct CreateDeploymentRequest {
     pub annotations: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct DeploymentResult {
-    pub id: String,
-    pub metadata: Value,
-    pub created_on: String,
-    pub modified_on: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder, Getters)]
 pub struct DeploymentVersionConfig {
-    pub percentage: u32,
+    pub percentage: u64,
     pub version_id: String,
 }
+
+#[derive(Deserialize)]
+pub struct DeploymentResponse {
+    pub deployments: Vec<Deployment>,
+}
+
+#[derive(Deserialize, Getters)]
+pub struct Deployment {
+    id: String,
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::adapters::cloudflare::responses::CloudflareResponse;
+
     use super::*;
 
     #[test]
@@ -147,7 +151,7 @@ mod tests {
 }"#;
 
         // Test deserialization
-        let response: CloudFlareResponse<TestResult> = serde_json::from_str(json_str).unwrap();
+        let response: CloudflareResponse<TestResult> = serde_json::from_str(json_str).unwrap();
 
         assert_eq!(response.success, true);
         assert_eq!(response.errors.len(), 1);
@@ -170,7 +174,7 @@ mod tests {
 
         // Test serialization
         let serialized = serde_json::to_string_pretty(&response).unwrap();
-        let deserialized: CloudFlareResponse<TestResult> =
+        let deserialized: CloudflareResponse<TestResult> =
             serde_json::from_str(&serialized).unwrap();
         assert_eq!(response, deserialized);
     }
