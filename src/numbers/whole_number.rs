@@ -16,10 +16,6 @@ impl WholeNumber {
     pub fn as_i32(self) -> i32 {
         self.0.to_i32().unwrap()
     }
-
-    pub fn as_u64(self) -> u64 {
-        self.0.to_u64().unwrap()
-    }
 }
 
 impl From<FixedPrecisionNumber<0>> for WholeNumber {

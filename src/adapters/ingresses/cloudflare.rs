@@ -59,7 +59,7 @@ impl Ingress for GradualDeployment {
             .version_id(control_version_id.clone())
             .build();
         let canary_version = DeploymentVersionConfig::builder()
-            .percentage(0) //TODO: check if this actually works in CF befroe PR
+            .percentage(0)
             .version_id(canary_version_id.clone())
             .build();
         let deployment_request = CreateDeploymentRequest::builder()
@@ -79,7 +79,7 @@ impl Ingress for GradualDeployment {
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         info!("Setting Cloudflare canary traffic to {percent}.");
         let control_version = DeploymentVersionConfig::builder()
-            .percentage(100 - percent.clone().as_u64())
+            .percentage((100 - percent.clone().as_i32()) as u64)
             .version_id(
                 self.control_version_id
                     .clone()
@@ -87,7 +87,7 @@ impl Ingress for GradualDeployment {
             )
             .build();
         let canary_version = DeploymentVersionConfig::builder()
-            .percentage(percent.as_u64())
+            .percentage(percent.as_i32() as u64)
             .version_id(
                 self.canary_version_id
                     .clone()

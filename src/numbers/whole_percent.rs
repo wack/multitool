@@ -16,10 +16,6 @@ impl WholePercent {
     pub fn as_i32(self) -> i32 {
         self.0.as_i32()
     }
-
-    pub fn as_u64(self) -> u64 {
-        self.0.as_u64()
-    }
 }
 
 impl TryFrom<WholeNumber> for WholePercent {
