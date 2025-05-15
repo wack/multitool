@@ -5,11 +5,13 @@ use crate::adapters::{
     ApplicationConfig, IngressBuilder, MonitorBuilder, PlatformBuilder, RolloutMetadata,
 };
 use crate::fs::{FileSystem, SessionFile, project_manifest};
+use crate::manifest::Manifest;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
-use miette::{Diagnostic, Result};
+use miette::{Context, Diagnostic, Result, miette};
+use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
@@ -56,16 +58,62 @@ impl Run {
             manifest,
             backend,
             artifact_path: args.artifact_path().as_ref().to_owned(),
-            override_workspace_name: args.workspace().clone(),
-            override_application_name: args.application().clone(),
+            override_workspace_name: args.workspace().map(ToString::to_string),
+            override_application_name: args.application().map(ToString::to_string),
         })
     }
 
-    fn application_name(&self) -> Result<&str> {
+    /// Resolve precedence order:
+    /// 1. CLI flag has highest precedence.
+    /// 2. Environment variable.
+    /// 3. Manifest value has lowest precedence.
+    fn workspace_name(&self) -> Result<String> {
+        let manifest_workspace = self.manifest.workspace().map(ToString::to_string);
+        self.override_workspace_name
+            .clone()
+            .or(manifest_workspace)
+            .ok_or(MissingWorkspace.into())
+    }
+
+    /// Resolve precedence order:
+    /// 1. CLI flag has highest precedence.
+    /// 2. Environment variable.
+    /// 3. Manifest value has lowest precedence.
+    fn application_name(&self) -> Result<String> {
+        let manifest_application = self.manifest.application().map(ToString::to_string);
         self.override_application_name
-            .as_deref()
-            .or(self.manifest.application.as_deref())
-            .ok_or(MissingApplication)
+            .clone()
+            .or(manifest_application)
+            .ok_or(MissingApplication.into())
+    }
+
+    async fn validate_workspace(&self, name: &str) -> Result<WorkspaceSummary> {
+        // TODO: Turn this into a struct and include two hints:
+        // 1. Are you logged into the right account?
+        // 2. Create a new workspace (from the CLI).
+        let workspace_not_found =
+            miette!("The workspace {name} does not exist within your account.");
+        self.backend
+            .get_workspace_by_name(&name)
+            .await
+            .context(workspace_not_found)
+    }
+
+    async fn validate_application(
+        &self,
+        workspace: &WorkspaceSummary,
+        name: &str,
+    ) -> Result<ApplicationDetails> {
+        // TODO: Turn this into a struct and include two hints:
+        // 1. Are you logged into the right account?
+        // 2. Create a new application (from the CLI).
+        let workspace_name = &workspace.display_name;
+        let application_not_found =
+            miette!("The application {name} does not exist within the workspace {workspace_name}.");
+        self.backend
+            .get_application_by_name(workspace.id, &name)
+            .await
+            .context(application_not_found)
     }
 
     pub fn dispatch(self) -> Result<()> {
@@ -82,14 +130,12 @@ impl Run {
             debug!("Loading workspace and application...");
             let workspace_name = self.workspace_name()?;
             let application_name = self.application_name()?;
-            let workspace = self
-                .backend
-                .get_workspace_by_name(workspace_name)
-                .await?;
+            // Validate that the application name and workspace name exists in this user's account.
+            let workspace = self.validate_workspace(&workspace_name).await?;
             let application = self
-                .backend
-                .get_application_by_name(workspace.id, application_name)
+                .validate_application(&workspace, &application_name)
                 .await?;
+
             // Now, we have to load the application's configuration
             // from the backend. We have the name of the workspace and
             // application, but we need to look up the details.
@@ -157,19 +203,3 @@ impl Run {
         Ok(meta)
     }
 }
-
-    fn application_name(&self) -> Result<&str> {
-        self.override_application_name
-            .as_deref()
-            .or(self.manifest.application.as_deref())
-            .ok_or(MissingApplication)
-    }
-
-    fn workspace_name(&self) -> Result<&str> {
-        self.override_workspace_name
-            .as_deref()
-            .or(self.manifest.workspace.as_deref())
-            .ok_or(MissingWorkspace)
-    }
-
-

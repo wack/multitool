@@ -2,7 +2,11 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::fs::FileSystem;
+use crate::fs::{
+    FileSystem,
+    wrangler::{Wrangler, WranglerFile},
+};
+use miette::Result;
 
 /// The project manifest only needs to be loaded once, so we
 /// cache it as a global singleton.
@@ -27,8 +31,23 @@ pub struct Manifest {
     config: Option<ConfigSection>,
 }
 
-use crate::fs::wrangler::{Wrangler, WranglerFile};
-use miette::Result;
+impl Manifest {
+    /// Attempts to read a config file for this project, and
+    /// returns an empty manifest file if none is found.
+    pub(crate) fn load_or_default() -> Self {
+        FileSystem::new().map_or(Self::default(), |fs| {
+            fs.project_manifest().unwrap_or_default()
+        })
+    }
+
+    pub fn workspace(&self) -> Option<&str> {
+        self.workspace.as_deref()
+    }
+
+    pub fn application(&self) -> Option<&str> {
+        self.application.as_deref()
+    }
+}
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct CloudflareConfig {
@@ -105,24 +124,6 @@ impl Default for PlatformConfig {
 pub struct AwsLambdaConfig {
     name: String,
     region: String,
-}
-
-impl Manifest {
-    /// Attempts to read a config file for this project, and
-    /// returns an empty manifest file if none is found.
-    pub(crate) fn load_or_default() -> Self {
-        FileSystem::new().map_or(Self::default(), |fs| {
-            fs.project_manifest().unwrap_or_default()
-        })
-    }
-
-    pub fn workspace(&self) -> Option<&str> {
-        self.workspace.as_deref()
-    }
-
-    pub fn application(&self) -> Option<&str> {
-        self.application.as_deref()
-    }
 }
 
 #[cfg(test)]
