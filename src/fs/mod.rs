@@ -19,6 +19,7 @@ mod file;
 /// The schema and parsing code for the Wack.toml manifest file.
 pub mod manifest;
 mod session;
+mod wrangler;
 
 /// The name of the application as used on the filesystem for XDG conventions.
 const APPLICATION_NAME: &str = "multi";
