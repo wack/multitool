@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::fs::{DirectoryType, file::StaticFile};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Wrangler {
