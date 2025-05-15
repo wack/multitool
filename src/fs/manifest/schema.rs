@@ -28,6 +28,11 @@ pub struct Manifest {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
+pub struct CloudflareConfig {
+    wrangler: bool,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct ConfigSection {
     #[serde(default)]
     monitor: MonitorConfig,
@@ -35,6 +40,8 @@ pub struct ConfigSection {
     ingress: IngressConfig,
     #[serde(default)]
     platform: PlatformConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cloudflare: Option<CloudflareConfig>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Debug)]
@@ -112,7 +119,17 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
-    use super::{AwsApiGatewayConfig, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
+    use super::{AwsApiGatewayConfig, CloudflareConfig, ConfigSection, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
+
+    #[test]
+    fn test_config_section_with_cloudflare() {
+        let config = r#"
+            cloudflare = { wrangler = true }
+        "#;
+
+        let config: ConfigSection = toml::from_str(config).unwrap();
+        assert!(config.cloudflare.unwrap().wrangler);
+    }
 
     #[test]
     fn parse_example_no_config() {
