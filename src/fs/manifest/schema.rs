@@ -28,7 +28,7 @@ pub fn project_manifest() -> &'static Manifest {
 pub struct Manifest {
     workspace: Option<String>,
     application: Option<String>,
-    config: Option<ConfigSection>,
+    config: ConfigSection,
 }
 
 impl Manifest {
@@ -59,14 +59,33 @@ impl CloudflareConfig {
         fs.load_file(WranglerFile)
     }
 }
+
+impl ConfigSection {
+    pub fn monitor(&self) -> Option<&MonitorConfig> {
+        self.monitor.as_ref()
+    }
+
+    pub fn ingress(&self) -> Option<&IngressConfig> {
+        self.ingress.as_ref()
+    }
+
+    pub fn platform(&self) -> Option<&PlatformConfig> {
+        self.platform.as_ref()
+    }
+
+    pub fn cloudflare(&self) -> Option<&CloudflareConfig> {
+        self.cloudflare.as_ref()
+    }
+}
+
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct ConfigSection {
-    #[serde(default)]
-    monitor: MonitorConfig,
-    #[serde(default)]
-    ingress: IngressConfig,
-    #[serde(default)]
-    platform: PlatformConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    monitor: Option<MonitorConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ingress: Option<IngressConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    platform: Option<PlatformConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cloudflare: Option<CloudflareConfig>,
 }
@@ -140,6 +159,7 @@ mod tests {
         "#;
 
         let config: ConfigSection = toml::from_str(config).unwrap();
+        assert!(config.cloudflare.is_some());
         assert!(config.cloudflare.unwrap().wrangler);
     }
 
@@ -152,7 +172,9 @@ application = "multitool"
 
         assert_eq!(observed.workspace, Some("wack".to_string()));
         assert_eq!(observed.application, Some("multitool".to_string()));
-        assert!(observed.config.is_none());
+        assert!(observed.config.monitor.is_none());
+        assert!(observed.config.ingress.is_none());
+        assert!(observed.config.platform.is_none());
     }
 
     #[test]
@@ -177,13 +199,17 @@ region = "us-east-2"
         assert_eq!(observed.workspace, Some("wack".to_string()));
         assert_eq!(observed.application, Some("multitool".to_string()));
 
-        let config = observed.config.expect("Config should be present");
-
         // Check monitor config
-        matches!(config.monitor, MonitorConfig::AwsCloudwatch(_));
+        matches!(
+            observed
+                .config
+                .monitor
+                .expect("Monitor config should be present"),
+            MonitorConfig::AwsCloudwatch(_)
+        );
 
         // Check ingress config
-        if let IngressConfig::AwsApiGateway(api_gateway) = config.ingress {
+        if let Some(IngressConfig::AwsApiGateway(api_gateway)) = observed.config.ingress {
             assert_eq!(api_gateway.stage_name, "foo");
             assert_eq!(api_gateway.resource_path, "bar");
             assert_eq!(api_gateway.resource_method, "baz");
@@ -194,7 +220,7 @@ region = "us-east-2"
         }
 
         // Check platform config
-        if let PlatformConfig::AwsLambda(lambda) = config.platform {
+        if let Some(PlatformConfig::AwsLambda(lambda)) = observed.config.platform {
             assert_eq!(lambda.name, "buzz");
             assert_eq!(lambda.region, "us-east-2");
         } else {
