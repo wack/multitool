@@ -3,13 +3,13 @@ use crate::fs::{DirectoryType, file::StaticFile};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Wrangler {
-    account_id: String,
+    account_id: Option<String>,
     worker: String,
 }
 
 impl Wrangler {
-    pub fn account_id(&self) -> &str {
-        &self.account_id
+    pub fn account_id(&self) -> Option<&str> {
+        self.account_id.as_deref()
     }
 
     pub fn worker(&self) -> &str {
