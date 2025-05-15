@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
 use crate::adapters::{
-    ApplicationConfig, IngressBuilder, MonitorBuilder, PlatformBuilder, RolloutMetadata,
+    ApplicationConfig, IngressBuilder, MonitorBuilder, Platform, PlatformBuilder, RolloutMetadata,
 };
 use crate::fs::{FileSystem, SessionFile, project_manifest};
-use crate::manifest::Manifest;
+use crate::manifest::{CloudflareConfig, Manifest};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
@@ -103,33 +103,35 @@ impl Run {
         let config = manifest.config();
 
         // If cloudflare config is present, other configs must be None
-        if config.cloudflare().is_some() {
-            if config.monitor().is_some()
-                || config.ingress().is_some()
-                || config.platform().is_some()
-            {
-                return Err(miette!(
-                    "When using Cloudflare configuration, monitor, ingress, and platform configurations must not be present"
-                ));
+        match config.cloudflare() {
+            Some(cloudflare) => {
+                if config.monitor().is_some()
+                    || config.ingress().is_some()
+                    || config.platform().is_some()
+                {
+                    return Err(miette!(
+                        "When using Cloudflare configuration, monitor, ingress, and platform configurations must not be present"
+                    ));
+                }
+                return self.load_platform_from_cloudflare(cloudflare);
             }
-            let cloudflare = config.cloudflare().unwrap();
-            return self.load_platform_from_cloudflare(cloudflare);
+            _ => (),
         }
 
         // Handle regular platform config
-        let platform_config = config
-            .platform()
-            .ok_or_else(|| miette!("No platform configuration found in manifest"))?;
-
-        let platform_builder = PlatformBuilder::new(platform_config);
-        platform_builder.build()
+        if let Some(platform) = config.platform() {
+            // Handle the AWS case.
+            todo!();
+        } else {
+            return Err(miette!("No platform configuration found in manifest"));
+        }
     }
 
     fn load_platform_from_cloudflare(
         &self,
         cloudflare: &CloudflareConfig,
     ) -> Result<Box<dyn Platform>> {
-        if cloudflare.wrangler {
+        if cloudflare.wrangler_enabled() {
             let fs =
                 FileSystem::new().map_err(|e| miette!("Failed to initialize filesystem: {}", e))?;
             let wrangler = cloudflare.load_wrangler(&fs)?;

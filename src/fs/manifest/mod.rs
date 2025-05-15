@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub use schema::{Manifest, project_manifest};
+pub use schema::{CloudflareConfig, Manifest, project_manifest};
 
 use super::{DirectoryType, file::StaticFile};
 

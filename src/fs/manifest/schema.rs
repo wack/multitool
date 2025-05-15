@@ -47,6 +47,10 @@ impl Manifest {
     pub fn application(&self) -> Option<&str> {
         self.application.as_deref()
     }
+
+    pub fn config(&self) -> &ConfigSection {
+        &self.config
+    }
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
@@ -57,6 +61,10 @@ pub struct CloudflareConfig {
 impl CloudflareConfig {
     pub fn load_wrangler(&self, fs: &FileSystem) -> Result<Wrangler> {
         fs.load_file(WranglerFile)
+    }
+
+    pub fn wrangler_enabled(&self) -> bool {
+        self.wrangler
     }
 }
 
@@ -163,18 +171,14 @@ mod tests {
         assert!(config.cloudflare.unwrap().wrangler);
     }
 
+    /// A `config` field is required in every manifest.
     #[test]
     fn parse_example_no_config() {
         const RAW_MANIFEST: &str = r#"workspace = "wack"
 application = "multitool"
 "#;
-        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
-
-        assert_eq!(observed.workspace, Some("wack".to_string()));
-        assert_eq!(observed.application, Some("multitool".to_string()));
-        assert!(observed.config.monitor.is_none());
-        assert!(observed.config.ingress.is_none());
-        assert!(observed.config.platform.is_none());
+        let observed = toml::from_str::<Manifest>(RAW_MANIFEST).is_err();
+        assert!(observed);
     }
 
     #[test]
