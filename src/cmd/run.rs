@@ -25,9 +25,10 @@ const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Run {
     _terminal: Terminal,
+    manifest: Manifest,
     artifact_path: PathBuf,
-    workspace_name: String,
-    application_name: String,
+    override_workspace_name: Option<String>,
+    override_application_name: Option<String>,
     backend: BackendClient,
 }
 
@@ -47,19 +48,24 @@ impl Run {
     pub fn new(terminal: Terminal, mut args: RunSubcommand) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
-        let manifest = project_manifest();
-        args.coalesce(manifest);
-        let workspace_name = args.workspace().ok_or(MissingWorkspace)?.to_owned();
-        let application_name = args.application().ok_or(MissingApplication)?.to_owned();
+        let manifest = project_manifest().clone();
         let backend = BackendClient::new(args.origin(), Some(session))?;
 
         Ok(Self {
             _terminal: terminal,
+            manifest,
             backend,
             artifact_path: args.artifact_path().as_ref().to_owned(),
-            workspace_name,
-            application_name,
+            override_workspace_name: args.workspace().clone(),
+            override_application_name: args.application().clone(),
         })
+    }
+
+    fn application_name(&self) -> Result<&str> {
+        self.override_application_name
+            .as_deref()
+            .or(self.manifest.application.as_deref())
+            .ok_or(MissingApplication)
     }
 
     pub fn dispatch(self) -> Result<()> {
@@ -74,13 +80,15 @@ impl Run {
             let artifact = LambdaZip::load(&self.artifact_path).await?;
             // We need to convert our workspace and application names into the full workspace and application object
             debug!("Loading workspace and application...");
+            let workspace_name = self.workspace_name()?;
+            let application_name = self.application_name()?;
             let workspace = self
                 .backend
-                .get_workspace_by_name(&self.workspace_name)
+                .get_workspace_by_name(workspace_name)
                 .await?;
             let application = self
                 .backend
-                .get_application_by_name(workspace.id, &self.application_name)
+                .get_application_by_name(workspace.id, application_name)
                 .await?;
             // Now, we have to load the application's configuration
             // from the backend. We have the name of the workspace and
@@ -149,3 +157,19 @@ impl Run {
         Ok(meta)
     }
 }
+
+    fn application_name(&self) -> Result<&str> {
+        self.override_application_name
+            .as_deref()
+            .or(self.manifest.application.as_deref())
+            .ok_or(MissingApplication)
+    }
+
+    fn workspace_name(&self) -> Result<&str> {
+        self.override_workspace_name
+            .as_deref()
+            .or(self.manifest.workspace.as_deref())
+            .ok_or(MissingWorkspace)
+    }
+
+
