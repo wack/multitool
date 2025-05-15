@@ -127,7 +127,10 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
-    use super::{AwsApiGatewayConfig, CloudflareConfig, ConfigSection, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
+    use super::{
+        AwsApiGatewayConfig, CloudflareConfig, ConfigSection, IngressConfig, Manifest,
+        MonitorConfig, PlatformConfig,
+    };
 
     #[test]
     fn test_config_section_with_cloudflare() {
