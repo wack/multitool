@@ -200,7 +200,13 @@ region = "us-east-2"
         assert_eq!(observed.application, Some("multitool".to_string()));
 
         // Check monitor config
-        matches!(observed.config.monitor.expect("Monitor config should be present"), MonitorConfig::AwsCloudwatch(_));
+        matches!(
+            observed
+                .config
+                .monitor
+                .expect("Monitor config should be present"),
+            MonitorConfig::AwsCloudwatch(_)
+        );
 
         // Check ingress config
         if let Some(IngressConfig::AwsApiGateway(api_gateway)) = observed.config.ingress {

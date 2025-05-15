@@ -101,11 +101,16 @@ impl Run {
 
     fn load_platform(&self, manifest: &Manifest) -> Result<Box<dyn Platform>> {
         let config = manifest.config();
-        
+
         // If cloudflare config is present, other configs must be None
         if config.cloudflare().is_some() {
-            if config.monitor().is_some() || config.ingress().is_some() || config.platform().is_some() {
-                return Err(miette!("When using Cloudflare configuration, monitor, ingress, and platform configurations must not be present"));
+            if config.monitor().is_some()
+                || config.ingress().is_some()
+                || config.platform().is_some()
+            {
+                return Err(miette!(
+                    "When using Cloudflare configuration, monitor, ingress, and platform configurations must not be present"
+                ));
             }
             let cloudflare = config.cloudflare().unwrap();
             return self.load_platform_from_cloudflare(cloudflare);
@@ -120,9 +125,13 @@ impl Run {
         platform_builder.build()
     }
 
-    fn load_platform_from_cloudflare(&self, cloudflare: &CloudflareConfig) -> Result<Box<dyn Platform>> {
+    fn load_platform_from_cloudflare(
+        &self,
+        cloudflare: &CloudflareConfig,
+    ) -> Result<Box<dyn Platform>> {
         if cloudflare.wrangler {
-            let fs = FileSystem::new().map_err(|e| miette!("Failed to initialize filesystem: {}", e))?;
+            let fs =
+                FileSystem::new().map_err(|e| miette!("Failed to initialize filesystem: {}", e))?;
             let wrangler = cloudflare.load_wrangler(&fs)?;
             // TODO: Create and return Cloudflare platform using wrangler config
             todo!("Cloudflare platform creation not yet implemented")
