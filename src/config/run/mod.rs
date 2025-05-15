@@ -19,9 +19,25 @@ pub struct RunSubcommand {
 
     #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]
     origin: Option<String>,
+
+    /// The Cloudflare account ID to use when deploying to Workers.
+    #[arg(long, env = "CLOUDFLARE_ACCOUNT_ID")]
+    cloudflare_account_id: Option<String>,
+
+    /// The name of the Cloudflare Worker to deploy.
+    #[arg(long, env = "CLOUDFLARE_WORKER_NAME")]
+    cloudflare_worker_name: Option<String>,
 }
 
 impl RunSubcommand {
+    pub fn cloudflare_account_id(&self) -> Option<&str> {
+        self.cloudflare_account_id.as_deref()
+    }
+
+    pub fn cloudflare_worker_name(&self) -> Option<&str> {
+        self.cloudflare_worker_name.as_deref()
+    }
+
     pub fn workspace(&self) -> Option<&str> {
         self.workspace.as_deref()
     }

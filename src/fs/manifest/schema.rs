@@ -27,11 +27,19 @@ pub struct Manifest {
     config: Option<ConfigSection>,
 }
 
+use crate::fs::wrangler::{Wrangler, WranglerFile};
+use miette::Result;
+
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct CloudflareConfig {
     wrangler: bool,
 }
 
+impl CloudflareConfig {
+    pub fn load_wrangler(&self, fs: &FileSystem) -> Result<Wrangler> {
+        fs.load_file(WranglerFile)
+    }
+}
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct ConfigSection {
     #[serde(default)]
