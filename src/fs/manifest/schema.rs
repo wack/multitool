@@ -2,7 +2,11 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::fs::FileSystem;
+use crate::fs::{
+    FileSystem,
+    wrangler::{Wrangler, WranglerFile},
+};
+use miette::Result;
 
 /// The project manifest only needs to be loaded once, so we
 /// cache it as a global singleton.
@@ -24,11 +28,30 @@ pub fn project_manifest() -> &'static Manifest {
 pub struct Manifest {
     workspace: Option<String>,
     application: Option<String>,
-    config: Option<ConfigSection>,
+    config: ConfigSection,
 }
 
-use crate::fs::wrangler::{Wrangler, WranglerFile};
-use miette::Result;
+impl Manifest {
+    /// Attempts to read a config file for this project, and
+    /// returns an empty manifest file if none is found.
+    pub(crate) fn load_or_default() -> Self {
+        FileSystem::new().map_or(Self::default(), |fs| {
+            fs.project_manifest().unwrap_or_default()
+        })
+    }
+
+    pub fn workspace(&self) -> Option<&str> {
+        self.workspace.as_deref()
+    }
+
+    pub fn application(&self) -> Option<&str> {
+        self.application.as_deref()
+    }
+
+    pub fn config(&self) -> &ConfigSection {
+        &self.config
+    }
+}
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct CloudflareConfig {
@@ -39,15 +62,38 @@ impl CloudflareConfig {
     pub fn load_wrangler(&self, fs: &FileSystem) -> Result<Wrangler> {
         fs.load_file(WranglerFile)
     }
+
+    pub fn wrangler_enabled(&self) -> bool {
+        self.wrangler
+    }
 }
+
+impl ConfigSection {
+    pub fn monitor(&self) -> Option<&MonitorConfig> {
+        self.monitor.as_ref()
+    }
+
+    pub fn ingress(&self) -> Option<&IngressConfig> {
+        self.ingress.as_ref()
+    }
+
+    pub fn platform(&self) -> Option<&PlatformConfig> {
+        self.platform.as_ref()
+    }
+
+    pub fn cloudflare(&self) -> Option<&CloudflareConfig> {
+        self.cloudflare.as_ref()
+    }
+}
+
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct ConfigSection {
-    #[serde(default)]
-    monitor: MonitorConfig,
-    #[serde(default)]
-    ingress: IngressConfig,
-    #[serde(default)]
-    platform: PlatformConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    monitor: Option<MonitorConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ingress: Option<IngressConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    platform: Option<PlatformConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cloudflare: Option<CloudflareConfig>,
 }
@@ -107,24 +153,6 @@ pub struct AwsLambdaConfig {
     region: String,
 }
 
-impl Manifest {
-    /// Attempts to read a config file for this project, and
-    /// returns an empty manifest file if none is found.
-    pub(crate) fn load_or_default() -> Self {
-        FileSystem::new().map_or(Self::default(), |fs| {
-            fs.project_manifest().unwrap_or_default()
-        })
-    }
-
-    pub fn workspace(&self) -> Option<&str> {
-        self.workspace.as_deref()
-    }
-
-    pub fn application(&self) -> Option<&str> {
-        self.application.as_deref()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -139,19 +167,18 @@ mod tests {
         "#;
 
         let config: ConfigSection = toml::from_str(config).unwrap();
+        assert!(config.cloudflare.is_some());
         assert!(config.cloudflare.unwrap().wrangler);
     }
 
+    /// A `config` field is required in every manifest.
     #[test]
     fn parse_example_no_config() {
         const RAW_MANIFEST: &str = r#"workspace = "wack"
 application = "multitool"
 "#;
-        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
-
-        assert_eq!(observed.workspace, Some("wack".to_string()));
-        assert_eq!(observed.application, Some("multitool".to_string()));
-        assert!(observed.config.is_none());
+        let observed = toml::from_str::<Manifest>(RAW_MANIFEST).is_err();
+        assert!(observed);
     }
 
     #[test]
@@ -176,13 +203,17 @@ region = "us-east-2"
         assert_eq!(observed.workspace, Some("wack".to_string()));
         assert_eq!(observed.application, Some("multitool".to_string()));
 
-        let config = observed.config.expect("Config should be present");
-
         // Check monitor config
-        matches!(config.monitor, MonitorConfig::AwsCloudwatch(_));
+        matches!(
+            observed
+                .config
+                .monitor
+                .expect("Monitor config should be present"),
+            MonitorConfig::AwsCloudwatch(_)
+        );
 
         // Check ingress config
-        if let IngressConfig::AwsApiGateway(api_gateway) = config.ingress {
+        if let Some(IngressConfig::AwsApiGateway(api_gateway)) = observed.config.ingress {
             assert_eq!(api_gateway.stage_name, "foo");
             assert_eq!(api_gateway.resource_path, "bar");
             assert_eq!(api_gateway.resource_method, "baz");
@@ -193,7 +224,7 @@ region = "us-east-2"
         }
 
         // Check platform config
-        if let PlatformConfig::AwsLambda(lambda) = config.platform {
+        if let Some(PlatformConfig::AwsLambda(lambda)) = observed.config.platform {
             assert_eq!(lambda.name, "buzz");
             assert_eq!(lambda.region, "us-east-2");
         } else {
