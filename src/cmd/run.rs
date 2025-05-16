@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
 use crate::adapters::{
-    ApplicationConfig, BoxedPlatform, IngressBuilder, MonitorBuilder, Platform, PlatformBuilder,
+    ApplicationConfig, BoxedIngress, BoxedMonitor, BoxedPlatform, Platform, PlatformBuilder,
     RolloutMetadata,
 };
 use crate::fs::{FileSystem, SessionFile, project_manifest};
@@ -14,6 +14,7 @@ use crate::{
 use miette::{Context, Diagnostic, Result, miette};
 use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
+use tokio::join;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
@@ -105,8 +106,16 @@ impl Run {
             .context(workspace_not_found)
     }
 
-    fn load_platform(&self, manifest: &Manifest) -> Result<BoxedPlatform> {
+    async fn load_platform(&self, manifest: &Manifest) -> Result<BoxedPlatform> {
         manifest.load_platform(&self.args)
+    }
+
+    async fn load_ingress(&self, manifest: &Manifest) -> Result<BoxedIngress> {
+        manifest.load_ingress(&self.args).await
+    }
+
+    async fn load_monitor(&self, manifest: &Manifest) -> Result<BoxedMonitor> {
+        manifest.load_monitor(&self.args).await
     }
 
     async fn validate_application(
@@ -150,14 +159,12 @@ impl Run {
             // from the backend. We have the name of the workspace and
             // application, but we need to look up the details.
             debug!("Loading application conf...");
-            let conf = ApplicationConfig {
-                platform: PlatformBuilder::new(*application.platform, artifact)
-                    .build()
-                    .await,
-                ingress: IngressBuilder::new(*application.ingress).build().await,
-                monitor: MonitorBuilder::new(*application.monitor).build().await,
-            };
-            let platform = self.load_platform(&self.manifest)?;
+            let (platform_result, ingress_result, monitor_result) = join!(
+                self.load_platform(&self.manifest),
+                self.load_ingress(&self.manifest),
+                self.load_monitor(&self.manifest),
+            );
+            let (platform, ingress, monitor) = (platform_result?, ingress_result?, monitor_result?);
 
             // Create a new rollout.
             let metadata = self.create_rollout(workspace.id, application.id).await?;
@@ -166,8 +173,8 @@ impl Run {
             debug!("Building controller...");
             let controller = ControllerSubsystem::builder()
                 .backend(self.backend)
-                .monitor(conf.monitor)
-                .ingress(conf.ingress)
+                .monitor(monitor)
+                .ingress(ingress)
                 .platform(platform)
                 .meta(metadata)
                 .build();

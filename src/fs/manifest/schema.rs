@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    adapters::{BoxedPlatform, CloudflareClient, CloudflareDeployment, Platform},
+    adapters::{
+        AwsApiGateway, BoxedIngress, BoxedMonitor, BoxedPlatform, CloudFlareMonitor,
+        CloudflareClient, CloudflareDeployment, Platform,
+    },
     config::RunSubcommand,
     fs::{
         FileSystem,
@@ -33,6 +36,14 @@ struct CloudflareMutuallyExclusiveConfig;
 #[derive(Error, Debug, Diagnostic)]
 #[error("No platform config found.")]
 struct MissingPlatformConfig;
+
+#[derive(Error, Debug, Diagnostic)]
+#[error("No ingress config found.")]
+struct MissingIngressConfig;
+
+#[derive(Error, Debug, Diagnostic)]
+#[error("No monitor config found.")]
+struct MissingMonitorConfig;
 
 /// With the expectation that we will likely be making breaking changes,
 /// we version the manifest schema (like how Docker Compose files come
@@ -67,6 +78,14 @@ impl Manifest {
     pub(crate) fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         self.config.load_platform(args)
     }
+
+    pub(crate) async fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
+        self.config.load_ingress(args).await
+    }
+
+    pub(crate) async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+        self.config.load_monitor(args).await
+    }
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
@@ -82,19 +101,19 @@ pub struct ConfigSection {
 }
 
 impl ConfigSection {
-    pub fn monitor(&self) -> Option<&MonitorConfig> {
+    fn monitor(&self) -> Option<&MonitorConfig> {
         self.monitor.as_ref()
     }
 
-    pub fn ingress(&self) -> Option<&IngressConfig> {
+    fn ingress(&self) -> Option<&IngressConfig> {
         self.ingress.as_ref()
     }
 
-    pub fn platform(&self) -> Option<&PlatformConfig> {
+    fn platform(&self) -> Option<&PlatformConfig> {
         self.platform.as_ref()
     }
 
-    pub fn cloudflare(&self) -> Option<&CloudflareConfig> {
+    fn cloudflare(&self) -> Option<&CloudflareConfig> {
         self.cloudflare.as_ref()
     }
 
@@ -104,8 +123,30 @@ impl ConfigSection {
         match (&self.cloudflare, &self.platform) {
             (Some(_), Some(_)) => Err(CloudflareMutuallyExclusiveConfig.into()),
             (None, None) => Err(MissingPlatformConfig.into()),
-            (None, Some(platform)) => platform.load_platform(),
+            (None, Some(platform)) => platform.load_platform(args),
             (Some(cloudflare), None) => cloudflare.load_platform(args),
+        }
+    }
+
+    async fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
+        // Having cloudflare configured is mutually exclusive with having
+        // ingress configured. Error if both are set.
+        match (&self.cloudflare, &self.ingress) {
+            (Some(_), Some(_)) => Err(CloudflareMutuallyExclusiveConfig.into()),
+            (None, None) => Err(MissingIngressConfig.into()),
+            (None, Some(ingress)) => ingress.load_ingress(args).await,
+            (Some(cloudflare), None) => cloudflare.load_ingress(args),
+        }
+    }
+
+    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+        // Having cloudflare configured is mutually exclusive with having
+        // ingress configured. Error if both are set.
+        match (&self.cloudflare, &self.monitor) {
+            (Some(_), Some(_)) => Err(CloudflareMutuallyExclusiveConfig.into()),
+            (None, None) => Err(MissingMonitorConfig.into()),
+            (None, Some(monitor)) => monitor.load_monitor(args).await,
+            (Some(cloudflare), None) => cloudflare.load_monitor(args),
         }
     }
 }
@@ -114,6 +155,14 @@ impl ConfigSection {
 #[serde(rename_all = "kebab-case")]
 pub enum MonitorConfig {
     AwsCloudwatch(AwsCloudwatch),
+}
+
+impl MonitorConfig {
+    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+        match self {
+            MonitorConfig::AwsCloudwatch(aws_cloudwatch) => aws_cloudwatch.load_monitor(args).await,
+        }
+    }
 }
 
 impl Default for MonitorConfig {
@@ -125,10 +174,24 @@ impl Default for MonitorConfig {
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct AwsCloudwatch {}
 
+impl AwsCloudwatch {
+    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+        todo!();
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub enum IngressConfig {
     AwsApiGateway(AwsApiGatewayConfig),
+}
+
+impl IngressConfig {
+    async fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
+        match self {
+            IngressConfig::AwsApiGateway(config) => config.load_ingress(args).await,
+        }
+    }
 }
 
 impl Default for IngressConfig {
@@ -147,6 +210,20 @@ pub struct AwsApiGatewayConfig {
     region: String,
 }
 
+impl AwsApiGatewayConfig {
+    async fn load_ingress(&self, _: &RunSubcommand) -> Result<BoxedIngress> {
+        let ingress = AwsApiGateway::builder()
+            .gateway_name(self.gateway_name.clone())
+            .region(self.region.clone())
+            .stage_name(self.stage_name.clone())
+            .resource_path(self.resource_path.clone())
+            .resource_method(self.resource_method.clone())
+            .build()
+            .await;
+        Ok(Box::new(ingress))
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub enum PlatformConfig {
@@ -154,9 +231,9 @@ pub enum PlatformConfig {
 }
 
 impl PlatformConfig {
-    pub fn load_platform(&self) -> Result<BoxedPlatform> {
+    pub fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         match self {
-            PlatformConfig::AwsLambda(aws_lambda_config) => aws_lambda_config.load_platform(),
+            PlatformConfig::AwsLambda(aws_lambda_config) => aws_lambda_config.load_platform(args),
         }
     }
 }
@@ -188,31 +265,74 @@ impl CloudflareConfig {
         self.wrangler
     }
 
-    fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
-        let fs = FileSystem::new()?;
-        // First, let's check and make sure we have an API token.
-        let api_token = args.cloudflare_api_token().map(ToString::to_string).ok_or_else(|| miette!("No Cloudflare API token was provided. Either set the environment variable CLOUDFLARE_API_TOKEN, or provide it as a CLI flag."))?;
-        // Now, load in the Wrangler file and fallback to its values, if enabled.
-        let mut wranger_worker_name = None;
-        let mut wranger_account_id = None;
-        if self.wrangler_enabled() {
-            let wrangler = self.load_wrangler(&fs)?;
-            wranger_worker_name = Some(wrangler.worker().to_owned());
-            wranger_account_id = wrangler.account_id().map(ToString::to_string);
-        }
+    fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
+        // This function requires https://github.com/wack/multitool/pull/95
+        // to be merged before it can be implemented.
+        todo!();
+    }
 
-        // Next, get the name of the worker and the account id.
+    fn load_api_token(&self, args: &RunSubcommand) -> Result<String> {
+        args
+            .cloudflare_api_token()
+            .map(ToString::to_string)
+            .ok_or_else(|| miette!("No Cloudflare API token was provided. Either set the environment variable CLOUDFLARE_API_TOKEN, or provide it as a CLI flag."))
+    }
+
+    fn load_worker_name(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
+        let wranger_worker_name = if self.wrangler_enabled() {
+            let wrangler = self.load_wrangler(&fs)?;
+            Some(wrangler.worker().to_owned())
+        } else {
+            None
+        };
         let worker_name = args.cloudflare_worker_name().map(ToString::to_string).or_else(|| self.worker_name.clone())
             .or(wranger_worker_name)
             .ok_or_else(
                 || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker to deploy to.")
             )?;
-        let account_id = args.cloudflare_account_id().map(ToString::to_string).or_else(|| self.account_id.clone())
-        .or(wranger_account_id)
-        .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file."
-        ))?;
+        Ok(worker_name)
+    }
 
+    fn load_account_id(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
+        let wranger_account_id = if self.wrangler_enabled() {
+            let wrangler = self.load_wrangler(fs)?;
+            wrangler.account_id().map(ToString::to_string)
+        } else {
+            None
+        };
+        let account_id = args.cloudflare_worker_name().map(ToString::to_string).or_else(|| self.worker_name.clone())
+            .or(wranger_account_id)
+            .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file."))?;
+        Ok(account_id)
+    }
+
+    fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+        let fs = FileSystem::new()?;
+        // First, let's check and make sure we have an API token.
+        let api_token = self.load_api_token(args)?;
+        let account_id = self.load_account_id(&fs, args)?;
+        let worker_name = self.load_worker_name(&fs, args)?;
         let client = CloudflareClient::new(&api_token);
+        // TODO: How do we get the values of `control_version_id` and `canary_version_id`?
+        // Aren't these supposed to be passed in at a later time?
+        let monitor = CloudFlareMonitor::new(
+            client,
+            account_id,
+            worker_name,
+            "".to_owned(),
+            "".to_owned(),
+        );
+        Ok(Box::new(monitor))
+    }
+
+    fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
+        let fs = FileSystem::new()?;
+        // First, let's check and make sure we have an API token.
+        let api_token = self.load_api_token(args)?;
+        let account_id = self.load_account_id(&fs, args)?;
+        let worker_name = self.load_worker_name(&fs, args)?;
+        let client = CloudflareClient::new(&api_token);
+
         Ok(Box::new(CloudflareDeployment::new(
             client,
             account_id,
@@ -228,17 +348,14 @@ pub struct AwsLambdaConfig {
 }
 
 impl AwsLambdaConfig {
-    fn load_platform(&self) -> Result<BoxedPlatform> {
+    fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         todo!();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AwsApiGatewayConfig, CloudflareConfig, ConfigSection, IngressConfig, Manifest,
-        MonitorConfig, PlatformConfig,
-    };
+    use super::{ConfigSection, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
 
     #[test]
     fn test_config_section_with_cloudflare() {
