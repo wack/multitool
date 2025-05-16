@@ -1,12 +1,9 @@
 use std::path::PathBuf;
 
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
-use crate::adapters::{
-    ApplicationConfig, BoxedIngress, BoxedMonitor, BoxedPlatform, Platform, PlatformBuilder,
-    RolloutMetadata,
-};
+use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::fs::{FileSystem, SessionFile, project_manifest};
-use crate::manifest::{CloudflareConfig, Manifest};
+use crate::manifest::Manifest;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
@@ -107,7 +104,7 @@ impl Run {
     }
 
     async fn load_platform(&self, manifest: &Manifest) -> Result<BoxedPlatform> {
-        manifest.load_platform(&self.args)
+        manifest.load_platform(&self.args).await
     }
 
     async fn load_ingress(&self, manifest: &Manifest) -> Result<BoxedIngress> {

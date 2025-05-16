@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::{
     adapters::{
         AwsApiGateway, BoxedIngress, BoxedMonitor, BoxedPlatform, CloudFlareMonitor,
-        CloudflareClient, CloudflareDeployment, Platform,
+        CloudflareClient, CloudflareDeployment, LambdaPlatform, Platform,
     },
     config::RunSubcommand,
     fs::{
@@ -75,8 +75,8 @@ impl Manifest {
         self.application.as_deref()
     }
 
-    pub(crate) fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
-        self.config.load_platform(args)
+    pub(crate) async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
+        self.config.load_platform(args).await
     }
 
     pub(crate) async fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
@@ -117,13 +117,13 @@ impl ConfigSection {
         self.cloudflare.as_ref()
     }
 
-    pub(crate) fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
+    async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         // Having cloudflare configured is mutually exclusive with having
         // platform configured. Error if both are set.
         match (&self.cloudflare, &self.platform) {
             (Some(_), Some(_)) => Err(CloudflareMutuallyExclusiveConfig.into()),
             (None, None) => Err(MissingPlatformConfig.into()),
-            (None, Some(platform)) => platform.load_platform(args),
+            (None, Some(platform)) => platform.load_platform(args).await,
             (Some(cloudflare), None) => cloudflare.load_platform(args),
         }
     }
@@ -231,9 +231,9 @@ pub enum PlatformConfig {
 }
 
 impl PlatformConfig {
-    pub fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
+    async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         match self {
-            PlatformConfig::AwsLambda(aws_lambda_config) => aws_lambda_config.load_platform(args),
+            PlatformConfig::AwsLambda(config) => config.load_platform(args).await,
         }
     }
 }
@@ -348,8 +348,18 @@ pub struct AwsLambdaConfig {
 }
 
 impl AwsLambdaConfig {
-    fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
-        todo!();
+    async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
+        let region: String = args
+            .aws_region()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.region.clone());
+        let platform = LambdaPlatform::builder()
+            .name(self.name.clone())
+            .region(region)
+            .artifact(todo!("Pass artifact down once you load it."))
+            .build()
+            .await;
+        Ok(Box::new(platform))
     }
 }
 
