@@ -29,6 +29,9 @@ pub struct RunSubcommand {
     /// The name of the Cloudflare Worker to deploy.
     #[arg(long, env = "CLOUDFLARE_API_TOKEN")]
     cloudflare_api_token: Option<String>,
+    /// The AWS region to deploy into.
+    #[arg(long, env = "AWS_REGION")]
+    aws_region: Option<String>,
 }
 
 impl RunSubcommand {
@@ -42,6 +45,10 @@ impl RunSubcommand {
 
     pub fn cloudflare_api_token(&self) -> Option<&str> {
         self.cloudflare_api_token.as_deref()
+    }
+
+    pub fn aws_region(&self) -> Option<&str> {
+        self.aws_region.as_deref()
     }
 
     pub fn workspace(&self) -> Option<&str> {
