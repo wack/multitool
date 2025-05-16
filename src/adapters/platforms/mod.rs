@@ -6,7 +6,7 @@ use crate::{Shutdownable, subsystems::ShutdownResult};
 pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
 
 pub(crate) use builder::PlatformBuilder;
-pub(crate) use cloudflare::Deployment;
+pub(crate) use cloudflare::Deployment as CloudflareDeployment;
 
 #[automock]
 #[async_trait]

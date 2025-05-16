@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
 use crate::adapters::{
-    ApplicationConfig, IngressBuilder, MonitorBuilder, Platform, PlatformBuilder, RolloutMetadata,
+    ApplicationConfig, BoxedPlatform, IngressBuilder, MonitorBuilder, Platform, PlatformBuilder,
+    RolloutMetadata,
 };
 use crate::fs::{FileSystem, SessionFile, project_manifest};
 use crate::manifest::{CloudflareConfig, Manifest};
@@ -32,6 +33,7 @@ pub struct Run {
     override_workspace_name: Option<String>,
     override_application_name: Option<String>,
     backend: BackendClient,
+    args: RunSubcommand,
 }
 
 #[derive(Error, Debug, Diagnostic)]
@@ -47,19 +49,23 @@ struct MissingWorkspace;
 struct MissingApplication;
 
 impl Run {
-    pub fn new(terminal: Terminal, mut args: RunSubcommand) -> Result<Self> {
+    pub fn new(terminal: Terminal, args: RunSubcommand) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
         let manifest = project_manifest().clone();
         let backend = BackendClient::new(args.origin(), Some(session))?;
+        let artifact_path = args.artifact_path().as_ref().to_owned();
+        let override_workspace_name = args.workspace().map(ToString::to_string);
+        let override_application_name = args.application().map(ToString::to_string);
 
         Ok(Self {
+            args,
             _terminal: terminal,
             manifest,
             backend,
-            artifact_path: args.artifact_path().as_ref().to_owned(),
-            override_workspace_name: args.workspace().map(ToString::to_string),
-            override_application_name: args.application().map(ToString::to_string),
+            artifact_path,
+            override_workspace_name,
+            override_application_name,
         })
     }
 
@@ -99,47 +105,8 @@ impl Run {
             .context(workspace_not_found)
     }
 
-    fn load_platform(&self, manifest: &Manifest) -> Result<Box<dyn Platform>> {
-        let config = manifest.config();
-
-        // If cloudflare config is present, other configs must be None
-        match config.cloudflare() {
-            Some(cloudflare) => {
-                if config.monitor().is_some()
-                    || config.ingress().is_some()
-                    || config.platform().is_some()
-                {
-                    return Err(miette!(
-                        "When using Cloudflare configuration, monitor, ingress, and platform configurations must not be present"
-                    ));
-                }
-                return self.load_platform_from_cloudflare(cloudflare);
-            }
-            _ => (),
-        }
-
-        // Handle regular platform config
-        if let Some(platform) = config.platform() {
-            // Handle the AWS case.
-            todo!();
-        } else {
-            return Err(miette!("No platform configuration found in manifest"));
-        }
-    }
-
-    fn load_platform_from_cloudflare(
-        &self,
-        cloudflare: &CloudflareConfig,
-    ) -> Result<Box<dyn Platform>> {
-        if cloudflare.wrangler_enabled() {
-            let fs =
-                FileSystem::new().map_err(|e| miette!("Failed to initialize filesystem: {}", e))?;
-            let wrangler = cloudflare.load_wrangler(&fs)?;
-            // TODO: Create and return Cloudflare platform using wrangler config
-            todo!("Cloudflare platform creation not yet implemented")
-        } else {
-            Err(miette!("Cloudflare configuration requires wrangler = true"))
-        }
+    fn load_platform(&self, manifest: &Manifest) -> Result<BoxedPlatform> {
+        manifest.load_platform(&self.args)
     }
 
     async fn validate_application(
@@ -190,6 +157,7 @@ impl Run {
                 ingress: IngressBuilder::new(*application.ingress).build().await,
                 monitor: MonitorBuilder::new(*application.monitor).build().await,
             };
+            let platform = self.load_platform(&self.manifest)?;
 
             // Create a new rollout.
             let metadata = self.create_rollout(workspace.id, application.id).await?;
@@ -200,7 +168,7 @@ impl Run {
                 .backend(self.backend)
                 .monitor(conf.monitor)
                 .ingress(conf.ingress)
-                .platform(conf.platform)
+                .platform(platform)
                 .meta(metadata)
                 .build();
 

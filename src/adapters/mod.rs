@@ -1,6 +1,6 @@
 pub use backend::{ApplicationConfig, BackendClient};
 pub(crate) use backend::{LockedState, RolloutMetadata};
-pub use cloudflare::CloudFlareClient;
+pub use cloudflare::CloudflareClient;
 
 pub use ingresses::*;
 pub use monitors::*;

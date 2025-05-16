@@ -42,7 +42,7 @@ fn init_url() -> Url {
 }
 
 #[derive(Clone)]
-pub struct CloudFlareClient {
+pub struct CloudflareClient {
     client: Client,
 }
 
@@ -61,7 +61,7 @@ struct CloudFlareDeployment {
     id: String,
 }
 
-impl CloudFlareClient {
+impl CloudflareClient {
     pub fn new(token: &str) -> Self {
         // TODO: Add a timeout.
         let mut default_headers = HeaderMap::new();
