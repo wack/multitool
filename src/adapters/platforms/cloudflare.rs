@@ -9,11 +9,17 @@ use miette::Result;
 pub struct Deployment {
     // TODO
     client: Client,
+    worker_name: String,
+    account_id: String,
 }
 
 impl Deployment {
-    pub fn new(client: Client) -> Self {
-        Self { client }
+    pub fn new(client: Client, account_id: String, worker_name: String) -> Self {
+        Self {
+            client,
+            account_id,
+            worker_name,
+        }
     }
 }
 

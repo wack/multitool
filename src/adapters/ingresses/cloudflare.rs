@@ -1,12 +1,5 @@
 use crate::{
-    Shutdownable, WholePercent,
-    adapters::{
-        CloudflareClient as Client,
-        cloudflare::deployments::{
-            CreateDeploymentRequest, DeploymentStrategy, DeploymentVersionConfig,
-        },
-    },
-    subsystems::ShutdownResult,
+    Shutdownable, WholePercent, adapters::CloudflareClient as Client, subsystems::ShutdownResult,
 };
 
 use super::Ingress;

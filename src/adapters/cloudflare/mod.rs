@@ -21,6 +21,21 @@ pub struct CloudflareClient {
     client: Client,
 }
 
+#[derive(Deserialize)]
+struct CloudFlareDeploymentResponse {
+    result: CloudFlareDeploymentResult,
+}
+
+#[derive(Deserialize)]
+struct CloudFlareDeploymentResult {
+    deployments: Vec<CloudFlareDeployment>,
+}
+
+#[derive(Deserialize)]
+struct CloudFlareDeployment {
+    id: String,
+}
+
 impl CloudflareClient {
     pub fn new(token: &str) -> Self {
         // TODO: Add a timeout.
