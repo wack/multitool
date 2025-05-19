@@ -9,7 +9,7 @@ use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
 use miette::{Context, Diagnostic, Result, miette};
-use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
+use multitool_sdk::models::{ApplicationConfig, ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
 use tokio::join;
 use tokio::runtime::Runtime;
@@ -64,6 +64,71 @@ impl Run {
             artifact_path,
             override_workspace_name,
             override_application_name,
+        })
+    }
+
+    pub fn dispatch(self) -> Result<()> {
+        info!("Starting MultiTool!");
+        let rt = Runtime::new().unwrap();
+        let _guard = rt.enter();
+        rt.block_on(async {
+            // First, we have to load the artifact.
+            // This lets us fail fast in the case where the artifact
+            // doesn't exist or we don't have permission to read the file.
+            debug!("Loading the lambda artifact...");
+            let artifact = LambdaZip::load(&self.artifact_path).await?;
+            // We need to convert our workspace and application names into the full workspace and application object
+            debug!("Loading workspace and application...");
+            let workspace_name = self.workspace_name()?;
+            let application_name = self.application_name()?;
+            // Validate that the application name and workspace name exists in this user's account.
+            let workspace = self.validate_workspace(&workspace_name).await?;
+            let application = self
+                .validate_application(&workspace, &application_name)
+                .await?;
+
+            // Now, we have to laod the application's configuration.
+            // We use values from CLI flags, the environment, and the
+            // manifest to build a platform, ingress, and monitor,
+            // validing the configuration as we go.
+            debug!("Loading application conf...");
+            let (platform_result, ingress_result, monitor_result) = join!(
+                self.load_platform(&self.manifest),
+                self.load_ingress(&self.manifest),
+                self.load_monitor(&self.manifest),
+            );
+            let (platform, ingress, monitor) = (platform_result?, ingress_result?, monitor_result?);
+            // Looks good! Now, let's build the SDK's representation of config.
+            // Using this config, we can create a new rollout.
+            let rollout_config: ApplicationConfig = ApplicationConfig::try_from(&self)?;
+
+            // Create a new rollout.
+            let metadata = self.create_rollout(workspace.id, application.id).await?;
+
+            // Build the ControllerSubsystem using the boxed objects.
+            debug!("Building controller...");
+            let controller = ControllerSubsystem::builder()
+                .backend(self.backend)
+                .monitor(monitor)
+                .ingress(ingress)
+                .platform(platform)
+                .meta(metadata)
+                .build();
+
+            info!("Starting the rollout...");
+
+            // Let's capture the shutdown signal from the OS.
+            Toplevel::new(|s| async move {
+                // • Start the action listener subsystem.
+                s.start(SubsystemBuilder::new(
+                    CONTROLLER_SUBSYSTEM_NAME,
+                    controller.into_subsystem(),
+                ));
+            })
+            .catch_signals()
+            .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
+            .await
+            .map_err(Into::into)
         })
     }
 
@@ -132,67 +197,6 @@ impl Run {
             .context(application_not_found)
     }
 
-    pub fn dispatch(self) -> Result<()> {
-        info!("Starting MultiTool!");
-        let rt = Runtime::new().unwrap();
-        let _guard = rt.enter();
-        rt.block_on(async {
-            // First, we have to load the artifact.
-            // This lets us fail fast in the case where the artifact
-            // doesn't exist or we don't have permission to read the file.
-            debug!("Loading the lambda artifact...");
-            let artifact = LambdaZip::load(&self.artifact_path).await?;
-            // We need to convert our workspace and application names into the full workspace and application object
-            debug!("Loading workspace and application...");
-            let workspace_name = self.workspace_name()?;
-            let application_name = self.application_name()?;
-            // Validate that the application name and workspace name exists in this user's account.
-            let workspace = self.validate_workspace(&workspace_name).await?;
-            let application = self
-                .validate_application(&workspace, &application_name)
-                .await?;
-
-            // Now, we have to load the application's configuration
-            // from the backend. We have the name of the workspace and
-            // application, but we need to look up the details.
-            debug!("Loading application conf...");
-            let (platform_result, ingress_result, monitor_result) = join!(
-                self.load_platform(&self.manifest),
-                self.load_ingress(&self.manifest),
-                self.load_monitor(&self.manifest),
-            );
-            let (platform, ingress, monitor) = (platform_result?, ingress_result?, monitor_result?);
-
-            // Create a new rollout.
-            let metadata = self.create_rollout(workspace.id, application.id).await?;
-
-            // Build the ControllerSubsystem using the boxed objects.
-            debug!("Building controller...");
-            let controller = ControllerSubsystem::builder()
-                .backend(self.backend)
-                .monitor(monitor)
-                .ingress(ingress)
-                .platform(platform)
-                .meta(metadata)
-                .build();
-
-            info!("Starting the rollout...");
-
-            // Let's capture the shutdown signal from the OS.
-            Toplevel::new(|s| async move {
-                // • Start the action listener subsystem.
-                s.start(SubsystemBuilder::new(
-                    CONTROLLER_SUBSYSTEM_NAME,
-                    controller.into_subsystem(),
-                ));
-            })
-            .catch_signals()
-            .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
-            .await
-            .map_err(Into::into)
-        })
-    }
-
     async fn create_rollout(
         &self,
         workspace_id: WorkspaceId,
@@ -216,5 +220,13 @@ impl Run {
             .rollout_id(rollout.id)
             .build();
         Ok(meta)
+    }
+}
+
+impl TryFrom<&Run> for ApplicationConfig {
+    type Error = miette::Error;
+
+    fn try_from(run: &Run) -> std::result::Result<Self, Self::Error> {
+        Self::try_from(&run.manifest)
     }
 }

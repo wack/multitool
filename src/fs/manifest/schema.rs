@@ -1,6 +1,12 @@
 use std::sync::OnceLock;
 
 use miette::{Diagnostic, miette};
+use multitool_sdk::models::{
+    ApplicationConfig, ApplicationConfigOneOf, IngressConfig as SdkIngressConfig,
+    IngressConfigOneOfAwsRestApiGateway, MonitorConfig as SdkMonitorConfig, MonitorConfigOneOf,
+    MonitorConfigOneOfAwsCloudwatchMetrics, PlatformConfig as SdkPlatformConfig, WebServiceConfig,
+    web_service_config,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -88,6 +94,14 @@ impl Manifest {
     }
 }
 
+impl TryFrom<&Manifest> for ApplicationConfig {
+    type Error = miette::Error;
+
+    fn try_from(manifest: &Manifest) -> std::result::Result<Self, Self::Error> {
+        Self::try_from(&manifest.config)
+    }
+}
+
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
 pub struct ConfigSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,6 +112,112 @@ pub struct ConfigSection {
     platform: Option<PlatformConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cloudflare: Option<CloudflareConfig>,
+}
+
+impl TryFrom<&CloudflareConfig> for ApplicationConfig {
+    type Error = miette::Error;
+
+    fn try_from(value: &CloudflareConfig) -> std::result::Result<Self, Self::Error> {
+        todo!()
+    }
+}
+
+impl TryFrom<&ConfigSection> for ApplicationConfig {
+    type Error = miette::Error;
+
+    fn try_from(config: &ConfigSection) -> std::result::Result<Self, Self::Error> {
+        let has_cloudflare = config.cloudflare.is_some();
+        let has_other =
+            config.monitor.is_some() || config.platform.is_some() || config.ingress.is_some();
+        // Validate the mutual exclusivity of cloudflare and AWS.
+        if has_cloudflare && has_other {
+            return Err(CloudflareMutuallyExclusiveConfig.into());
+        }
+        if let Some(cloudflare) = config.cloudflare() {
+            return Self::try_from(cloudflare);
+        }
+
+        let monitor = config
+            .monitor()
+            .map(SdkMonitorConfig::try_from)
+            .ok_or(MissingMonitorConfig)?;
+
+        let platform = config
+            .platform()
+            .map(SdkPlatformConfig::try_from)
+            .ok_or(MissingPlatformConfig)?;
+
+        let ingress = config
+            .ingress()
+            .map(SdkIngressConfig::try_from)
+            .ok_or(MissingIngressConfig)?;
+
+        let web_service = WebServiceConfig {
+            ingress: Box::new(ingress?),
+            monitor: Box::new(monitor?),
+            platform: Box::new(platform?),
+        };
+        let one_of = ApplicationConfigOneOf::new(web_service);
+        Ok(ApplicationConfig::ApplicationConfigOneOf(Box::new(one_of)))
+    }
+}
+
+impl TryFrom<&IngressConfig> for SdkIngressConfig {
+    type Error = miette::Error;
+
+    fn try_from(value: &IngressConfig) -> std::result::Result<Self, Self::Error> {
+        let one_of = match value {
+            IngressConfig::AwsApiGateway(gateway_config) => {
+                IngressConfigOneOfAwsRestApiGateway::from(gateway_config)
+            }
+        };
+        Ok(Self::IngressConfigOneOf(Box::new(
+            multitool_sdk::models::IngressConfigOneOf {
+                aws_rest_api_gateway: Box::new(one_of),
+            },
+        )))
+    }
+}
+
+impl From<&AwsApiGatewayConfig> for multitool_sdk::models::IngressConfigOneOfAwsRestApiGateway {
+    fn from(gateway_config: &AwsApiGatewayConfig) -> Self {
+        Self {
+            gateway_name: gateway_config.gateway_name.clone(),
+            region: gateway_config.region.clone(),
+            resource_method: gateway_config.resource_method.clone(),
+            resource_path: gateway_config.resource_path.clone(),
+            stage_name: gateway_config.stage_name.clone(),
+        }
+    }
+}
+
+impl TryFrom<&MonitorConfig> for SdkMonitorConfig {
+    type Error = miette::Error;
+
+    fn try_from(value: &MonitorConfig) -> std::result::Result<Self, Self::Error> {
+        let one_of = match value {
+            MonitorConfig::AwsCloudwatch(aws_cloudwatch) => {
+                MonitorConfigOneOfAwsCloudwatchMetrics::from(aws_cloudwatch)
+            }
+        };
+        Ok(Self::MonitorConfigOneOf(Box::new(MonitorConfigOneOf {
+            aws_cloudwatch_metrics: Box::new(one_of),
+        })))
+    }
+}
+
+impl From<&AwsCloudwatch> for MonitorConfigOneOfAwsCloudwatchMetrics {
+    fn from(value: &AwsCloudwatch) -> Self {
+        todo!()
+    }
+}
+
+impl TryFrom<&PlatformConfig> for SdkPlatformConfig {
+    type Error = miette::Error;
+
+    fn try_from(value: &PlatformConfig) -> std::result::Result<Self, Self::Error> {
+        todo!()
+    }
 }
 
 impl ConfigSection {
@@ -254,6 +374,14 @@ pub struct CloudflareConfig {
     /// This value we always get from the command line.
     #[serde(skip)]
     api_token: Option<String>,
+}
+
+impl TryFrom<CloudflareConfig> for ApplicationConfig {
+    type Error = miette::Error;
+
+    fn try_from(value: CloudflareConfig) -> std::result::Result<Self, Self::Error> {
+        todo!()
+    }
 }
 
 impl CloudflareConfig {
