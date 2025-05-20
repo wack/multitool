@@ -2,38 +2,13 @@ use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::OnceLock;
 use tracing::error;
 use url::Url;
 
-use deployments::{CreateDeploymentRequest, DeploymentResult};
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CloudFlareError {
-    pub code: i64,
-    pub message: String,
-    pub documentation_url: Option<String>,
-    #[serde(default)]
-    pub source: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CloudFlareMessage {
-    pub code: i64,
-    pub message: String,
-    pub documentation_url: Option<String>,
-    #[serde(default)]
-    pub source: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CloudFlareResponse<T> {
-    pub errors: Vec<CloudFlareError>,
-    pub messages: Vec<CloudFlareMessage>,
-    pub success: bool,
-    pub result: T,
-}
+use deployments::{CreateDeploymentRequest, DeploymentResponse};
+use metrics::MetricsResponse;
+use responses::CloudflareResponse;
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -42,26 +17,11 @@ fn init_url() -> Url {
 }
 
 #[derive(Clone)]
-pub struct CloudFlareClient {
+pub struct CloudflareClient {
     client: Client,
 }
 
-#[derive(Deserialize)]
-struct CloudFlareDeploymentResponse {
-    result: CloudFlareDeploymentResult,
-}
-
-#[derive(Deserialize)]
-struct CloudFlareDeploymentResult {
-    deployments: Vec<CloudFlareDeployment>,
-}
-
-#[derive(Deserialize)]
-struct CloudFlareDeployment {
-    id: String,
-}
-
-impl CloudFlareClient {
+impl CloudflareClient {
     pub fn new(token: &str) -> Self {
         // TODO: Add a timeout.
         let mut default_headers = HeaderMap::new();
@@ -117,7 +77,7 @@ impl CloudFlareClient {
 
         if !response.status().is_success() {
             return Err(miette::miette!(
-                "Failed to get current worker version. Error: {:?}",
+                "Failed to get current Worker version. Error: {:?}",
                 response
                     .json()
                     .await
@@ -126,7 +86,7 @@ impl CloudFlareClient {
         }
 
         let deployment_response = response
-            .json::<CloudFlareDeploymentResponse>()
+            .json::<CloudflareResponse<DeploymentResponse>>()
             .await
             .into_diagnostic()?;
 
@@ -135,7 +95,7 @@ impl CloudFlareClient {
             .result
             .deployments
             .first()
-            .map(|deployment| deployment.id.clone())
+            .map(|deployment| deployment.id().clone())
             .ok_or_else(|| miette::miette!("No deployments found"))
     }
 
@@ -146,7 +106,7 @@ impl CloudFlareClient {
         account_id: String,
         script_name: String,
         request: CreateDeploymentRequest,
-    ) -> Result<CloudFlareResponse<DeploymentResult>> {
+    ) -> Result<()> {
         let path = format!("accounts/{account_id}/workers/scripts/{script_name}/deployments");
         let url = Self::url_with_path(&path);
 
@@ -158,8 +118,17 @@ impl CloudFlareClient {
             .await
             .into_diagnostic()?;
 
-        let result = response.json().await.into_diagnostic()?;
-        Ok(result)
+        if !response.status().is_success() {
+            return Err(miette::miette!(
+                "Failed to create new Worker deployment. Error: {:?}",
+                response
+                    .json()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string())
+            ));
+        }
+
+        Ok(())
     }
 
     // For the monitor to grab metrics within a time range.
@@ -250,13 +219,14 @@ impl CloudFlareClient {
         }
 
         let metrics_response = response
-            .json::<MetricsApiResponse>()
+            .json::<CloudflareResponse<MetricsResponse>>()
             .await
             .into_diagnostic()?;
 
         let count = metrics_response
             .result
-            .and_then(|r| r.calculations.get(0).cloned())
+            .calculations
+            .get(0)
             .and_then(|c| c.aggregates.get(0).cloned())
             .map_or(0, |a| a.count);
 
@@ -274,31 +244,9 @@ impl CloudFlareClient {
     }
 }
 
-/// Ugh, I started implementing this elsewhere but i dont have the code on my laptop right now.
 #[derive(Serialize, Deserialize)]
 pub struct Metadata;
 
-#[derive(Deserialize)]
-struct MetricsApiResponse {
-    result: Option<MetricsResult>,
-}
-
-#[derive(Deserialize)]
-struct MetricsResult {
-    #[serde(default)]
-    calculations: Vec<Calculation>,
-}
-
-#[derive(Deserialize, Clone)]
-struct Calculation {
-    #[serde(default)]
-    aggregates: Vec<Aggregate>,
-}
-
-#[derive(Deserialize, Clone)]
-struct Aggregate {
-    #[serde(default)]
-    count: u32,
-}
-
-mod deployments;
+pub mod deployments;
+mod metrics;
+mod responses;

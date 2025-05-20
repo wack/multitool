@@ -4,7 +4,7 @@ use tracing::{debug, info};
 
 use crate::{
     Shutdownable,
-    adapters::CloudFlareClient as Client,
+    adapters::CloudflareClient as Client,
     metrics::ResponseStatusCode,
     stats::{CategoricalObservation, Group},
     subsystems::ShutdownResult,
