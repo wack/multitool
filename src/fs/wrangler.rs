@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Wrangler {
     account_id: Option<String>,
-    worker: String,
+    name: String,
 }
 
 impl Wrangler {
@@ -12,8 +12,8 @@ impl Wrangler {
         self.account_id.as_deref()
     }
 
-    pub fn worker(&self) -> &str {
-        &self.worker
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 

@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::{
     adapters::{
         AwsApiGateway, BoxedIngress, BoxedMonitor, BoxedPlatform, CloudFlareMonitor,
-        CloudflareClient, CloudflareDeployment, LambdaPlatform, Platform,
+        CloudflareClient, CloudflareDeployment, LambdaPlatform,
     },
     config::RunSubcommand,
     fs::{
@@ -155,12 +155,16 @@ impl ConfigSection {
 #[serde(rename_all = "kebab-case")]
 pub enum MonitorConfig {
     AwsCloudwatch(AwsCloudwatch),
+    CloudflareObservability(CloudflareObservabilityConfig),
 }
 
 impl MonitorConfig {
     async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
         match self {
             MonitorConfig::AwsCloudwatch(aws_cloudwatch) => aws_cloudwatch.load_monitor(args).await,
+            MonitorConfig::CloudflareObservability(cloudflare_observability) => {
+                cloudflare_observability.load_monitor(args).await
+            }
         }
     }
 }
@@ -180,23 +184,28 @@ impl AwsCloudwatch {
     }
 }
 
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
+pub struct CloudflareObservabilityConfig {}
+
+impl CloudflareObservabilityConfig {
+    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+        todo!();
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub enum IngressConfig {
     AwsApiGateway(AwsApiGatewayConfig),
+    CloudflareWorkers(CloudflareWorkerConfig),
 }
 
 impl IngressConfig {
     async fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
         match self {
             IngressConfig::AwsApiGateway(config) => config.load_ingress(args).await,
+            IngressConfig::CloudflareWorkers(config) => config.load_ingress(args).await,
         }
-    }
-}
-
-impl Default for IngressConfig {
-    fn default() -> Self {
-        Self::AwsApiGateway(AwsApiGatewayConfig::default())
     }
 }
 
@@ -228,12 +237,14 @@ impl AwsApiGatewayConfig {
 #[serde(rename_all = "kebab-case")]
 pub enum PlatformConfig {
     AwsLambda(AwsLambdaConfig),
+    CloudflareWorkers(CloudflareConfig),
 }
 
 impl PlatformConfig {
     async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         match self {
             PlatformConfig::AwsLambda(config) => config.load_platform(args).await,
+            PlatformConfig::CloudflareWorkers(config) => config.load_platform(args).await,
         }
     }
 }
@@ -244,7 +255,7 @@ impl Default for PlatformConfig {
     }
 }
 
-#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct CloudflareConfig {
     wrangler: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,12 +276,6 @@ impl CloudflareConfig {
         self.wrangler
     }
 
-    fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
-        // This function requires https://github.com/wack/multitool/pull/95
-        // to be merged before it can be implemented.
-        todo!();
-    }
-
     fn load_api_token(&self, args: &RunSubcommand) -> Result<String> {
         args
             .cloudflare_api_token()
@@ -281,7 +286,7 @@ impl CloudflareConfig {
     fn load_worker_name(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
         let wranger_worker_name = if self.wrangler_enabled() {
             let wrangler = self.load_wrangler(&fs)?;
-            Some(wrangler.worker().to_owned())
+            Some(wrangler.name().to_owned())
         } else {
             None
         };
@@ -304,6 +309,17 @@ impl CloudflareConfig {
             .or(wranger_account_id)
             .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file."))?;
         Ok(account_id)
+    }
+
+    fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
+        let fs = FileSystem::new()?;
+        // First, let's check and make sure we have an API token.
+        let api_token = self.load_api_token(args)?;
+        let account_id = self.load_account_id(&fs, args)?;
+        let worker_name = self.load_worker_name(&fs, args)?;
+        let client = CloudflareClient::new(&api_token);
+
+        Ok(Box::new(Cloudflare::new(client, account_id, worker_name)))
     }
 
     fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
