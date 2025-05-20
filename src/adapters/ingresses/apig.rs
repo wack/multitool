@@ -41,7 +41,6 @@ impl AwsApiGateway {
     ) -> Self {
         let config = load_default_aws_config().await;
         let apig_client = GatewayClient::new(config);
-        // TODO: when we add more platforms, we'll need to move this into the lambda
         let lambda_client = LambdaClient::new(config);
 
         Self {

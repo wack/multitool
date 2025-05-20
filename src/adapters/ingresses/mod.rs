@@ -8,7 +8,7 @@ use crate::{Shutdownable, WholePercent};
 pub type BoxedIngress = Box<dyn Ingress + Send + Sync>;
 
 pub(crate) use apig::AwsApiGateway;
-pub(crate) use cloudflare::GradualDeployment;
+pub(crate) use cloudflare::CloudflareWorkerIngress;
 
 /// Ingresses are responsible for (1) controlling how much traffic the canary
 /// gets (hence the name ingress, since it functions like a virtual LB) and

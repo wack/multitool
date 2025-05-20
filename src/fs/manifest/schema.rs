@@ -7,8 +7,9 @@ use thiserror::Error;
 use crate::{
     adapters::{
         AwsApiGateway, BoxedIngress, BoxedMonitor, BoxedPlatform, CloudFlareMonitor,
-        CloudflareClient, CloudflareDeployment, LambdaPlatform,
+        CloudflareClient, CloudflareWorkerIngress, CloudflareWorkerPlatform, LambdaPlatform,
     },
+    artifacts::LambdaZip,
     config::RunSubcommand,
     fs::{
         FileSystem,
@@ -179,7 +180,7 @@ impl Default for MonitorConfig {
 pub struct AwsCloudwatch {}
 
 impl AwsCloudwatch {
-    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+    async fn load_monitor(&self, _args: &RunSubcommand) -> Result<BoxedMonitor> {
         todo!();
     }
 }
@@ -188,7 +189,7 @@ impl AwsCloudwatch {
 pub struct CloudflareObservabilityConfig {}
 
 impl CloudflareObservabilityConfig {
-    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+    async fn load_monitor(&self, _args: &RunSubcommand) -> Result<BoxedMonitor> {
         todo!();
     }
 }
@@ -197,14 +198,14 @@ impl CloudflareObservabilityConfig {
 #[serde(rename_all = "kebab-case")]
 pub enum IngressConfig {
     AwsApiGateway(AwsApiGatewayConfig),
-    CloudflareWorkers(CloudflareWorkerConfig),
+    CloudflareWorkers(CloudflareConfig),
 }
 
 impl IngressConfig {
     async fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
         match self {
             IngressConfig::AwsApiGateway(config) => config.load_ingress(args).await,
-            IngressConfig::CloudflareWorkers(config) => config.load_ingress(args).await,
+            IngressConfig::CloudflareWorkers(config) => config.load_ingress(args),
         }
     }
 }
@@ -244,7 +245,7 @@ impl PlatformConfig {
     async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         match self {
             PlatformConfig::AwsLambda(config) => config.load_platform(args).await,
-            PlatformConfig::CloudflareWorkers(config) => config.load_platform(args).await,
+            PlatformConfig::CloudflareWorkers(config) => config.load_platform(args),
         }
     }
 }
@@ -319,7 +320,11 @@ impl CloudflareConfig {
         let worker_name = self.load_worker_name(&fs, args)?;
         let client = CloudflareClient::new(&api_token);
 
-        Ok(Box::new(Cloudflare::new(client, account_id, worker_name)))
+        Ok(Box::new(CloudflareWorkerIngress::new(
+            client,
+            account_id,
+            worker_name,
+        )))
     }
 
     fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
@@ -329,16 +334,12 @@ impl CloudflareConfig {
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
         let client = CloudflareClient::new(&api_token);
-        // TODO: How do we get the values of `control_version_id` and `canary_version_id`?
-        // Aren't these supposed to be passed in at a later time?
-        let monitor = CloudFlareMonitor::new(
+
+        Ok(Box::new(CloudFlareMonitor::new(
             client,
             account_id,
             worker_name,
-            "".to_owned(),
-            "".to_owned(),
-        );
-        Ok(Box::new(monitor))
+        )))
     }
 
     fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
@@ -349,7 +350,7 @@ impl CloudflareConfig {
         let worker_name = self.load_worker_name(&fs, args)?;
         let client = CloudflareClient::new(&api_token);
 
-        Ok(Box::new(CloudflareDeployment::new(
+        Ok(Box::new(CloudflareWorkerPlatform::new(
             client,
             account_id,
             worker_name,
@@ -369,12 +370,16 @@ impl AwsLambdaConfig {
             .aws_region()
             .map(ToString::to_string)
             .unwrap_or_else(|| self.region.clone());
+
+        let artifact = LambdaZip::load(args.artifact_path()).await?;
+
         let platform = LambdaPlatform::builder()
             .name(self.name.clone())
             .region(region)
-            .artifact(todo!("Pass artifact down once you load it."))
+            .artifact(artifact)
             .build()
             .await;
+
         Ok(Box::new(platform))
     }
 }

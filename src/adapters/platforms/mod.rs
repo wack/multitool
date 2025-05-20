@@ -5,7 +5,7 @@ use mockall::automock;
 use crate::{Shutdownable, subsystems::ShutdownResult};
 pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
 
-pub(crate) use cloudflare::Deployment as CloudflareDeployment;
+pub(crate) use cloudflare::CloudflareWorkerPlatform;
 pub(crate) use lambda::LambdaPlatform;
 
 #[automock]

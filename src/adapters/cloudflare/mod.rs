@@ -1,3 +1,4 @@
+use chrono::DateTime;
 use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
@@ -19,21 +20,6 @@ fn init_url() -> Url {
 #[derive(Clone)]
 pub struct CloudflareClient {
     client: Client,
-}
-
-#[derive(Deserialize)]
-struct CloudFlareDeploymentResponse {
-    result: CloudFlareDeploymentResult,
-}
-
-#[derive(Deserialize)]
-struct CloudFlareDeploymentResult {
-    deployments: Vec<CloudFlareDeployment>,
-}
-
-#[derive(Deserialize)]
-struct CloudFlareDeployment {
-    id: String,
 }
 
 impl CloudflareClient {
@@ -154,8 +140,8 @@ impl CloudflareClient {
         worker_version_id: String,
         status_code_range_start: u16,
         status_code_range_end: u16,
-        from_time: chrono::DateTime<chrono::Utc>,
-        to_time: chrono::DateTime<chrono::Utc>,
+        from_time: DateTime<chrono::Utc>,
+        to_time: DateTime<chrono::Utc>,
     ) -> Result<u32> {
         let path = format!("/accounts/{account_id}/workers/observability/telemetry/query");
         let url = Self::url_with_path(&path);

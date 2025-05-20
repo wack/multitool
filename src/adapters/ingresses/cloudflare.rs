@@ -1,5 +1,12 @@
 use crate::{
-    Shutdownable, WholePercent, adapters::CloudflareClient as Client, subsystems::ShutdownResult,
+    Shutdownable, WholePercent,
+    adapters::{
+        CloudflareClient as Client,
+        cloudflare::deployments::{
+            CreateDeploymentRequest, DeploymentStrategy, DeploymentVersionConfig,
+        },
+    },
+    subsystems::ShutdownResult,
 };
 
 use super::Ingress;
@@ -7,7 +14,7 @@ use async_trait::async_trait;
 use miette::Result;
 use tracing::{debug, info};
 
-pub struct GradualDeployment {
+pub struct CloudflareWorkerIngress {
     client: Client,
     // Cloudflare account id
     account_id: String,
@@ -19,7 +26,7 @@ pub struct GradualDeployment {
     canary_version_id: Option<String>,
 }
 
-impl GradualDeployment {
+impl CloudflareWorkerIngress {
     pub fn new(client: Client, account_id: String, worker_name: String) -> Self {
         Self {
             client,
@@ -32,7 +39,7 @@ impl GradualDeployment {
 }
 
 #[async_trait]
-impl Ingress for GradualDeployment {
+impl Ingress for CloudflareWorkerIngress {
     async fn release_canary(&mut self, canary_version_id: String) -> Result<()> {
         debug!("Releasing canary in Cloudflare!");
 
@@ -151,7 +158,7 @@ impl Ingress for GradualDeployment {
 }
 
 #[async_trait]
-impl Shutdownable for GradualDeployment {
+impl Shutdownable for CloudflareWorkerIngress {
     async fn shutdown(&mut self) -> ShutdownResult {
         self.rollback_canary().await?;
         Ok(())

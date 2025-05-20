@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, TimeDelta, Utc};
+use chrono::{DateTime, Duration, Utc};
 use tracing::{debug, info};
 
 use crate::{
@@ -20,9 +20,9 @@ pub struct CloudFlareMonitor {
     // Cloudflare worker name
     worker_name: String,
     // The version id of the baseline version
-    control_version_id: String,
+    control_version_id: Option<String>,
     // The version id of the canary version
-    canary_version_id: String,
+    canary_version_id: Option<String>,
     // The time we started querying
     start_time: DateTime<Utc>,
     // The time we last queried
@@ -30,19 +30,13 @@ pub struct CloudFlareMonitor {
 }
 
 impl CloudFlareMonitor {
-    pub fn new(
-        client: Client,
-        account_id: String,
-        worker_name: String,
-        control_version_id: String,
-        canary_version_id: String,
-    ) -> Self {
+    pub fn new(client: Client, account_id: String, worker_name: String) -> Self {
         Self {
             client,
             account_id,
             worker_name,
-            control_version_id,
-            canary_version_id,
+            control_version_id: None,
+            canary_version_id: None,
             start_time: Utc::now(),
             last_query_time: Utc::now() - Duration::minutes(5),
         }
@@ -64,7 +58,9 @@ impl Monitor for CloudFlareMonitor {
         let control_2xx_future = self.client.collect_metrics(
             self.account_id.clone(),
             self.worker_name.clone(),
-            self.control_version_id.clone(),
+            self.control_version_id
+                .clone()
+                .expect("Control version ID is not set"),
             200,
             299,
             start_query_time,
@@ -74,7 +70,9 @@ impl Monitor for CloudFlareMonitor {
         let control_4xx_future = self.client.collect_metrics(
             self.account_id.clone(),
             self.worker_name.clone(),
-            self.control_version_id.clone(),
+            self.control_version_id
+                .clone()
+                .expect("Control version ID is not set"),
             400,
             499,
             start_query_time,
@@ -84,7 +82,9 @@ impl Monitor for CloudFlareMonitor {
         let control_5xx_future = self.client.collect_metrics(
             self.account_id.clone(),
             self.worker_name.clone(),
-            self.control_version_id.clone(),
+            self.control_version_id
+                .clone()
+                .expect("Control version ID is not set"),
             500,
             599,
             start_query_time,
@@ -94,7 +94,9 @@ impl Monitor for CloudFlareMonitor {
         let canary_2xx_future = self.client.collect_metrics(
             self.account_id.clone(),
             self.worker_name.clone(),
-            self.canary_version_id.clone(),
+            self.canary_version_id
+                .clone()
+                .expect("Canary version ID is not set"),
             200,
             299,
             start_query_time,
@@ -104,7 +106,9 @@ impl Monitor for CloudFlareMonitor {
         let canary_4xx_future = self.client.collect_metrics(
             self.account_id.clone(),
             self.worker_name.clone(),
-            self.canary_version_id.clone(),
+            self.canary_version_id
+                .clone()
+                .expect("Canary version ID is not set"),
             400,
             499,
             start_query_time,
@@ -114,7 +118,9 @@ impl Monitor for CloudFlareMonitor {
         let canary_5xx_future = self.client.collect_metrics(
             self.account_id.clone(),
             self.worker_name.clone(),
-            self.canary_version_id.clone(),
+            self.canary_version_id
+                .clone()
+                .expect("Canary version ID is not set"),
             500,
             599,
             start_query_time,

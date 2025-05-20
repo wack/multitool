@@ -62,6 +62,7 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
         let platform_subsystem = PlatformSubsystem::new(self.platform);
         let platform_handle = platform_subsystem.handle();
 
+        // TODO: pass in canary version id here???
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
         let observation_stream = monitor_controller.stream()?;
 
