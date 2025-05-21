@@ -58,7 +58,10 @@ impl IngressSubsystem {
     }
 
     async fn handle_release(&mut self, params: ReleaseParams) {
-        let result = self.ingress.release_canary(params.platform_id).await;
+        let result = self
+            .ingress
+            .release_canary(params.baseline_version_id, params.canary_version_id)
+            .await;
         params.outbox.send(result).unwrap();
     }
 

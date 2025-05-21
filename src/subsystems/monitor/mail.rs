@@ -34,7 +34,7 @@ impl<T: Observation + Send + 'static> Monitor for MonitorHandle<T> {
     }
 }
 
-pub(super) enum MonitorMail<T: Observation> {
+pub(crate) enum MonitorMail<T: Observation> {
     Query(QueryParams<T>),
     SetBaselineVersionId(VersionParams),
     SetCanaryVersionId(VersionParams),

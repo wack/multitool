@@ -15,9 +15,13 @@ pub(super) enum IngressMail {
 
 #[async_trait]
 impl Ingress for IngressHandle {
-    async fn release_canary(&mut self, platform_id: String) -> Result<()> {
+    async fn release_canary(
+        &mut self,
+        baseline_version_id: String,
+        canary_version_id: String,
+    ) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
-        let params = ReleaseParams::new(sender, platform_id);
+        let params = ReleaseParams::new(sender, baseline_version_id, canary_version_id);
         let mail = IngressMail::Release(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
@@ -50,15 +54,20 @@ impl Ingress for IngressHandle {
 pub(super) struct ReleaseParams {
     /// The sender where the response is written.
     pub(super) outbox: oneshot::Sender<ReleaseResp>,
-    /// The amount of traffic the user is expected to receive.
-    pub(super) platform_id: String,
+    pub(super) baseline_version_id: String,
+    pub(super) canary_version_id: String,
 }
 
 impl ReleaseParams {
-    pub(super) fn new(outbox: oneshot::Sender<ReleaseResp>, platform_id: String) -> Self {
+    pub(super) fn new(
+        outbox: oneshot::Sender<ReleaseResp>,
+        baseline_version_id: String,
+        canary_version_id: String,
+    ) -> Self {
         Self {
             outbox,
-            platform_id,
+            baseline_version_id,
+            canary_version_id,
         }
     }
 }

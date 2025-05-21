@@ -85,8 +85,7 @@ impl Platform for LambdaPlatform {
         let arn = self
             .arn
             .clone()
-            .ok_or_else(|| miette!("No ARN returned from AWS"))
-            .unwrap();
+            .ok_or_else(|| miette!("No ARN returned from AWS"))?;
 
         Ok(("".to_string(), arn))
     }

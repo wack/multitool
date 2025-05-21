@@ -5,6 +5,7 @@ use multitool_sdk::models::RolloutStateData;
 use multitool_sdk::models::RolloutStateType::{
     DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
 };
+use tokio::sync::mpsc::Sender;
 use tokio::time::Duration;
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
@@ -42,6 +43,8 @@ pub struct RelaySubsystem<T: Observation + Send + 'static> {
     platform: BoxedPlatform,
     ingress: BoxedIngress,
     backend_poll_frequency: Option<Duration>,
+    baseline_sender: Sender<String>,
+    canary_sender: Sender<String>,
 }
 
 #[bon]
@@ -54,6 +57,8 @@ impl<T: Observation + Send + 'static> RelaySubsystem<T> {
         platform: BoxedPlatform,
         ingress: BoxedIngress,
         backend_poll_frequency: Option<Duration>,
+        baseline_sender: Sender<String>,
+        canary_sender: Sender<String>,
     ) -> Self {
         debug!("Creating a new relay subsystem...");
         Self {
@@ -63,6 +68,8 @@ impl<T: Observation + Send + 'static> RelaySubsystem<T> {
             platform,
             ingress,
             backend_poll_frequency,
+            baseline_sender,
+            canary_sender,
         }
     }
 
@@ -148,11 +155,12 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 let (baseline_version_id, canary_version_id) = self.platform.deploy().await?;
                                 // Next, we need the ingress to acknowledge the platform's existance,
                                 // creating a CanarySettings objects with zero traffic.
-                                self.ingress.release_canary(baseline_version_id, canary_version_id).await?;
+                                self.ingress.release_canary(baseline_version_id.clone(), canary_version_id.clone()).await?;
 
-                                // TODO: how do we send this to the monitor?
-                                self.monitor.set_baseline_version_id(baseline_version_id.clone()).await?;
-                                self.monitor.set_canary_version_id(canary_version_id.clone()).await?;
+                                // Finally, we need to set the baseline and canary version ids in the monitor.
+                                // We want to let this crash if there's an error
+                                self.baseline_sender.send(baseline_version_id).await;
+                                self.canary_sender.send(canary_version_id).await;
 
                                 locked_state.mark_done().await?;
                             },
