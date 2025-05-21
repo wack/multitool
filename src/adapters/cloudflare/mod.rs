@@ -1,10 +1,11 @@
 use chrono::DateTime;
 use miette::{IntoDiagnostic, Result};
 use reqwest::Client;
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use tracing::error;
+use uploads::{UploadAssetsResponse, UploadRequest, UploadSessionResponse, UploadVersionRequest};
 use url::Url;
 
 use deployments::{CreateDeploymentRequest, DeploymentResponse};
@@ -30,11 +31,115 @@ impl CloudflareClient {
         let mut auth_value = HeaderValue::from_str(&auth).expect("Must be able to set header");
         auth_value.set_sensitive(true);
         default_headers.insert(AUTHORIZATION, auth_value);
+
         let client = Client::builder()
             .default_headers(default_headers)
             .build()
             .expect("Must be able to construct client");
+
         Self { client }
+    }
+
+    // Corresponds to:
+    // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/
+    pub async fn create_assets_upload_session(
+        &self,
+        account_id: String,
+        worker_name: String,
+        request: UploadRequest,
+    ) -> Result<UploadSessionResponse> {
+        let path =
+            format!("/accounts/{account_id}/workers/scripts/{worker_name}/assets-upload-session");
+        let url = Self::url_with_path(&path);
+
+        let response = self
+            .client
+            .post(url)
+            .json(&request)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette::miette!(
+                "Failed to create assets upload session. Error: {:?}",
+                response
+                    .json()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string())
+            ));
+        }
+
+        let upload_session_response = response
+            .json::<CloudflareResponse<UploadSessionResponse>>()
+            .await
+            .into_diagnostic()?;
+
+        Ok(upload_session_response.result)
+    }
+
+    // Corresponds to:
+    // https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/
+    pub async fn upload_assets(
+        &self,
+        account_id: String,
+        file_upload_jwt: String,
+        // Key: file hash, Value: base64 encoded file
+        files: HashMap<String, String>,
+        // The list of file hashes Cloudflare wants us to upload together
+        bucket: Vec<String>,
+    ) -> Result<String> {
+        let path = format!("/accounts/{account_id}/workers/assets/upload?base64=true");
+        let url = Self::url_with_path(&path);
+
+        let mut request = HashMap::new();
+
+        // Loops over the file hashes and adds them to a multipart/form-data request
+        for file_hash in bucket {
+            let base64_data = files
+                .get(&file_hash)
+                .ok_or_else(|| miette::miette!("File not found in the list"))?;
+
+            request.insert(file_hash.clone(), base64_data);
+        }
+
+        let mut file_upload_headers = HeaderMap::new();
+
+        // Set the content type to multipart/form-data
+        file_upload_headers.insert(CONTENT_TYPE, "multipart/form-data".parse().unwrap());
+
+        // Set the authorization header with the JWT token we got from the session upload request
+        let file_upload_auth = format!("Bearer {file_upload_jwt}");
+        let mut file_upload_jwt_header = HeaderValue::from_str(&file_upload_auth).unwrap();
+        file_upload_jwt_header.set_sensitive(true);
+        file_upload_headers.insert(AUTHORIZATION, file_upload_jwt_header);
+
+        let response = self
+            .client
+            .post(url.clone())
+            // TODO: during testing, check if this overrides the default headers
+            .headers(file_upload_headers)
+            .json(&request)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette::miette!(
+                "Failed to upload asset(s). Error: {:?}",
+                response
+                    .json()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string())
+            ));
+        }
+
+        let upload_response = response
+            .json::<CloudflareResponse<UploadAssetsResponse>>()
+            .await
+            .into_diagnostic()?;
+
+        Ok(upload_response.result.jwt)
     }
 
     // Corresponds to:
@@ -42,26 +147,33 @@ impl CloudflareClient {
     pub async fn upload_version(
         &self,
         account_id: String,
-        script_name: String,
-        metadata: Metadata,
+        worker_name: String,
+        file_upload_jwt: String,
     ) -> Result<()> {
-        let path =
-            format!("/accounts/{account_id}/workers/scripts/{script_name}/assets-upload-session");
+        let path = format!("/accounts/{account_id}/workers/scripts/{worker_name}");
         let url = Self::url_with_path(&path);
-        self.client.post(url).send().await.into_diagnostic()?;
+
+        let request = UploadVersionRequest::new(file_upload_jwt);
+
+        let response = self
+            .client
+            .put(url)
+            .json(&request)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette::miette!(
+                "Failed to upload Worker version. Error: {:?}",
+                response
+                    .json()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string())
+            ));
+        }
+
         Ok(())
-    }
-
-    // Corresponds to:
-    // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/
-    pub fn create_assets_upload_session(&self) -> Result<()> {
-        todo!();
-    }
-
-    // Corresponds to:
-    // https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/
-    pub fn upload_assets(&self) -> Result<()> {
-        todo!();
     }
 
     // Corresponds to:
@@ -245,9 +357,7 @@ impl CloudflareClient {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Metadata;
-
 pub mod deployments;
 mod metrics;
 mod responses;
+mod uploads;

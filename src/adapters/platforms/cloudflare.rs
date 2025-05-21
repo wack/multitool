@@ -29,15 +29,22 @@ impl Platform for CloudflareWorkerPlatform {
     }
 
     async fn yank_canary(&mut self) -> Result<()> {
-        todo!()
+        // In Cloudflare, Workers are both the platform and ingress
+        // so we don't need to yank the canary here, we just set the deployment
+        // percetage to 0.
+        Ok(())
     }
 
     async fn delete_canary(&mut self) -> Result<()> {
-        todo!()
+        // Cloudflare Workers should not be deleted.
+        Ok(())
     }
 
     async fn promote_rollout(&mut self) -> Result<()> {
-        todo!()
+        // In Cloudflare, Workers are both the platform and ingress
+        // so we don't need to promote the canary here, we just set the deployment
+        // percetage to 100.
+        Ok(())
     }
 }
 
