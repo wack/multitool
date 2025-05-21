@@ -5,14 +5,14 @@ use mockall::automock;
 use crate::{Shutdownable, subsystems::ShutdownResult};
 pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
 
-pub(crate) use builder::PlatformBuilder;
-pub(crate) use cloudflare::Deployment;
+pub(crate) use cloudflare::CloudflareWorkerPlatform;
+pub(crate) use lambda::LambdaPlatform;
 
 #[automock]
 #[async_trait]
 pub trait Platform: Shutdownable {
     /// Deploy the canary app. Do not assign it any traffic.
-    async fn deploy(&mut self) -> Result<String>;
+    async fn deploy(&mut self) -> Result<(String, String)>;
     /// Remove the canary app from the platform.
     async fn yank_canary(&mut self) -> Result<()>;
     /// Delete the canary app from the platform.

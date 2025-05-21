@@ -174,6 +174,7 @@ impl Shutdownable for CloudWatch {
 #[async_trait]
 impl Monitor for CloudWatch {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
+
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
         info!("Querying CloudWatch for new metrics.");
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
@@ -269,8 +270,7 @@ impl Monitor for CloudWatch {
         let canary_2xx = canary_count - (canary_4xx + canary_5xx);
 
         self.check_metrics_count(
-            control_count,
-            canary_count,
+            control_count + canary_count,
             self.start_time,
             start_query_time,
             end_query_time,
@@ -292,5 +292,13 @@ impl Monitor for CloudWatch {
         canary.increment_by(&ResponseStatusCode::_5XX, canary_5xx);
 
         Ok(vec![baseline, canary])
+    }
+
+    // These don't matter for CloudWatch since they use a standard naming scheme
+    async fn set_canary_version_id(&mut self, _: String) -> Result<()> {
+        Ok(())
+    }
+    async fn set_baseline_version_id(&mut self, _: String) -> Result<()> {
+        Ok(())
     }
 }

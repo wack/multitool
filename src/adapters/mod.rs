@@ -1,4 +1,4 @@
-pub use backend::{ApplicationConfig, BackendClient};
+pub use backend::BackendClient;
 pub(crate) use backend::{LockedState, RolloutMetadata};
 pub use cloudflare::CloudflareClient;
 
@@ -14,4 +14,5 @@ mod cloudflare;
 mod ingresses;
 /// Contains the trait definition for gathering monitoring data.
 mod monitors;
+/// Contains the trait definition and platform implementations.
 mod platforms;

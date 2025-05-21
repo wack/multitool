@@ -1,16 +1,17 @@
 use std::path::PathBuf;
 
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
-use crate::adapters::{
-    ApplicationConfig, IngressBuilder, MonitorBuilder, PlatformBuilder, RolloutMetadata,
-};
+use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::fs::{FileSystem, SessionFile, project_manifest};
+use crate::manifest::Manifest;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{
     ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
 };
-use miette::{Diagnostic, Result};
+use miette::{Context, Diagnostic, Result, miette};
+use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
+use tokio::join;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
@@ -25,10 +26,12 @@ const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Run {
     _terminal: Terminal,
+    manifest: Manifest,
     artifact_path: PathBuf,
-    workspace_name: String,
-    application_name: String,
+    override_workspace_name: Option<String>,
+    override_application_name: Option<String>,
     backend: BackendClient,
+    args: RunSubcommand,
 }
 
 #[derive(Error, Debug, Diagnostic)]
@@ -44,22 +47,89 @@ struct MissingWorkspace;
 struct MissingApplication;
 
 impl Run {
-    pub fn new(terminal: Terminal, mut args: RunSubcommand) -> Result<Self> {
+    pub fn new(terminal: Terminal, args: RunSubcommand) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
-        let manifest = project_manifest();
-        args.coalesce(manifest);
-        let workspace_name = args.workspace().ok_or(MissingWorkspace)?.to_owned();
-        let application_name = args.application().ok_or(MissingApplication)?.to_owned();
+        let manifest = project_manifest().clone();
         let backend = BackendClient::new(args.origin(), Some(session))?;
+        let artifact_path = args.artifact_path().as_ref().to_owned();
+        let override_workspace_name = args.workspace().map(ToString::to_string);
+        let override_application_name = args.application().map(ToString::to_string);
 
         Ok(Self {
+            args,
             _terminal: terminal,
+            manifest,
             backend,
-            artifact_path: args.artifact_path().as_ref().to_owned(),
-            workspace_name,
-            application_name,
+            artifact_path,
+            override_workspace_name,
+            override_application_name,
         })
+    }
+
+    /// Resolve precedence order:
+    /// 1. CLI flag has highest precedence.
+    /// 2. Environment variable.
+    /// 3. Manifest value has lowest precedence.
+    fn workspace_name(&self) -> Result<String> {
+        let manifest_workspace = self.manifest.workspace().map(ToString::to_string);
+        self.override_workspace_name
+            .clone()
+            .or(manifest_workspace)
+            .ok_or(MissingWorkspace.into())
+    }
+
+    /// Resolve precedence order:
+    /// 1. CLI flag has highest precedence.
+    /// 2. Environment variable.
+    /// 3. Manifest value has lowest precedence.
+    fn application_name(&self) -> Result<String> {
+        let manifest_application = self.manifest.application().map(ToString::to_string);
+        self.override_application_name
+            .clone()
+            .or(manifest_application)
+            .ok_or(MissingApplication.into())
+    }
+
+    async fn validate_workspace(&self, name: &str) -> Result<WorkspaceSummary> {
+        // TODO: Turn this into a struct and include two hints:
+        // 1. Are you logged into the right account?
+        // 2. Create a new workspace (from the CLI).
+        let workspace_not_found =
+            miette!("The workspace {name} does not exist within your account.");
+        self.backend
+            .get_workspace_by_name(&name)
+            .await
+            .context(workspace_not_found)
+    }
+
+    async fn load_platform(&self, manifest: &Manifest) -> Result<BoxedPlatform> {
+        manifest.load_platform(&self.args).await
+    }
+
+    async fn load_ingress(&self, manifest: &Manifest) -> Result<BoxedIngress> {
+        manifest.load_ingress(&self.args).await
+    }
+
+    async fn load_monitor(&self, manifest: &Manifest) -> Result<BoxedMonitor> {
+        manifest.load_monitor(&self.args).await
+    }
+
+    async fn validate_application(
+        &self,
+        workspace: &WorkspaceSummary,
+        name: &str,
+    ) -> Result<ApplicationDetails> {
+        // TODO: Turn this into a struct and include two hints:
+        // 1. Are you logged into the right account?
+        // 2. Create a new application (from the CLI).
+        let workspace_name = &workspace.display_name;
+        let application_not_found =
+            miette!("The application {name} does not exist within the workspace {workspace_name}.");
+        self.backend
+            .get_application_by_name(workspace.id, &name)
+            .await
+            .context(application_not_found)
     }
 
     pub fn dispatch(self) -> Result<()> {
@@ -74,25 +144,24 @@ impl Run {
             let artifact = LambdaZip::load(&self.artifact_path).await?;
             // We need to convert our workspace and application names into the full workspace and application object
             debug!("Loading workspace and application...");
-            let workspace = self
-                .backend
-                .get_workspace_by_name(&self.workspace_name)
-                .await?;
+            let workspace_name = self.workspace_name()?;
+            let application_name = self.application_name()?;
+            // Validate that the application name and workspace name exists in this user's account.
+            let workspace = self.validate_workspace(&workspace_name).await?;
             let application = self
-                .backend
-                .get_application_by_name(workspace.id, &self.application_name)
+                .validate_application(&workspace, &application_name)
                 .await?;
+
             // Now, we have to load the application's configuration
             // from the backend. We have the name of the workspace and
             // application, but we need to look up the details.
             debug!("Loading application conf...");
-            let conf = ApplicationConfig {
-                platform: PlatformBuilder::new(*application.platform, artifact)
-                    .build()
-                    .await,
-                ingress: IngressBuilder::new(*application.ingress).build().await,
-                monitor: MonitorBuilder::new(*application.monitor).build().await,
-            };
+            let (platform_result, ingress_result, monitor_result) = join!(
+                self.load_platform(&self.manifest),
+                self.load_ingress(&self.manifest),
+                self.load_monitor(&self.manifest),
+            );
+            let (platform, ingress, monitor) = (platform_result?, ingress_result?, monitor_result?);
 
             // Create a new rollout.
             let metadata = self.create_rollout(workspace.id, application.id).await?;
@@ -101,9 +170,9 @@ impl Run {
             debug!("Building controller...");
             let controller = ControllerSubsystem::builder()
                 .backend(self.backend)
-                .monitor(conf.monitor)
-                .ingress(conf.ingress)
-                .platform(conf.platform)
+                .monitor(monitor)
+                .ingress(ingress)
+                .platform(platform)
                 .meta(metadata)
                 .build();
 

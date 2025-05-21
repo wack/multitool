@@ -7,8 +7,8 @@ use crate::{Shutdownable, WholePercent};
 /// dispatched.
 pub type BoxedIngress = Box<dyn Ingress + Send + Sync>;
 
-pub(crate) use builder::IngressBuilder;
-pub(crate) use cloudflare::GradualDeployment;
+pub(crate) use apig::AwsApiGateway;
+pub(crate) use cloudflare::CloudflareWorkerIngress;
 
 /// Ingresses are responsible for (1) controlling how much traffic the canary
 /// gets (hence the name ingress, since it functions like a virtual LB) and
@@ -16,7 +16,11 @@ pub(crate) use cloudflare::GradualDeployment;
 #[async_trait]
 pub trait Ingress: Shutdownable {
     /// Given a deployed platform, release the canary in the ingress.
-    async fn release_canary(&mut self, platform_id: String) -> Result<()>;
+    async fn release_canary(
+        &mut self,
+        baseline_version_id: String,
+        canary_version_id: String,
+    ) -> Result<()>;
     /// The `[Ingress]` controls how much traffic the canary gets.
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()>;
     /// This method is subtly different from `Platform::yank_canary`.

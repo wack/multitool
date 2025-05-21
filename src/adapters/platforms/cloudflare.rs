@@ -6,20 +6,25 @@ use super::Platform;
 use async_trait::async_trait;
 use miette::Result;
 
-pub struct Deployment {
-    // TODO
+pub struct CloudflareWorkerPlatform {
     client: Client,
+    worker_name: String,
+    account_id: String,
 }
 
-impl Deployment {
-    pub fn new(client: Client) -> Self {
-        Self { client }
+impl CloudflareWorkerPlatform {
+    pub fn new(client: Client, account_id: String, worker_name: String) -> Self {
+        Self {
+            client,
+            account_id,
+            worker_name,
+        }
     }
 }
 
 #[async_trait]
-impl Platform for Deployment {
-    async fn deploy(&mut self) -> Result<String> {
+impl Platform for CloudflareWorkerPlatform {
+    async fn deploy(&mut self) -> Result<(String, String)> {
         todo!()
     }
 
@@ -37,7 +42,7 @@ impl Platform for Deployment {
 }
 
 #[async_trait]
-impl Shutdownable for Deployment {
+impl Shutdownable for CloudflareWorkerPlatform {
     async fn shutdown(&mut self) -> ShutdownResult {
         todo!();
     }

@@ -15,7 +15,7 @@ use tracing::debug;
 
 use crate::{
     MonitorSubsystem,
-    adapters::{BoxedMonitor, StatusCode},
+    adapters::{BoxedMonitor, Monitor, StatusCode},
     stats::Observation,
     subsystems::{MONITOR_SUBSYSTEM_NAME, TakenOptionalError},
 };
@@ -59,6 +59,11 @@ where
     poll_interval: Duration,
     emit_interval: Duration,
     on_error: Box<dyn Fn(&miette::Report) + Send + Sync>,
+    // TODO: "ThiS Is vERy teMpOrAry" - Robbie - May 21 2025
+    baseline_receiver: Receiver<String>,
+    canary_receiver: Receiver<String>,
+    baseline_sender: Sender<String>,
+    canary_sender: Sender<String>,
 }
 
 #[bon]
@@ -70,6 +75,10 @@ impl MonitorController<StatusCode> {
         emit_interval: Option<Duration>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(DEFAULT_MAX_BATCH_SIZE);
+
+        let (baseline_sender, baseline_receiver) = mpsc::channel(DEFAULT_MAX_BATCH_SIZE);
+        let (canary_sender, canary_receiver) = mpsc::channel(DEFAULT_MAX_BATCH_SIZE);
+
         Self {
             monitor,
             sender,
@@ -77,6 +86,10 @@ impl MonitorController<StatusCode> {
             poll_interval: poll_interval.unwrap_or(DEFAULT_POLL_INTERVAL),
             emit_interval: emit_interval.unwrap_or(DEFAULT_EMIT_INTERVAL),
             on_error: Box::new(log_error),
+            baseline_sender,
+            canary_sender,
+            baseline_receiver,
+            canary_receiver,
         }
     }
 
@@ -104,6 +117,13 @@ impl MonitorController<StatusCode> {
     {
         self.on_error = Box::new(func)
     }
+
+    pub fn get_baseline_sender(&self) -> Sender<String> {
+        self.baseline_sender.clone()
+    }
+    pub fn get_canary_sender(&self) -> Sender<String> {
+        self.canary_sender.clone()
+    }
 }
 
 #[async_trait]
@@ -113,7 +133,7 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
         //   we take a handle to it.
         let monitor_subsystem = MonitorSubsystem::new(self.monitor);
         // • Capture a handle to the subsystem so we can call `Monitor::query`.
-        let handle = monitor_subsystem.handle();
+        let mut handle = monitor_subsystem.handle();
 
         // • Launch the subsystem.
         subsys.start(SubsystemBuilder::new(
@@ -124,7 +144,7 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
         // Now, we can periodically poll the monitor for
         // new data.
         // • First, schedule the Monitor to be queried every so often.
-        let query_stream = repeat_query(handle, self.poll_interval)
+        let query_stream = repeat_query(handle.clone(), self.poll_interval)
             .inspect_err(|e| (self.on_error)(e))
             .filter_map(Result::ok);
         // • Next, aggregate query results and emit them every so often.
@@ -145,6 +165,12 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
                     // self has been partially moved.
                     subsys.wait_for_children().await;
                     return Ok(());
+                }
+                baseline_version_id = self.baseline_receiver.recv() => {
+                    handle.set_baseline_version_id(baseline_version_id.unwrap()).await.unwrap();
+                }
+                canary_version_id = self.canary_receiver.recv() => {
+                    handle.set_canary_version_id(canary_version_id.unwrap()).await.unwrap();
                 }
                 next = chunked_stream.next() => {
                     if let Some(batch) = next {

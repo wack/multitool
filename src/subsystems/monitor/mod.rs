@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::adapters::{BoxedMonitor, StatusCode};
-use crate::stats::Observation;
+use crate::metrics::ResponseStatusCode;
+use crate::stats::{CategoricalObservation, Observation};
 use async_trait::async_trait;
 use mail::{MonitorHandle, MonitorMail, QueryParams};
 use miette::{Report, Result};
@@ -12,6 +13,7 @@ use tokio::{
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
 use tracing::debug;
 
+use super::handle::Handle;
 use super::{ShutdownResult, Shutdownable};
 
 pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
@@ -41,13 +43,29 @@ impl MonitorSubsystem<StatusCode> {
     }
 
     /// Returns a shallow copy of the Monitor, using a channel and a handle.
-    pub fn handle(&self) -> BoxedMonitor {
+    pub fn handle(
+        &self,
+    ) -> Box<Handle<MonitorMail<CategoricalObservation<5, ResponseStatusCode>>>> {
         Box::new(self.handle.clone())
     }
 
     async fn respond_to_mail(&mut self, mail: MonitorMail<StatusCode>) {
         match mail {
             MonitorMail::Query(params) => self.handle_query(params).await,
+            MonitorMail::SetBaselineVersionId(params) => {
+                self.monitor
+                    .set_baseline_version_id(params.version_id)
+                    .await
+                    .unwrap();
+                params.outbox.send(Ok(())).unwrap();
+            }
+            MonitorMail::SetCanaryVersionId(params) => {
+                self.monitor
+                    .set_canary_version_id(params.version_id)
+                    .await
+                    .unwrap();
+                params.outbox.send(Ok(())).unwrap();
+            }
         }
     }
 

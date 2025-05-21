@@ -37,7 +37,7 @@ impl LambdaPlatform {
 #[async_trait]
 impl Platform for LambdaPlatform {
     /// Update the Lambda code with the zip we're holding.
-    async fn deploy(&mut self) -> Result<String> {
+    async fn deploy(&mut self) -> Result<(String, String)> {
         info!("Deploying Lambda!");
         // First, we need to deploy the new version of the lambda
         // Parse the bytes into the format AWS wants
@@ -82,9 +82,12 @@ impl Platform for LambdaPlatform {
             .ok_or(miette!("Couldn't get ARN of deployed lambda"))?;
 
         self.arn = Some(function_arn);
-        self.arn
+        let arn = self
+            .arn
             .clone()
-            .ok_or_else(|| miette!("No ARN returned from AWS"))
+            .ok_or_else(|| miette!("No ARN returned from AWS"))?;
+
+        Ok(("".to_string(), arn))
     }
 
     // There's nothing to yank when the platform is a lambda

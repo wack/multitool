@@ -11,6 +11,8 @@ use crate::{
 /// StatusCode is a type alias for the unwieldly named type on the right.
 pub type StatusCode = CategoricalObservation<5, ResponseStatusCode>;
 
+pub use cloudflare::CloudFlareMonitor;
+
 // TODO: For now, we require all monitors to monitor just
 // the status code. We may have trouble with the Builder in the
 // future because we can't really genericize it. But when we add
@@ -18,25 +20,22 @@ pub type StatusCode = CategoricalObservation<5, ResponseStatusCode>;
 // and there may not be a generic parameter on the Monitor type anymore.
 pub type BoxedMonitor = Box<dyn Monitor<Item = StatusCode> + Send + Sync>;
 
-pub(crate) use builder::MonitorBuilder;
-
 #[async_trait]
 pub trait Monitor: Shutdownable {
     type Item: Observation;
     async fn query(&mut self) -> Result<Vec<Self::Item>>;
+    async fn set_canary_version_id(&mut self, canary_version_id: String) -> Result<()>;
+    async fn set_baseline_version_id(&mut self, baseline_version_id: String) -> Result<()>;
 
     /// Print a warning message if we have low metrics, but only if it's been 3 minutes since we started
     fn check_metrics_count(
         &self,
-        control_acount: u32,
-        canary_count: u32,
+        total_metrics_count: u32,
         start_time: chrono::DateTime<chrono::Utc>,
         start_query_time: chrono::DateTime<chrono::Utc>,
         end_query_time: chrono::DateTime<chrono::Utc>,
     ) {
-        if ((Utc::now() - start_time) > TimeDelta::minutes(3))
-            && ((control_acount + canary_count) < 20)
-        {
+        if ((Utc::now() - start_time) > TimeDelta::minutes(3)) && (total_metrics_count < 20) {
             // Sometimes the elapsed_time is 59s and not 1 full minute, so we want to have a floor of at least 1 min
             let elapsed_time = std::cmp::max(1, (end_query_time - start_query_time).num_minutes());
             let elapsed_time_str = if elapsed_time > 1 {
@@ -46,7 +45,7 @@ pub trait Monitor: Shutdownable {
             };
             tracing::warn!(
                 "Warning: MultiTool has collected {} metrics in the past {}. More traffic will produce more accurate results.",
-                control_acount + canary_count,
+                total_metrics_count,
                 elapsed_time_str,
             );
         }

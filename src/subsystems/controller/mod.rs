@@ -65,12 +65,17 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
         let observation_stream = monitor_controller.stream()?;
 
+        let baseline_sender = monitor_controller.get_baseline_sender();
+        let canary_sender = monitor_controller.get_canary_sender();
+
         let relay_subsystem = RelaySubsystem::builder()
             .backend(self.backend)
             .observations(observation_stream)
             .platform(platform_handle)
             .ingress(ingress_handle)
             .meta(self.meta)
+            .baseline_sender(baseline_sender)
+            .canary_sender(canary_sender)
             .build();
 
         // • Start the ingress subsystem.
