@@ -40,23 +40,21 @@ impl CloudflareWorkerIngress {
 
 #[async_trait]
 impl Ingress for CloudflareWorkerIngress {
-    async fn release_canary(&mut self, canary_version_id: String) -> Result<()> {
+    async fn release_canary(
+        &mut self,
+        baseline_version_id: String,
+        canary_version_id: String,
+    ) -> Result<()> {
         debug!("Releasing canary in Cloudflare!");
 
-        // First, we need to get the current running version
-        let control_version_id = self
-            .client
-            .get_current_version(self.account_id.clone(), self.worker_name.clone())
-            .await?;
-
-        // Next, we need to save these values to this struct
-        self.control_version_id = Some(control_version_id.clone());
+        // First, save these values to this struct
+        self.control_version_id = Some(baseline_version_id.clone());
         self.canary_version_id = Some(canary_version_id.clone());
 
         // Finally, we can create the config and make the request
         let control_version = DeploymentVersionConfig::builder()
             .percentage(100)
-            .version_id(control_version_id.clone())
+            .version_id(baseline_version_id.clone())
             .build();
         let canary_version = DeploymentVersionConfig::builder()
             .percentage(0)

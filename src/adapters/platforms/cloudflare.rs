@@ -24,7 +24,7 @@ impl CloudflareWorkerPlatform {
 
 #[async_trait]
 impl Platform for CloudflareWorkerPlatform {
-    async fn deploy(&mut self) -> Result<String> {
+    async fn deploy(&mut self) -> Result<(String, String)> {
         todo!()
     }
 

@@ -52,132 +52,135 @@ impl Monitor for CloudFlareMonitor {
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
         // compiles them into a list, then generates the correct number of
         // CategoricalObservations for each response code
+        let utc_now = Utc::now();
         let end_query_time: DateTime<Utc> = Utc::now();
         let start_query_time = self.last_query_time;
 
-        let control_2xx_future = self.client.collect_metrics(
-            self.account_id.clone(),
-            self.worker_name.clone(),
-            self.control_version_id
-                .clone()
-                .expect("Control version ID is not set"),
-            200,
-            299,
-            start_query_time,
-            end_query_time,
-        );
+        let mut metrics = Vec::new();
 
-        let control_4xx_future = self.client.collect_metrics(
-            self.account_id.clone(),
-            self.worker_name.clone(),
-            self.control_version_id
-                .clone()
-                .expect("Control version ID is not set"),
-            400,
-            499,
-            start_query_time,
-            end_query_time,
-        );
+        // Query all control metrics, but only if we've already received a control version id
+        if let Some(control_version_id) = &self.control_version_id {
+            let control_2xx_future = self.client.collect_metrics(
+                self.account_id.clone(),
+                self.worker_name.clone(),
+                control_version_id.clone(),
+                200,
+                299,
+                start_query_time,
+                end_query_time,
+            );
 
-        let control_5xx_future = self.client.collect_metrics(
-            self.account_id.clone(),
-            self.worker_name.clone(),
-            self.control_version_id
-                .clone()
-                .expect("Control version ID is not set"),
-            500,
-            599,
-            start_query_time,
-            end_query_time,
-        );
+            let control_4xx_future = self.client.collect_metrics(
+                self.account_id.clone(),
+                self.worker_name.clone(),
+                control_version_id.clone(),
+                400,
+                499,
+                start_query_time,
+                end_query_time,
+            );
 
-        let canary_2xx_future = self.client.collect_metrics(
-            self.account_id.clone(),
-            self.worker_name.clone(),
-            self.canary_version_id
-                .clone()
-                .expect("Canary version ID is not set"),
-            200,
-            299,
-            start_query_time,
-            end_query_time,
-        );
+            let control_5xx_future = self.client.collect_metrics(
+                self.account_id.clone(),
+                self.worker_name.clone(),
+                control_version_id.clone(),
+                500,
+                599,
+                start_query_time,
+                end_query_time,
+            );
 
-        let canary_4xx_future = self.client.collect_metrics(
-            self.account_id.clone(),
-            self.worker_name.clone(),
-            self.canary_version_id
-                .clone()
-                .expect("Canary version ID is not set"),
-            400,
-            499,
-            start_query_time,
-            end_query_time,
-        );
+            let (control_2xx_result, control_4xx_result, control_5xx_result) =
+                tokio::join!(control_2xx_future, control_4xx_future, control_5xx_future,);
 
-        let canary_5xx_future = self.client.collect_metrics(
-            self.account_id.clone(),
-            self.worker_name.clone(),
-            self.canary_version_id
-                .clone()
-                .expect("Canary version ID is not set"),
-            500,
-            599,
-            start_query_time,
-            end_query_time,
-        );
+            let control_4xx = control_4xx_result?;
+            let control_5xx = control_5xx_result?;
+            let control_2xx = control_2xx_result?;
 
-        let (
-            control_2xx_result,
-            control_4xx_result,
-            control_5xx_result,
-            canary_2xx_result,
-            canary_4xx_result,
-            canary_5xx_result,
-        ) = tokio::join!(
-            control_2xx_future,
-            control_4xx_future,
-            control_5xx_future,
-            canary_2xx_future,
-            canary_4xx_future,
-            canary_5xx_future
-        );
+            debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
+
+            let mut baseline = CategoricalObservation::new(Group::Control, utc_now);
+            baseline.increment_by(&ResponseStatusCode::_2XX, control_2xx);
+            baseline.increment_by(&ResponseStatusCode::_4XX, control_4xx);
+            baseline.increment_by(&ResponseStatusCode::_5XX, control_5xx);
+
+            metrics.push(baseline);
+        }
+
+        // Query all canary metrics, but only if we've already received a control version id
+        if let Some(canary_version_id) = &self.canary_version_id {
+            let canary_2xx_future = self.client.collect_metrics(
+                self.account_id.clone(),
+                self.worker_name.clone(),
+                canary_version_id.clone(),
+                200,
+                299,
+                start_query_time,
+                end_query_time,
+            );
+
+            let canary_4xx_future = self.client.collect_metrics(
+                self.account_id.clone(),
+                self.worker_name.clone(),
+                canary_version_id.clone(),
+                400,
+                499,
+                start_query_time,
+                end_query_time,
+            );
+
+            let canary_5xx_future = self.client.collect_metrics(
+                self.account_id.clone(),
+                self.worker_name.clone(),
+                canary_version_id.clone(),
+                500,
+                599,
+                start_query_time,
+                end_query_time,
+            );
+
+            let (canary_2xx_result, canary_4xx_result, canary_5xx_result) =
+                tokio::join!(canary_2xx_future, canary_4xx_future, canary_5xx_future);
+
+            let canary_4xx = canary_4xx_result?;
+            let canary_5xx = canary_5xx_result?;
+            let canary_2xx = canary_2xx_result?;
+
+            debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
+
+            let mut canary = CategoricalObservation::new(Group::Experimental, utc_now);
+            canary.increment_by(&ResponseStatusCode::_2XX, canary_2xx);
+            canary.increment_by(&ResponseStatusCode::_4XX, canary_4xx);
+            canary.increment_by(&ResponseStatusCode::_5XX, canary_5xx);
+
+            metrics.push(canary);
+        }
 
         // Update the timer to skip old values. This has to occur
         // before the ? in the next block, or else we might
         // never advance our timer.
         self.last_query_time = end_query_time;
-        let control_4xx = control_4xx_result?;
-        let control_5xx = control_5xx_result?;
-        let control_2xx = control_2xx_result?;
-        let canary_4xx = canary_4xx_result?;
-        let canary_5xx = canary_5xx_result?;
-        let canary_2xx = canary_2xx_result?;
 
+        let total_metrics_count = metrics.iter().map(|m| m.histogram().total()).sum();
         self.check_metrics_count(
-            control_2xx + control_4xx + control_5xx,
-            canary_2xx + canary_4xx + canary_5xx,
+            total_metrics_count,
             self.start_time,
             start_query_time,
             end_query_time,
         );
 
-        debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
-        debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
+        Ok(metrics)
+    }
 
-        let utc_now = Utc::now();
-        let mut baseline = CategoricalObservation::new(Group::Control, utc_now);
-        let mut canary = CategoricalObservation::new(Group::Experimental, utc_now);
+    async fn set_canary_version_id(&mut self, canary_version_id: String) -> Result<()> {
+        self.canary_version_id = Some(canary_version_id);
+        Ok(())
+    }
 
-        baseline.increment_by(&ResponseStatusCode::_2XX, control_2xx);
-        baseline.increment_by(&ResponseStatusCode::_4XX, control_4xx);
-        baseline.increment_by(&ResponseStatusCode::_5XX, control_5xx);
-
-        canary.increment_by(&ResponseStatusCode::_2XX, canary_2xx);
-        canary.increment_by(&ResponseStatusCode::_4XX, canary_4xx);
-        canary.increment_by(&ResponseStatusCode::_5XX, canary_5xx);
-
-        Ok(vec![baseline, canary])
+    // TODO: rename either baseline or control
+    async fn set_baseline_version_id(&mut self, baseline_version_id: String) -> Result<()> {
+        self.control_version_id = Some(baseline_version_id);
+        Ok(())
     }
 }
 

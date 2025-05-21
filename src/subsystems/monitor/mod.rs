@@ -48,6 +48,20 @@ impl MonitorSubsystem<StatusCode> {
     async fn respond_to_mail(&mut self, mail: MonitorMail<StatusCode>) {
         match mail {
             MonitorMail::Query(params) => self.handle_query(params).await,
+            MonitorMail::SetBaselineVersionId(params) => {
+                self.monitor
+                    .set_baseline_version_id(params.version_id)
+                    .await
+                    .unwrap();
+                params.outbox.send(Ok(())).unwrap();
+            }
+            MonitorMail::SetCanaryVersionId(params) => {
+                self.monitor
+                    .set_canary_version_id(params.version_id)
+                    .await
+                    .unwrap();
+                params.outbox.send(Ok(())).unwrap();
+            }
         }
     }
 

@@ -12,7 +12,7 @@ pub(crate) use lambda::LambdaPlatform;
 #[async_trait]
 pub trait Platform: Shutdownable {
     /// Deploy the canary app. Do not assign it any traffic.
-    async fn deploy(&mut self) -> Result<String>;
+    async fn deploy(&mut self) -> Result<(String, String)>;
     /// Remove the canary app from the platform.
     async fn yank_canary(&mut self) -> Result<()>;
     /// Delete the canary app from the platform.

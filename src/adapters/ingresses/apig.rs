@@ -177,7 +177,7 @@ impl AwsApiGateway {
 
 #[async_trait]
 impl Ingress for AwsApiGateway {
-    async fn release_canary(&mut self, platform_id: String) -> Result<()> {
+    async fn release_canary(&mut self, _: String, canary_version_id: String) -> Result<()> {
         debug!("Releasing canary in API Gateway!");
         // Get the auto-generated API ID and Resource ID
         let api = self.get_api_id_by_name(&self.gateway_name).await?;
@@ -194,7 +194,7 @@ impl Ingress for AwsApiGateway {
         // NOTE: All calls to invoke the function will fail unless this is explicitly added
         self.lambda_client
             .add_permission()
-            .function_name(platform_id.clone())
+            .function_name(canary_version_id.clone())
             .statement_id(format!("apigateway-permission-{}", api_id))
             .action("lambda:InvokeFunction")
             .principal("apigateway.amazonaws.com")
@@ -227,7 +227,7 @@ impl Ingress for AwsApiGateway {
             .path("/uri")
             .value(format!(
                 "arn:aws:apigateway:{}:lambda:path/2015-03-31/functions/{}/invocations",
-                self.region, platform_id
+                self.region, canary_version_id
             ))
             .build();
 
