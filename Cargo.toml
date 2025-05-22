@@ -74,6 +74,9 @@ tracing-subscriber = { version = "0.3.19", features = [
 ] }
 url = "2.5.4"
 uuid = { version = "1.9", features = ["serde", "v4"] }
+ignore.workspace = true
+base64.workspace = true
+tokio-util.workspace = true
 
 [workspace.dependencies]
 pretty_assertions = "1.4"

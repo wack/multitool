@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, absolute};
 
 use miette::{IntoDiagnostic as _, Result};
 use std::hash::Hasher as _;
@@ -12,10 +12,31 @@ use crate::fs::stream_file;
 /// `xxHash`.
 pub struct XXHash32;
 
+#[derive(Clone)]
 pub struct FileHash32 {
-    pub path: PathBuf,
-    pub digest: u32,
-    pub size: u64,
+    // This is guaranteed to be an absolute path.
+    path: PathBuf,
+    digest: u32,
+    size: u64,
+}
+
+impl FileHash32 {
+    pub fn new(path: PathBuf, digest: u32, size: u64) -> Self {
+        Self { path, digest, size }
+    }
+
+    // Returns the 32-bit digest encoded as a hexademical string.
+    pub fn digest(&self) -> String {
+        format!("{:x}", self.digest)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
 }
 
 impl XXHash32 {
@@ -24,19 +45,23 @@ impl XXHash32 {
     const SEED: u32 = 0;
 
     pub async fn hash_file<P: AsRef<Path>>(filepath: P) -> Result<FileHash32> {
+        // Convert the path into an absolute path.
+        let path = absolute(filepath).into_diagnostic()?;
+
         // Create the hasher.
         let mut hasher = XXHasher::with_seed(Self::SEED);
-        let stream = stream_file(filepath.as_ref()).await;
+        let stream = stream_file(path.clone()).await;
         pin!(stream);
 
         // Hash the contents of file.
         while let Some(bytes) = stream.next().await {
-            hasher.write(bytes?.as_ref());
+            let bytes = bytes?;
+            hasher.write(bytes.as_ref());
         }
 
         // Dump the output.
         Ok(FileHash32 {
-            path: filepath.as_ref().to_path_buf(),
+            path,
             digest: hasher.finish_32(),
             size: hasher.total_len(),
         })

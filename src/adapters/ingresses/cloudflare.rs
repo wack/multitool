@@ -16,10 +16,6 @@ use tracing::{debug, info};
 
 pub struct CloudflareWorkerIngress {
     client: Client,
-    // Cloudflare account id
-    account_id: String,
-    // Cloudflare worker name
-    worker_name: String,
     // The version id of the baseline version
     control_version_id: Option<String>,
     // The version id of the canary version
@@ -27,11 +23,9 @@ pub struct CloudflareWorkerIngress {
 }
 
 impl CloudflareWorkerIngress {
-    pub fn new(client: Client, account_id: String, worker_name: String) -> Self {
+    pub fn new(client: Client) -> Self {
         Self {
             client,
-            account_id,
-            worker_name,
             control_version_id: None,
             canary_version_id: None,
         }
@@ -65,13 +59,7 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![control_version, canary_version])
             .build();
 
-        self.client
-            .create_deployment(
-                self.account_id.clone(),
-                self.worker_name.clone(),
-                deployment_request,
-            )
-            .await
+        self.client.create_deployment(deployment_request).await
     }
 
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
@@ -97,13 +85,7 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![control_version, canary_version])
             .build();
 
-        self.client
-            .create_deployment(
-                self.account_id.clone(),
-                self.worker_name.clone(),
-                deployment_request,
-            )
-            .await
+        self.client.create_deployment(deployment_request).await
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
@@ -121,13 +103,7 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![control_version])
             .build();
 
-        self.client
-            .create_deployment(
-                self.account_id.clone(),
-                self.worker_name.clone(),
-                deployment_request,
-            )
-            .await
+        self.client.create_deployment(deployment_request).await
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
@@ -145,13 +121,7 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![canary_version])
             .build();
 
-        self.client
-            .create_deployment(
-                self.account_id.clone(),
-                self.worker_name.clone(),
-                deployment_request,
-            )
-            .await
+        self.client.create_deployment(deployment_request).await
     }
 }
 

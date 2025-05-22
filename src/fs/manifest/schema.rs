@@ -318,13 +318,9 @@ impl CloudflareConfig {
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
-        let client = CloudflareClient::new(&api_token);
+        let client = CloudflareClient::new(account_id, worker_name, &api_token);
 
-        Ok(Box::new(CloudflareWorkerIngress::new(
-            client,
-            account_id,
-            worker_name,
-        )))
+        Ok(Box::new(CloudflareWorkerIngress::new(client)))
     }
 
     fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
@@ -333,13 +329,9 @@ impl CloudflareConfig {
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
-        let client = CloudflareClient::new(&api_token);
+        let client = CloudflareClient::new(account_id, worker_name, &api_token);
 
-        Ok(Box::new(CloudFlareMonitor::new(
-            client,
-            account_id,
-            worker_name,
-        )))
+        Ok(Box::new(CloudFlareMonitor::new(client)))
     }
 
     fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
@@ -348,13 +340,9 @@ impl CloudflareConfig {
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
-        let client = CloudflareClient::new(&api_token);
+        let client = CloudflareClient::new(account_id, worker_name, &api_token);
 
-        Ok(Box::new(CloudflareWorkerPlatform::new(
-            client,
-            account_id,
-            worker_name,
-        )))
+        Ok(Box::new(CloudflareWorkerPlatform::new(client, fs)))
     }
 }
 
