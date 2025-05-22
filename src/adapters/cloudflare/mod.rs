@@ -1,30 +1,40 @@
+use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
-use miette::{IntoDiagnostic, Result};
-use reqwest::Client;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
-use std::collections::HashMap;
+use miette::{IntoDiagnostic, Result, miette};
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::multipart::Part;
+use reqwest::{Client, multipart};
 use std::sync::OnceLock;
+use tokio::io::BufWriter;
 use tracing::error;
-use uploads::{UploadAssetsResponse, UploadRequest, UploadSessionResponse, UploadVersionRequest};
+use uploads::{
+    UploadAssetsResponse, UploadSessionResponse, UploadVersionRequest, UploadVersionResponse,
+};
 use url::Url;
 
 use deployments::{CreateDeploymentRequest, DeploymentResponse};
 use metrics::MetricsResponse;
 use responses::CloudflareResponse;
 
+use crate::artifacts::{CloudflareManifest, read_file_as_b64};
+
 static URL: OnceLock<Url> = OnceLock::new();
 
 fn init_url() -> Url {
-    Url::parse("https://api.cloudflare.com/client/v4/").unwrap()
+    Url::parse("https://api.cloudflare.com/client/v4").unwrap()
 }
 
 #[derive(Clone)]
 pub struct CloudflareClient {
     client: Client,
+    /// This is the Cloudflare account id
+    account_id: String,
+    /// The name of the Cloudflare worker
+    worker_name: String,
 }
 
 impl CloudflareClient {
-    pub fn new(token: &str) -> Self {
+    pub fn new(account_id: String, worker_name: String, token: &str) -> Self {
         // TODO: Add a timeout.
         let mut default_headers = HeaderMap::new();
         let auth = format!("Bearer {token}");
@@ -37,17 +47,21 @@ impl CloudflareClient {
             .build()
             .expect("Must be able to construct client");
 
-        Self { client }
+        Self {
+            client,
+            account_id,
+            worker_name,
+        }
     }
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/assets/subresources/upload/methods/create/
     pub async fn create_assets_upload_session(
         &self,
-        account_id: String,
-        worker_name: String,
-        request: UploadRequest,
+        manifest: &CloudflareManifest,
     ) -> Result<UploadSessionResponse> {
+        let account_id = &self.account_id;
+        let worker_name = &self.worker_name;
         let path =
             format!("/accounts/{account_id}/workers/scripts/{worker_name}/assets-upload-session");
         let url = Self::url_with_path(&path);
@@ -55,13 +69,13 @@ impl CloudflareClient {
         let response = self
             .client
             .post(url)
-            .json(&request)
+            .json(manifest)
             .send()
             .await
             .into_diagnostic()?;
 
         if !response.status().is_success() {
-            return Err(miette::miette!(
+            return Err(miette!(
                 "Failed to create assets upload session. Error: {:?}",
                 response
                     .json()
@@ -82,31 +96,36 @@ impl CloudflareClient {
     // https://developers.cloudflare.com/api/resources/workers/subresources/assets/subresources/upload/methods/create/
     pub async fn upload_assets(
         &self,
-        account_id: String,
-        file_upload_jwt: String,
-        // Key: file hash, Value: base64 encoded file
-        files: HashMap<String, String>,
-        // The list of file hashes Cloudflare wants us to upload together
+        file_upload_jwt: &str,
         bucket: Vec<String>,
-    ) -> Result<String> {
+        manifest: CloudflareManifest,
+    ) -> Result<UploadAssetsResponse> {
+        let account_id = &self.account_id;
         let path = format!("/accounts/{account_id}/workers/assets/upload?base64=true");
         let url = Self::url_with_path(&path);
 
-        let mut request = HashMap::new();
+        let mut request = multipart::Form::new();
 
-        // Loops over the file hashes and adds them to a multipart/form-data request
+        let mut files = manifest.files().clone();
+        files.sort_by_key(|file| file.digest());
+        // Loops over the file hashes from the bucket CF returns
+        // Looks up the file in the manifest and adds the base64 content to the request
         for file_hash in bucket {
-            let base64_data = files
-                .get(&file_hash)
-                .ok_or_else(|| miette::miette!("File not found in the list"))?;
+            let file_idx = files
+                .binary_search_by_key(&file_hash, |file| file.digest())
+                .map_err(|_| miette!("File hash {file_hash} not found in manifest"))?;
+            let path = files[file_idx].path().to_path_buf();
+            files.remove(file_idx);
 
-            request.insert(file_hash.clone(), base64_data);
+            let mut file_bytes = Vec::new();
+            read_file_as_b64(path, &mut file_bytes).await?;
+
+            let file_len = file_bytes.len() as u64;
+
+            request = request.part(file_hash, Part::stream_with_length(file_bytes, file_len));
         }
 
         let mut file_upload_headers = HeaderMap::new();
-
-        // Set the content type to multipart/form-data
-        file_upload_headers.insert(CONTENT_TYPE, "multipart/form-data".parse().unwrap());
 
         // Set the authorization header with the JWT token we got from the session upload request
         let file_upload_auth = format!("Bearer {file_upload_jwt}");
@@ -119,13 +138,13 @@ impl CloudflareClient {
             .post(url.clone())
             // TODO: during testing, check if this overrides the default headers
             .headers(file_upload_headers)
-            .json(&request)
+            .multipart(request)
             .send()
             .await
             .into_diagnostic()?;
 
         if !response.status().is_success() {
-            return Err(miette::miette!(
+            return Err(miette!(
                 "Failed to upload asset(s). Error: {:?}",
                 response
                     .json()
@@ -139,32 +158,38 @@ impl CloudflareClient {
             .await
             .into_diagnostic()?;
 
-        Ok(upload_response.result.jwt)
+        Ok(upload_response.result)
     }
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/create/
     pub async fn upload_version(
         &self,
-        account_id: String,
-        worker_name: String,
         file_upload_jwt: String,
-    ) -> Result<()> {
-        let path = format!("/accounts/{account_id}/workers/scripts/{worker_name}");
+        keep_assets: bool,
+    ) -> Result<UploadVersionResponse> {
+        let account_id = &self.account_id;
+        let worker_name = &self.worker_name;
+        let path = format!("/accounts/{account_id}/workers/scripts/{worker_name}/versions");
         let url = Self::url_with_path(&path);
 
-        let request = UploadVersionRequest::new(file_upload_jwt);
+        let metadata = UploadVersionRequest::new(file_upload_jwt, keep_assets);
+
+        let request = multipart::Form::new().text(
+            "metadata",
+            serde_json::to_string(&metadata).into_diagnostic()?,
+        );
 
         let response = self
             .client
-            .put(url)
-            .json(&request)
+            .post(url)
+            .multipart(request)
             .send()
             .await
             .into_diagnostic()?;
 
         if !response.status().is_success() {
-            return Err(miette::miette!(
+            return Err(miette!(
                 "Failed to upload Worker version. Error: {:?}",
                 response
                     .json()
@@ -173,23 +198,26 @@ impl CloudflareClient {
             ));
         }
 
-        Ok(())
+        let version_response = response
+            .json::<CloudflareResponse<UploadVersionResponse>>()
+            .await
+            .into_diagnostic()?;
+
+        Ok(version_response.result)
     }
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/get/
-    pub async fn get_current_version(
-        &self,
-        account_id: String,
-        script_name: String,
-    ) -> Result<String> {
-        let path = format!("/accounts/{account_id}/workers/scripts/{script_name}/deployments");
+    pub async fn get_current_version(&self) -> Result<String> {
+        let account_id = &self.account_id;
+        let worker_name = &self.worker_name;
+        let path = format!("/accounts/{account_id}/workers/scripts/{worker_name}/deployments");
         let url = Self::url_with_path(&path);
 
         let response = self.client.get(url).send().await.into_diagnostic()?;
 
         if !response.status().is_success() {
-            return Err(miette::miette!(
+            return Err(miette!(
                 "Failed to get current Worker version. Error: {:?}",
                 response
                     .json()
@@ -209,18 +237,15 @@ impl CloudflareClient {
             .deployments
             .first()
             .map(|deployment| deployment.id().clone())
-            .ok_or_else(|| miette::miette!("No deployments found"))
+            .ok_or_else(|| miette!("No deployments found"))
     }
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/create/
-    pub async fn create_deployment(
-        &self,
-        account_id: String,
-        script_name: String,
-        request: CreateDeploymentRequest,
-    ) -> Result<()> {
-        let path = format!("accounts/{account_id}/workers/scripts/{script_name}/deployments");
+    pub async fn create_deployment(&self, request: CreateDeploymentRequest) -> Result<()> {
+        let account_id = &self.account_id;
+        let worker_name = &self.worker_name;
+        let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/deployments");
         let url = Self::url_with_path(&path);
 
         let response = self
@@ -232,7 +257,7 @@ impl CloudflareClient {
             .into_diagnostic()?;
 
         if !response.status().is_success() {
-            return Err(miette::miette!(
+            return Err(miette!(
                 "Failed to create new Worker deployment. Error: {:?}",
                 response
                     .json()
@@ -247,14 +272,14 @@ impl CloudflareClient {
     // For the monitor to grab metrics within a time range.
     pub async fn collect_metrics(
         &self,
-        account_id: String,
-        worker_name: String,
         worker_version_id: String,
         status_code_range_start: u16,
         status_code_range_end: u16,
         from_time: DateTime<chrono::Utc>,
         to_time: DateTime<chrono::Utc>,
     ) -> Result<u32> {
+        let account_id = &self.account_id;
+        let worker_name = &self.worker_name;
         let path = format!("/accounts/{account_id}/workers/observability/telemetry/query");
         let url = Self::url_with_path(&path);
 

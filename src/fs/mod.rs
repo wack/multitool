@@ -74,7 +74,7 @@ impl FileSystem {
         Ok(manifest_box)
     }
 
-    /// The project directory is the first directory with a Wack manifest
+    /// The project directory is the first directory with a MultiTool manifest
     /// staritng in the current directory and walking up the directory
     /// tree until one is observed.
     /// `Ok(Some(_))`` is returned when the file is found successfully.
@@ -188,7 +188,7 @@ impl FileSystem {
 }
 
 #[derive(Error, Debug, Diagnostic)]
-#[error("Wack manifest file not found")]
+#[error("MultiTool manifest file not found")]
 struct ManifestMissing;
 
 /// A shorthand for referring to one of the $XDG directories.

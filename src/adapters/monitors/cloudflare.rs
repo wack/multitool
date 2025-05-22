@@ -15,10 +15,6 @@ use super::Monitor;
 
 pub struct CloudFlareMonitor {
     client: Client,
-    // Cloudflare account id
-    account_id: String,
-    // Cloudflare worker name
-    worker_name: String,
     // The version id of the baseline version
     control_version_id: Option<String>,
     // The version id of the canary version
@@ -30,11 +26,9 @@ pub struct CloudFlareMonitor {
 }
 
 impl CloudFlareMonitor {
-    pub fn new(client: Client, account_id: String, worker_name: String) -> Self {
+    pub fn new(client: Client) -> Self {
         Self {
             client,
-            account_id,
-            worker_name,
             control_version_id: None,
             canary_version_id: None,
             start_time: Utc::now(),
@@ -61,8 +55,6 @@ impl Monitor for CloudFlareMonitor {
         // Query all control metrics, but only if we've already received a control version id
         if let Some(control_version_id) = &self.control_version_id {
             let control_2xx_future = self.client.collect_metrics(
-                self.account_id.clone(),
-                self.worker_name.clone(),
                 control_version_id.clone(),
                 200,
                 299,
@@ -71,8 +63,6 @@ impl Monitor for CloudFlareMonitor {
             );
 
             let control_4xx_future = self.client.collect_metrics(
-                self.account_id.clone(),
-                self.worker_name.clone(),
                 control_version_id.clone(),
                 400,
                 499,
@@ -81,8 +71,6 @@ impl Monitor for CloudFlareMonitor {
             );
 
             let control_5xx_future = self.client.collect_metrics(
-                self.account_id.clone(),
-                self.worker_name.clone(),
                 control_version_id.clone(),
                 500,
                 599,
@@ -110,8 +98,6 @@ impl Monitor for CloudFlareMonitor {
         // Query all canary metrics, but only if we've already received a control version id
         if let Some(canary_version_id) = &self.canary_version_id {
             let canary_2xx_future = self.client.collect_metrics(
-                self.account_id.clone(),
-                self.worker_name.clone(),
                 canary_version_id.clone(),
                 200,
                 299,
@@ -120,8 +106,6 @@ impl Monitor for CloudFlareMonitor {
             );
 
             let canary_4xx_future = self.client.collect_metrics(
-                self.account_id.clone(),
-                self.worker_name.clone(),
                 canary_version_id.clone(),
                 400,
                 499,
@@ -130,8 +114,6 @@ impl Monitor for CloudFlareMonitor {
             );
 
             let canary_5xx_future = self.client.collect_metrics(
-                self.account_id.clone(),
-                self.worker_name.clone(),
                 canary_version_id.clone(),
                 500,
                 599,

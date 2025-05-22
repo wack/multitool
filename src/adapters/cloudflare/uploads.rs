@@ -1,30 +1,4 @@
-use bon::Builder;
-use derive_getters::Getters;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder, Getters)]
-pub struct UploadRequest {
-    pub manifest: HashMap<String, FileMetadata>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FileMetadata {
-    pub hash: String,
-    pub size: u64,
-}
-
-impl UploadRequest {
-    pub fn new() -> Self {
-        Self {
-            manifest: HashMap::new(),
-        }
-    }
-
-    pub fn add_file(&mut self, path: String, hash: String, size: u64) {
-        self.manifest.insert(path, FileMetadata { hash, size });
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UploadSessionResponse {
@@ -41,6 +15,7 @@ pub struct UploadAssetsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UploadVersionRequest {
     pub assets: Assets,
+    pub keep_assets: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,11 +24,17 @@ pub struct Assets {
 }
 
 impl UploadVersionRequest {
-    pub fn new(jwt: String) -> Self {
+    pub fn new(jwt: String, keep_assets: bool) -> Self {
         Self {
             assets: Assets { jwt },
+            keep_assets,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UploadVersionResponse {
+    pub id: String,
 }
 
 #[cfg(test)]
@@ -80,23 +61,5 @@ mod tests {
         assert_eq!(response.buckets[0][0], "08f1dfda4574284ab3c21666d1");
         assert_eq!(response.buckets[0][1], "4f1c1af44620d531446ceef93f");
         assert_eq!(response.buckets[1][0], "54995e302614e0523757a04ec1");
-    }
-
-    #[test]
-    fn test_serialization() {
-        let mut request = UploadRequest::new();
-        request.add_file("foo".to_string(), "abc123".to_string(), 1);
-
-        let json = serde_json::to_value(&request).unwrap();
-        let expected = json!({
-            "manifest": {
-                "foo": {
-                    "hash": "abc123",
-                    "size": 1
-                }
-            }
-        });
-
-        assert_eq!(json, expected);
     }
 }
