@@ -13,7 +13,7 @@ use miette::Result;
 
 use super::Monitor;
 
-pub struct CloudFlareMonitor {
+pub struct CloudflareMonitor {
     client: Client,
     // The version id of the baseline version
     control_version_id: Option<String>,
@@ -25,7 +25,7 @@ pub struct CloudFlareMonitor {
     last_query_time: DateTime<Utc>,
 }
 
-impl CloudFlareMonitor {
+impl CloudflareMonitor {
     pub fn new(client: Client) -> Self {
         Self {
             client,
@@ -38,7 +38,7 @@ impl CloudFlareMonitor {
 }
 
 #[async_trait]
-impl Monitor for CloudFlareMonitor {
+impl Monitor for CloudflareMonitor {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
 
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
@@ -159,7 +159,7 @@ impl Monitor for CloudFlareMonitor {
         Ok(())
     }
 
-    // TODO: rename either baseline or control
+    // TODO: standardize naming to either baseline or control
     async fn set_baseline_version_id(&mut self, baseline_version_id: String) -> Result<()> {
         self.control_version_id = Some(baseline_version_id);
         Ok(())
@@ -167,8 +167,9 @@ impl Monitor for CloudFlareMonitor {
 }
 
 #[async_trait]
-impl Shutdownable for CloudFlareMonitor {
+impl Shutdownable for CloudflareMonitor {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!();
+        // When we get the shutdown signal, all we need to do is not query anymore
+        Ok(())
     }
 }

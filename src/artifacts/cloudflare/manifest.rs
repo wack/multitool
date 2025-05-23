@@ -16,7 +16,7 @@ use multi_core::{
 
 #[derive(Getters, Clone)]
 pub(crate) struct CloudflareManifest {
-    // For whatever reason, CloudFlare returns buckets
+    // For whatever reason, Cloudflare returns buckets
     // using the file's hash, not the file's name, so we
     // store the inverse of what you might expect.
     files: Vec<FileHash32>,

@@ -137,11 +137,6 @@ impl Run {
         let rt = Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
-            // First, we have to load the artifact.
-            // This lets us fail fast in the case where the artifact
-            // doesn't exist or we don't have permission to read the file.
-            debug!("Loading the lambda artifact...");
-            let artifact = LambdaZip::load(&self.artifact_path).await?;
             // We need to convert our workspace and application names into the full workspace and application object
             debug!("Loading workspace and application...");
             let workspace_name = self.workspace_name()?;
@@ -178,18 +173,20 @@ impl Run {
 
             info!("Starting the rollout...");
 
-            // Let's capture the shutdown signal from the OS.
-            Toplevel::new(|s| async move {
-                // • Start the action listener subsystem.
-                s.start(SubsystemBuilder::new(
-                    CONTROLLER_SUBSYSTEM_NAME,
-                    controller.into_subsystem(),
-                ));
-            })
-            .catch_signals()
-            .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
-            .await
-            .map_err(Into::into)
+            Ok(())
+
+            // // Let's capture the shutdown signal from the OS.
+            // Toplevel::new(|s| async move {
+            //     // • Start the action listener subsystem.
+            //     s.start(SubsystemBuilder::new(
+            //         CONTROLLER_SUBSYSTEM_NAME,
+            //         controller.into_subsystem(),
+            //     ));
+            // })
+            // .catch_signals()
+            // .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
+            // .await
+            // .map_err(Into::into)
         })
     }
 

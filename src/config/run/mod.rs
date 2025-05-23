@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use clap::Args;
-use derive_getters::Getters;
 
 use crate::{MULTITOOL_ORIGIN, manifest::Manifest};
 
@@ -20,6 +19,7 @@ pub struct RunSubcommand {
     #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]
     origin: Option<String>,
 
+    ///Cloudflare config
     /// The Cloudflare account ID to use when deploying to Workers.
     #[arg(long, env = "CLOUDFLARE_ACCOUNT_ID")]
     cloudflare_account_id: Option<String>,
@@ -29,9 +29,26 @@ pub struct RunSubcommand {
     /// The name of the Cloudflare Worker to deploy.
     #[arg(long, env = "CLOUDFLARE_API_TOKEN")]
     cloudflare_api_token: Option<String>,
+
+    /// AWS COnfig
     /// The AWS region to deploy into.
     #[arg(long, env = "AWS_REGION")]
     aws_region: Option<String>,
+    /// The AWS API Gateway's Name
+    #[arg(long, env = "AWS_GATEWAY_NAME")]
+    aws_gateway_name: Option<String>,
+    /// The AWS API Gateway Stage's Name
+    #[arg(long, env = "AWS_STAGE_NAME")]
+    aws_stage_name: Option<String>,
+    /// The AWS API Gateway Stage's Path (with leading slash)
+    #[arg(long, env = "AWS_RESOURCE_PATH")]
+    aws_resource_path: Option<String>,
+    /// The AWS API Gateway Stage's HTTP Method
+    #[arg(long, env = "AWS_RESOURCE_METHOD")]
+    aws_resource_method: Option<String>,
+    /// The AWS Lambda's Name
+    #[arg(long, env = "AWS_LAMBDA_NAME")]
+    aws_lambda_name: Option<String>,
 }
 
 impl RunSubcommand {
@@ -49,6 +66,26 @@ impl RunSubcommand {
 
     pub fn aws_region(&self) -> Option<&str> {
         self.aws_region.as_deref()
+    }
+
+    pub fn aws_gateway_name(&self) -> Option<&str> {
+        self.aws_gateway_name.as_deref()
+    }
+
+    pub fn aws_stage_name(&self) -> Option<&str> {
+        self.aws_stage_name.as_deref()
+    }
+
+    pub fn aws_resource_path(&self) -> Option<&str> {
+        self.aws_resource_path.as_deref()
+    }
+
+    pub fn aws_resource_method(&self) -> Option<&str> {
+        self.aws_resource_method.as_deref()
+    }
+
+    pub fn aws_lambda_name(&self) -> Option<&str> {
+        self.aws_lambda_name.as_deref()
     }
 
     pub fn workspace(&self) -> Option<&str> {

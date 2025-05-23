@@ -11,7 +11,8 @@ use crate::{
 /// StatusCode is a type alias for the unwieldly named type on the right.
 pub type StatusCode = CategoricalObservation<5, ResponseStatusCode>;
 
-pub use cloudflare::CloudFlareMonitor;
+pub use cloudflare::CloudflareMonitor;
+pub use cloudwatch::CloudWatch;
 
 // TODO: For now, we require all monitors to monitor just
 // the status code. We may have trouble with the Builder in the

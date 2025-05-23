@@ -84,7 +84,7 @@ impl FileSystem {
     /// permissions, or the pwd is outside of the bounds of the filesystem.
     /// This function only checks if the file exists, not if the file is valid.
     pub fn project_dir(&self) -> Result<Option<PathBuf>> {
-        // • Check this directory for the `Multi.toml` manifest file. If not found,
+        // • Check this directory for the `MultiTool.toml` manifest file. If not found,
         //   traverse upward until found.
         let current_dir = std::env::current_dir().into_diagnostic()?;
         for dir in current_dir.ancestors() {

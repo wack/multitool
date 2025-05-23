@@ -92,6 +92,7 @@ impl Platform for CloudflareWorkerPlatform {
 #[async_trait]
 impl Shutdownable for CloudflareWorkerPlatform {
     async fn shutdown(&mut self) -> ShutdownResult {
-        todo!();
+        // When we get the shutdown signal, we don't want to do anything in the platform
+        Ok(())
     }
 }
