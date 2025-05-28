@@ -8,7 +8,7 @@ mod schema;
 
 /// This is the prefix of the manifest file name. e.g. Multi.toml, Multi.yml, and Multi.json
 /// are all prefixed with `Multi`
-const MANIFEST_PREFIX: &str = "Multi";
+const MANIFEST_PREFIX: &str = "MultiTool";
 /// This is the set of allowed filetypes for the manifest. Right now,
 /// we only accept toml and Json files, but we could imagine accepting yml
 /// files in the future.
