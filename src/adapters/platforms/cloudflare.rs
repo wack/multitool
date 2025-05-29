@@ -1,48 +1,59 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
-    Shutdownable, adapters::cloudflare::CloudflareClient as Client, artifacts::CloudflareManifest,
-    fs::FileSystem, subsystems::ShutdownResult,
+    Shutdownable,
+    adapters::{backend::PlatformConfig, cloudflare::CloudflareClient as Client},
+    artifacts::CloudflareManifest,
+    fs::FileSystem,
+    subsystems::ShutdownResult,
 };
 
 use super::Platform;
 use async_trait::async_trait;
-use miette::{IntoDiagnostic, Result};
+use derive_getters::Getters;
+use miette::Result;
+use tracing::{debug, info};
 
+#[derive(Getters)]
 pub struct CloudflareWorkerPlatform {
     client: Client,
     fs: FileSystem,
+    artifact_path: PathBuf,
 }
 
 impl CloudflareWorkerPlatform {
-    pub fn new(client: Client, fs: FileSystem) -> Self {
-        Self { client, fs }
-    }
-
-    /// Find or determine the project root, either by using the project's
-    /// manifest file, or the current working directory if none was found.
-    fn select_project_root(&self) -> Result<PathBuf> {
-        match self.fs.project_dir() {
-            Err(err) => Err(err),
-            Ok(Some(path)) => Ok(path),
-            Ok(None) => std::env::current_dir().into_diagnostic(),
+    pub fn new(client: Client, fs: FileSystem, artifact_path: &Path) -> Self {
+        Self {
+            client,
+            fs,
+            artifact_path: artifact_path.to_path_buf(),
         }
     }
 }
 
 #[async_trait]
 impl Platform for CloudflareWorkerPlatform {
+    fn get_config(&self) -> PlatformConfig {
+        PlatformConfig::CloudflareWorker {
+            account_id: self.client.account_id().clone(),
+            worker_name: self.client.worker_name().clone(),
+        }
+    }
+
     async fn deploy(&mut self) -> Result<(String, String)> {
+        info!("Deploying Worker!");
         let baseline_version_id = self.client.get_current_version().await?;
 
         // Asset upload for workers is a slightly tricky process. It
         // happens in three phases:
         // 1. First, we create a manifest and send it to start an upload session.
-        let project_root = self.select_project_root()?;
-        let manifest = CloudflareManifest::new(&project_root).await?;
+        let manifest = CloudflareManifest::new(&self.artifact_path).await?;
         let upload_session_response = self.client.create_assets_upload_session(&manifest).await?;
 
         let mut completion_jwt = upload_session_response.jwt.clone();
+
+        debug!("jwt: {}", completion_jwt);
+        debug!("buckets: {:?}", upload_session_response.buckets);
 
         let mut keep_assets = false;
         // 2. Then, you upload your assets, but only if Cloudflare wants them

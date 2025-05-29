@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use bon::bon;
+use derive_getters::Getters;
 use miette::{Result, miette};
 use tracing::{debug, info};
 
 use crate::{
-    Shutdownable, WholePercent, subsystems::ShutdownResult, utils::load_default_aws_config,
+    Shutdownable, WholePercent, adapters::backend::IngressConfig, subsystems::ShutdownResult,
+    utils::load_default_aws_config,
 };
 
 use aws_sdk_apigateway::{
@@ -19,6 +21,7 @@ use super::Ingress;
 /// AwsApiGateway is the Ingress implementation for AWS API Gateway + Lambda.
 /// It's responsible for creating canary rollouts on API Gateway, updating their
 /// traffic and promoting them, and deploying Lambda functions.
+#[derive(Getters)]
 pub struct AwsApiGateway {
     apig_client: GatewayClient,
     lambda_client: LambdaClient,
@@ -177,6 +180,16 @@ impl AwsApiGateway {
 
 #[async_trait]
 impl Ingress for AwsApiGateway {
+    fn get_config(&self) -> IngressConfig {
+        IngressConfig::AwsRestApiGateway {
+            region: self.region.clone(),
+            gateway_name: self.gateway_name.clone(),
+            stage_name: self.stage_name.clone(),
+            resource_path: self.resource_path.clone(),
+            resource_method: self.resource_method.clone(),
+        }
+    }
+
     async fn release_canary(&mut self, _: String, canary_version_id: String) -> Result<()> {
         debug!("Releasing canary in API Gateway!");
         // Get the auto-generated API ID and Resource ID

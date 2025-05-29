@@ -10,11 +10,16 @@ pub type BoxedIngress = Box<dyn Ingress + Send + Sync>;
 pub(crate) use apig::AwsApiGateway;
 pub(crate) use cloudflare::CloudflareWorkerIngress;
 
+use super::backend::IngressConfig;
+
 /// Ingresses are responsible for (1) controlling how much traffic the canary
 /// gets (hence the name ingress, since it functions like a virtual LB) and
 /// (2) deploying, yanking, and promoting both the canary and the baseline.
 #[async_trait]
 pub trait Ingress: Shutdownable {
+    /// Returns the configuration data for this ingress
+    fn get_config(&self) -> IngressConfig;
+
     /// Given a deployed platform, release the canary in the ingress.
     async fn release_canary(
         &mut self,
@@ -41,7 +46,6 @@ pub trait Ingress: Shutdownable {
 }
 
 mod apig;
-mod builder;
 mod cloudflare;
 
 #[cfg(test)]

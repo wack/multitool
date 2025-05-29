@@ -14,6 +14,8 @@ pub type StatusCode = CategoricalObservation<5, ResponseStatusCode>;
 pub use cloudflare::CloudflareMonitor;
 pub use cloudwatch::CloudWatch;
 
+use super::backend::MonitorConfig;
+
 // TODO: For now, we require all monitors to monitor just
 // the status code. We may have trouble with the Builder in the
 // future because we can't really genericize it. But when we add
@@ -24,6 +26,9 @@ pub type BoxedMonitor = Box<dyn Monitor<Item = StatusCode> + Send + Sync>;
 #[async_trait]
 pub trait Monitor: Shutdownable {
     type Item: Observation;
+
+    /// Returns the configuration data for this monitor
+    fn get_config(&self) -> MonitorConfig;
     async fn query(&mut self) -> Result<Vec<Self::Item>>;
     async fn set_canary_version_id(&mut self, canary_version_id: String) -> Result<()>;
     async fn set_baseline_version_id(&mut self, baseline_version_id: String) -> Result<()>;
@@ -53,6 +58,5 @@ pub trait Monitor: Shutdownable {
     }
 }
 
-mod builder;
 mod cloudflare;
 mod cloudwatch;

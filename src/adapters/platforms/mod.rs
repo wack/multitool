@@ -8,9 +8,13 @@ pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
 pub(crate) use cloudflare::CloudflareWorkerPlatform;
 pub(crate) use lambda::LambdaPlatform;
 
+use super::backend::PlatformConfig;
+
 #[automock]
 #[async_trait]
 pub trait Platform: Shutdownable {
+    /// Returns the configuration data for this platform
+    fn get_config(&self) -> PlatformConfig;
     /// Deploy the canary app. Do not assign it any traffic.
     async fn deploy(&mut self) -> Result<(String, String)>;
     /// Remove the canary app from the platform.
@@ -30,7 +34,6 @@ impl Shutdownable for MockPlatform {
     }
 }
 
-mod builder;
 mod cloudflare;
 mod lambda;
 

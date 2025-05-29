@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use tracing::{debug, info};
+use derive_getters::Getters;
+use tracing::{debug, info, trace};
 
 use crate::{
     Shutdownable,
-    adapters::CloudflareClient as Client,
+    adapters::{CloudflareClient as Client, backend::MonitorConfig},
     metrics::ResponseStatusCode,
     stats::{CategoricalObservation, Group},
     subsystems::ShutdownResult,
@@ -13,6 +14,7 @@ use miette::Result;
 
 use super::Monitor;
 
+#[derive(Getters)]
 pub struct CloudflareMonitor {
     client: Client,
     // The version id of the baseline version
@@ -41,8 +43,16 @@ impl CloudflareMonitor {
 impl Monitor for CloudflareMonitor {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
 
+    fn get_config(&self) -> MonitorConfig {
+        MonitorConfig::CloudflareWorkersObservability {
+            account_id: self.client.account_id().clone(),
+            worker_name: self.client.worker_name().clone(),
+        }
+    }
+
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
         info!("Querying Cloudflare for new metrics.");
+
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
         // compiles them into a list, then generates the correct number of
         // CategoricalObservations for each response code
@@ -52,6 +62,7 @@ impl Monitor for CloudflareMonitor {
 
         let mut metrics = Vec::new();
 
+        trace!("Control version id: {:?}", self.control_version_id);
         // Query all control metrics, but only if we've already received a control version id
         if let Some(control_version_id) = &self.control_version_id {
             let control_2xx_future = self.client.collect_metrics(
@@ -95,6 +106,7 @@ impl Monitor for CloudflareMonitor {
             metrics.push(baseline);
         }
 
+        trace!("Canary version id: {:?}", self.canary_version_id);
         // Query all canary metrics, but only if we've already received a control version id
         if let Some(canary_version_id) = &self.canary_version_id {
             let canary_2xx_future = self.client.collect_metrics(

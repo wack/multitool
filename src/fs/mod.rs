@@ -1,6 +1,6 @@
 use directories::ProjectDirs;
 use file::StaticFile;
-use miette::{Diagnostic, IntoDiagnostic, Report, Result, miette};
+use miette::{Diagnostic, IntoDiagnostic, Result, miette};
 use std::fs;
 use thiserror::Error;
 

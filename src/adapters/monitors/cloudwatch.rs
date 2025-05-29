@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use bon::bon;
-use multitool_sdk::models::CloudWatchDimensions;
-use tracing::{debug, error, info, warn};
+use derive_getters::Getters;
+use tracing::{debug, error, info};
 
 use crate::{
     Shutdownable,
+    adapters::backend::{CloudWatchDimensions, MonitorConfig},
     metrics::ResponseStatusCode,
     stats::{CategoricalObservation, Group},
     subsystems::ShutdownResult,
@@ -20,6 +21,7 @@ use miette::Result;
 
 use super::Monitor;
 
+#[derive(Getters)]
 pub struct CloudWatch {
     client: AwsClient,
     // AWS APIG Name
@@ -168,6 +170,21 @@ impl CloudWatch {
 #[async_trait]
 impl Monitor for CloudWatch {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
+
+    fn get_config(&self) -> MonitorConfig {
+        MonitorConfig::AwsCloudwatchMetrics {
+            dimensions: vec![
+                CloudWatchDimensions {
+                    name: "ApiName".to_string(),
+                    value: self.gateway_name.clone(),
+                },
+                CloudWatchDimensions {
+                    name: "Stage".to_string(),
+                    value: self.stage_name.clone(),
+                },
+            ],
+        }
+    }
 
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
         info!("Querying CloudWatch for new metrics.");

@@ -2,18 +2,19 @@ use crate::{
     Shutdownable, WholePercent,
     adapters::{
         CloudflareClient as Client,
-        cloudflare::deployments::{
-            CreateDeploymentRequest, DeploymentStrategy, DeploymentVersionConfig,
-        },
+        backend::IngressConfig,
+        cloudflare::deployments::{CreateDeploymentRequest, DeploymentStrategy, DeploymentVersion},
     },
     subsystems::ShutdownResult,
 };
 
 use super::Ingress;
 use async_trait::async_trait;
+use derive_getters::Getters;
 use miette::Result;
 use tracing::{debug, info};
 
+#[derive(Getters)]
 pub struct CloudflareWorkerIngress {
     client: Client,
     // The version id of the baseline version
@@ -34,6 +35,13 @@ impl CloudflareWorkerIngress {
 
 #[async_trait]
 impl Ingress for CloudflareWorkerIngress {
+    fn get_config(&self) -> IngressConfig {
+        IngressConfig::CloudflareWorker {
+            account_id: self.client.account_id().clone(),
+            worker_name: self.client.worker_name().clone(),
+        }
+    }
+
     async fn release_canary(
         &mut self,
         baseline_version_id: String,
@@ -46,11 +54,11 @@ impl Ingress for CloudflareWorkerIngress {
         self.canary_version_id = Some(canary_version_id.clone());
 
         // Finally, we can create the config and make the request
-        let control_version = DeploymentVersionConfig::builder()
+        let control_version = DeploymentVersion::builder()
             .percentage(100)
             .version_id(baseline_version_id.clone())
             .build();
-        let canary_version = DeploymentVersionConfig::builder()
+        let canary_version = DeploymentVersion::builder()
             .percentage(0)
             .version_id(canary_version_id.clone())
             .build();
@@ -64,21 +72,13 @@ impl Ingress for CloudflareWorkerIngress {
 
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         info!("Setting Cloudflare canary traffic to {percent}.");
-        let control_version = DeploymentVersionConfig::builder()
+        let control_version = DeploymentVersion::builder()
             .percentage((100 - percent.clone().as_i32()) as u64)
-            .version_id(
-                self.control_version_id
-                    .clone()
-                    .unwrap_or("No control version id found".to_string()),
-            )
+            .version_id(self.control_version_id.clone().unwrap())
             .build();
-        let canary_version = DeploymentVersionConfig::builder()
+        let canary_version = DeploymentVersion::builder()
             .percentage(percent.as_i32() as u64)
-            .version_id(
-                self.canary_version_id
-                    .clone()
-                    .unwrap_or("No canary version id found".to_string()),
-            )
+            .version_id(self.canary_version_id.clone().unwrap())
             .build();
         let deployment_request = CreateDeploymentRequest::builder()
             .strategy(DeploymentStrategy::Percentage)
@@ -90,13 +90,9 @@ impl Ingress for CloudflareWorkerIngress {
 
     async fn rollback_canary(&mut self) -> Result<()> {
         info!("Rolling back canary in Cloudflare.");
-        let control_version = DeploymentVersionConfig::builder()
+        let control_version = DeploymentVersion::builder()
             .percentage(100)
-            .version_id(
-                self.control_version_id
-                    .clone()
-                    .unwrap_or("No control version id found".to_string()),
-            )
+            .version_id(self.control_version_id.clone().unwrap())
             .build();
         let deployment_request = CreateDeploymentRequest::builder()
             .strategy(DeploymentStrategy::Percentage)
@@ -108,13 +104,9 @@ impl Ingress for CloudflareWorkerIngress {
 
     async fn promote_canary(&mut self) -> Result<()> {
         info!("Promoting canary in Cloudflare!");
-        let canary_version = DeploymentVersionConfig::builder()
+        let canary_version = DeploymentVersion::builder()
             .percentage(100)
-            .version_id(
-                self.canary_version_id
-                    .clone()
-                    .unwrap_or("No canary version id found".to_string()),
-            )
+            .version_id(self.canary_version_id.clone().unwrap())
             .build();
         let deployment_request = CreateDeploymentRequest::builder()
             .strategy(DeploymentStrategy::Percentage)
@@ -128,6 +120,10 @@ impl Ingress for CloudflareWorkerIngress {
 #[async_trait]
 impl Shutdownable for CloudflareWorkerIngress {
     async fn shutdown(&mut self) -> ShutdownResult {
+        if self.canary_version_id.is_none() {
+            debug!("No canary version ID set, nothing to rollback.");
+            return Ok(());
+        }
         self.rollback_canary().await?;
         Ok(())
     }

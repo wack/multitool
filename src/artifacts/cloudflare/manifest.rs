@@ -5,7 +5,7 @@ use std::{
 
 use derive_getters::Getters;
 use ignore::WalkBuilder;
-use miette::{IntoDiagnostic as _, Report, Result};
+use miette::{IntoDiagnostic as _, Report, Result, miette};
 use serde::{Serialize, Serializer};
 use tokio::task::JoinSet;
 
@@ -13,8 +13,10 @@ use multi_core::{
     ManyError,
     hashing::{FileHash32, XXHash32},
 };
+use tracing::debug;
+use tracing_subscriber::field::debug;
 
-#[derive(Getters, Clone)]
+#[derive(Getters, Clone, Debug)]
 pub(crate) struct CloudflareManifest {
     // For whatever reason, Cloudflare returns buckets
     // using the file's hash, not the file's name, so we
@@ -34,19 +36,30 @@ impl Serialize for CloudflareManifest {
     where
         S: Serializer,
     {
-        #[derive(Serialize)]
+        #[derive(Serialize, Debug)]
         struct StructValue {
             hash: String,
             size: u64,
         }
         let mut manifest_data = HashMap::new();
         for file in self.files.iter() {
+            // A FileHash32 contains the full path to the file, we need to make sure
+            // that our root also has a full path so we can strip it correctly.
+            let canonical_root = self
+                .root
+                .canonicalize()
+                .expect("Root should be canonicalized");
+
+            // debug!("{:?}", self.root);
+            // debug!("{:?}", canonical_root);
+            // debug!("{:?}", canonical_root.parent());
+
             // Strip the root path from the absolute path, since that's
             // the format CF wants it in.
             let mut key = file
                 .path()
-                .strip_prefix(&self.root)
-                .expect("path must be prefix")
+                .strip_prefix(&canonical_root)
+                .expect("File path should be a subpath of the root")
                 .display()
                 .to_string();
             // If it doesn't start with a slash, give it one.
@@ -60,6 +73,7 @@ impl Serialize for CloudflareManifest {
             };
             manifest_data.insert(key, value);
         }
+        debug!("Manifest data: {:?}", manifest_data);
         manifest_data.serialize(serializer)
     }
 }
@@ -70,9 +84,17 @@ impl Serialize for CloudflareManifest {
 impl CloudflareManifest {
     /// Build a new Manifest using the given root directory.
     pub async fn new<P: AsRef<Path>>(root: P) -> Result<Self> {
+        debug!("Building Cloudflare manifest");
         let directory = root.as_ref().to_path_buf();
+
         // We must provide a valid directory.
-        debug_assert!(directory.metadata().is_ok_and(|meta| meta.is_dir()));
+        if !directory.metadata().is_ok_and(|meta| meta.is_dir()) {
+            return Err(miette!(format!(
+                "The provided path `{}` is not a valid directory",
+                directory.display()
+            )));
+        }
+
         let mut threadpool = JoinSet::new();
         // Build the file tree walker.
         let walker = WalkBuilder::new(directory.clone())
@@ -81,8 +103,16 @@ impl CloudflareManifest {
 
         let mut errors = ManyError::default();
         for entry in walker {
-            let file = entry.into_diagnostic()?.into_path();
-            let future = XXHash32::hash_file(file.clone());
+            debug!("Processing entry: {:?}", entry);
+            let file_entry = entry.into_diagnostic()?;
+
+            // Ignore directories, we only want files.
+            if file_entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                continue;
+            }
+
+            let file_path = file_entry.path().to_path_buf(); //.into_path()
+            let future = XXHash32::hash_file(file_path);
             threadpool.spawn(future);
         }
 
@@ -100,12 +130,20 @@ impl CloudflareManifest {
             .collect();
 
         if !errors.is_empty() {
+            debug!(
+                "Encountered errors while building Cloudflare manifest: {:?}",
+                errors
+            );
             return Err(errors.into());
         }
 
+        debug!(
+            "Finished building Cloudflare manifest with {} files",
+            files.len()
+        );
         Ok(Self {
             files,
-            root: directory.clone(),
+            root: directory,
         })
     }
 }

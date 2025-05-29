@@ -158,9 +158,8 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 self.ingress.release_canary(baseline_version_id.clone(), canary_version_id.clone()).await?;
 
                                 // Finally, we need to set the baseline and canary version ids in the monitor.
-                                // We want to let this crash if there's an error
-                                self.baseline_sender.send(baseline_version_id).await;
-                                self.canary_sender.send(canary_version_id).await;
+                                let _ = self.baseline_sender.send(baseline_version_id).await;
+                                let _ = self.canary_sender.send(canary_version_id).await;
 
                                 locked_state.mark_done().await?;
                             },

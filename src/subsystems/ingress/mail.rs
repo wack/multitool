@@ -2,7 +2,11 @@ use async_trait::async_trait;
 use miette::{IntoDiagnostic, Result};
 use tokio::sync::oneshot;
 
-use crate::{WholePercent, adapters::Ingress, subsystems::handle::Handle};
+use crate::{
+    WholePercent,
+    adapters::{Ingress, backend::IngressConfig},
+    subsystems::handle::Handle,
+};
 
 pub(super) type IngressHandle = Handle<IngressMail>;
 
@@ -48,6 +52,12 @@ impl Ingress for IngressHandle {
         let mail = IngressMail::PromoteCanary(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
+    }
+
+    fn get_config(&self) -> IngressConfig {
+        todo!(
+            "This should never be called, as the IngressHandle is a handle to a ingress that is already running."
+        )
     }
 }
 

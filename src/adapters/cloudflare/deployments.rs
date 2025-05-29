@@ -18,12 +18,12 @@ impl Default for DeploymentStrategy {
 pub struct CreateDeploymentRequest {
     #[serde(default)]
     pub strategy: DeploymentStrategy,
-    pub versions: Vec<DeploymentVersionConfig>,
+    pub versions: Vec<DeploymentVersion>,
     pub annotations: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder, Getters)]
-pub struct DeploymentVersionConfig {
+pub struct DeploymentVersion {
     pub percentage: u64,
     pub version_id: String,
 }
@@ -33,9 +33,9 @@ pub struct DeploymentResponse {
     pub deployments: Vec<Deployment>,
 }
 
-#[derive(Deserialize, Getters)]
+#[derive(Deserialize)]
 pub struct Deployment {
-    id: String,
+    pub versions: Vec<DeploymentVersion>,
 }
 
 #[cfg(test)]

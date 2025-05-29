@@ -5,6 +5,7 @@ use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::MULTITOOL_ORIGIN;
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::HttpCircuitBreaker};
+use bon::Builder;
 use chrono::DateTime;
 use miette::{IntoDiagnostic, Result, bail};
 use multitool_sdk::{
@@ -16,6 +17,9 @@ use multitool_sdk::{
     },
 };
 
+use reqwest::Client;
+use reqwest::header::AUTHORIZATION;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -207,21 +211,56 @@ impl BackendClient {
         Ok(())
     }
 
+    // This is a special function that skips using the API due to the weird Structs
+    // that it creates for the config.
+    // TODO: fix this once we have a better SDK!
     pub async fn new_rollout(
         &self,
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
-    ) -> Result<Rollout> {
+        platform: &BoxedPlatform,
+        ingress: &BoxedIngress,
+        monitor: &BoxedMonitor,
+    ) -> Result<RolloutMeta> {
         trace!("Creating a new rollout");
-        let response = self
-            .client
-            .rollouts_api()
-            .create_rollout(workspace_id, application_id)
+
+        let base_path = &self.conf.base_path;
+        let url = format!(
+            "{}/api/v1/workspaces/{}/applications/{}/rollouts",
+            base_path, workspace_id, application_id
+        );
+
+        let jwt = match self.session.clone() {
+            Some(Session::User(user)) => user.jwt,
+            _ => bail!("You must be logged in to create a rollout."),
+        };
+
+        let config = WebServiceConfig::builder()
+            .ingress(ingress.get_config())
+            .monitor(monitor.get_config())
+            .platform(platform.get_config())
+            .build();
+
+        let request = RolloutRequest::builder()
+            .config(RolloutConfig::WebService(config))
+            .build();
+
+        let client = Client::builder()
+            .build()
+            .expect("Must be able to build client");
+
+        let response = client
+            .post(url)
+            .header(AUTHORIZATION, format!("Bearer {}", jwt))
+            .json(&request)
+            .send()
             .await
             .into_diagnostic()?;
 
+        let rollout = response.json::<RolloutResponse>().await.into_diagnostic()?;
+
         trace!("Rollout created successfully");
-        Ok(*response.rollout)
+        Ok(rollout.rollout)
     }
 
     /// This fuction logs the user into the backend by exchanging these credentials
@@ -386,14 +425,6 @@ impl BackendClient {
     }
 }
 
-/// A parsed and configured set of adapters for interacting
-/// with external systems.
-pub struct ApplicationConfig {
-    pub platform: BoxedPlatform,
-    pub ingress: BoxedIngress,
-    pub monitor: BoxedMonitor,
-}
-
 #[derive(Clone)]
 pub(super) struct BackendConfig {
     // TODO: Add configuration for a timeout.
@@ -456,4 +487,87 @@ mod tests {
     // used independently by different tasks. And because its
     // sent between tasks, it has to be both Send and Sync, too.
     assert_impl_all!(BackendClient: Clone, Send, Sync);
+}
+
+#[derive(Clone, Debug, Serialize, Builder)]
+#[serde(rename_all = "snake_case")]
+pub struct RolloutRequest {
+    config: RolloutConfig,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RolloutConfig {
+    WebService(WebServiceConfig),
+}
+
+#[derive(Clone, Debug, Serialize, Builder)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub struct WebServiceConfig {
+    pub ingress: IngressConfig,
+    pub monitor: MonitorConfig,
+    pub platform: PlatformConfig,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum IngressConfig {
+    AwsRestApiGateway {
+        region: String,
+        gateway_name: String,
+        stage_name: String,
+        resource_path: String,
+        resource_method: String,
+    },
+    CloudflareWorker {
+        account_id: String,
+        worker_name: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CloudWatchDimensions {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MonitorConfig {
+    AwsCloudwatchMetrics {
+        dimensions: Vec<CloudWatchDimensions>,
+    },
+    CloudflareWorkersObservability {
+        account_id: String,
+        worker_name: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformConfig {
+    AwsLambda {
+        region: String,
+        name: String,
+    },
+    CloudflareWorker {
+        account_id: String,
+        worker_name: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Builder)]
+#[serde(rename_all = "snake_case")]
+pub struct RolloutResponse {
+    pub rollout: RolloutMeta,
+}
+
+#[derive(Clone, Debug, Deserialize, Builder)]
+#[serde(rename_all = "snake_case")]
+pub struct RolloutMeta {
+    pub id: u64,
+    pub number: u64,
 }

@@ -5,9 +5,7 @@ use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata
 use crate::fs::{FileSystem, SessionFile, project_manifest};
 use crate::manifest::Manifest;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
-use crate::{
-    ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
-};
+use crate::{ControllerSubsystem, adapters::BackendClient, config::RunSubcommand};
 use miette::{Context, Diagnostic, Result, miette};
 use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
@@ -15,7 +13,7 @@ use tokio::join;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
-use tracing::{debug, info};
+use tracing::{debug, error, info, trace};
 
 use crate::Terminal;
 
@@ -111,8 +109,12 @@ impl Run {
         manifest.load_ingress(&self.args).await
     }
 
-    async fn load_monitor(&self, manifest: &Manifest) -> Result<BoxedMonitor> {
-        manifest.load_monitor(&self.args).await
+    async fn load_monitor(
+        &self,
+        manifest: &Manifest,
+        ingress: &BoxedIngress,
+    ) -> Result<BoxedMonitor> {
+        manifest.load_monitor(&self.args, ingress).await
     }
 
     async fn validate_application(
@@ -151,15 +153,17 @@ impl Run {
             // from the backend. We have the name of the workspace and
             // application, but we need to look up the details.
             debug!("Loading application conf...");
-            let (platform_result, ingress_result, monitor_result) = join!(
+            let (platform_result, ingress_result) = join!(
                 self.load_platform(&self.manifest),
                 self.load_ingress(&self.manifest),
-                self.load_monitor(&self.manifest),
             );
-            let (platform, ingress, monitor) = (platform_result?, ingress_result?, monitor_result?);
+            let (platform, ingress) = (platform_result?, ingress_result?);
 
+            let monitor = self.load_monitor(&self.manifest, &ingress).await?;
             // Create a new rollout.
-            let metadata = self.create_rollout(workspace.id, application.id).await?;
+            let metadata = self
+                .create_rollout(workspace.id, application.id, &platform, &ingress, &monitor)
+                .await?;
 
             // Build the ControllerSubsystem using the boxed objects.
             debug!("Building controller...");
@@ -173,20 +177,18 @@ impl Run {
 
             info!("Starting the rollout...");
 
-            Ok(())
-
-            // // Let's capture the shutdown signal from the OS.
-            // Toplevel::new(|s| async move {
-            //     // • Start the action listener subsystem.
-            //     s.start(SubsystemBuilder::new(
-            //         CONTROLLER_SUBSYSTEM_NAME,
-            //         controller.into_subsystem(),
-            //     ));
-            // })
-            // .catch_signals()
-            // .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
-            // .await
-            // .map_err(Into::into)
+            // Let's capture the shutdown signal from the OS.
+            Toplevel::new(|s| async move {
+                // • Start the action listener subsystem.
+                s.start(SubsystemBuilder::new(
+                    CONTROLLER_SUBSYSTEM_NAME,
+                    controller.into_subsystem(),
+                ));
+            })
+            .catch_signals()
+            .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
+            .await
+            .map_err(Into::into)
         })
     }
 
@@ -194,11 +196,14 @@ impl Run {
         &self,
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
+        platform: &BoxedPlatform,
+        ingress: &BoxedIngress,
+        monitor: &BoxedMonitor,
     ) -> Result<RolloutMetadata> {
         debug!("Creating new rollout...");
         let rollout = self
             .backend
-            .new_rollout(workspace_id, application_id)
+            .new_rollout(workspace_id, application_id, platform, ingress, monitor)
             .await?;
 
         info!(
@@ -212,6 +217,7 @@ impl Run {
             .application_id(application_id)
             .rollout_id(rollout.id)
             .build();
+
         Ok(meta)
     }
 }
