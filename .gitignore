@@ -10,3 +10,6 @@ MultiTool.toml
 MultiTool.json
 MultiTool.yml
 MultiTool.yaml
+
+# Remove any workers user for development
+/worker/**
