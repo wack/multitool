@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{path::PathBuf, sync::OnceLock};
 
 use miette::{Diagnostic, miette};
 use serde::{Deserialize, Serialize};
@@ -108,22 +108,6 @@ pub struct ConfigSection {
 }
 
 impl ConfigSection {
-    fn monitor(&self) -> Option<&MonitorConfig> {
-        self.monitor.as_ref()
-    }
-
-    fn ingress(&self) -> Option<&IngressConfig> {
-        self.ingress.as_ref()
-    }
-
-    fn platform(&self) -> Option<&PlatformConfig> {
-        self.platform.as_ref()
-    }
-
-    fn cloudflare(&self) -> Option<&CloudflareConfig> {
-        self.cloudflare.as_ref()
-    }
-
     async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         // Having cloudflare configured is mutually exclusive with having
         // platform configured. Error if both are set.
@@ -305,9 +289,11 @@ impl PlatformConfig {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
 pub struct AwsLambdaConfig {
     name: String,
     region: String,
+    artifact_path: String,
 }
 
 impl AwsLambdaConfig {
@@ -317,7 +303,7 @@ impl AwsLambdaConfig {
             .map(ToString::to_string)
             .unwrap_or_else(|| self.region.clone());
 
-        let artifact = LambdaZip::load(args.artifact_path()).await?;
+        let artifact = LambdaZip::load(self.artifact_path.clone()).await?;
 
         let platform = LambdaPlatform::builder()
             .name(self.name.clone())
@@ -341,6 +327,8 @@ pub struct CloudflareConfig {
     account_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worker_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artifact_path: Option<String>,
     /// We always get this value from the command line.
     #[serde(skip)]
     api_token: Option<String>,
@@ -359,7 +347,7 @@ impl CloudflareConfig {
         args
             .cloudflare_api_token()
             .map(ToString::to_string)
-            .ok_or_else(|| miette!("No Cloudflare API token was provided. Either set the environment variable CLOUDFLARE_API_TOKEN, or provide it as a CLI flag."))
+            .ok_or_else(|| miette!("No Cloudflare API token was provided. Either set the environment variable CLOUDFLARE_API_TOKEN, or provide it as the --cloudflare-api-token CLI flag."))
     }
 
     fn load_worker_name(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
@@ -372,7 +360,7 @@ impl CloudflareConfig {
         let worker_name = args.cloudflare_worker_name().map(ToString::to_string).or_else(|| self.worker_name.clone())
             .or(wranger_worker_name)
             .ok_or_else(
-                || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker to deploy to.")
+                || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file.")
             )?;
         Ok(worker_name)
     }
@@ -387,7 +375,7 @@ impl CloudflareConfig {
         let worker_main_module = args.cloudflare_main_module().map(ToString::to_string).or_else(|| self.main_module.clone())
             .or(wranger_main_module)
             .ok_or_else(
-                || miette!("No Cloudflare main module provided. You must provide a main module for the Cloudflare worker to use as an entrypoint.")
+                || miette!("No Cloudflare main module provided. You must provide a main module, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file.")
             )?;
         Ok(worker_main_module)
     }
@@ -403,6 +391,26 @@ impl CloudflareConfig {
             .or(wranger_account_id)
             .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file."))?;
         Ok(account_id)
+    }
+
+    fn load_artifact_path(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<PathBuf> {
+        if let Some(path) = args.artifact_path() {
+            return Ok(path.as_ref().to_path_buf());
+        }
+
+        if let Some(path) = &self.artifact_path {
+            return Ok(PathBuf::from(path));
+        }
+
+        // Finally, default to current working directory
+        let current_dir = match fs.project_dir() {
+            Err(err) => Err(err),
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => std::env::current_dir()
+                .map_err(|e| miette!("Failed to get current directory: {}", e)),
+        }?;
+
+        Ok(current_dir)
     }
 
     fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
@@ -434,12 +442,12 @@ impl CloudflareConfig {
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
         let main_module = self.load_main_module(&fs, args)?;
+        let artifact_path = self.load_artifact_path(&fs, args)?;
         let client = CloudflareClient::new(account_id, worker_name, &api_token);
 
         Ok(Box::new(CloudflareWorkerPlatform::new(
             client,
-            fs,
-            args.artifact_path().as_ref(),
+            artifact_path,
             main_module,
         )))
     }

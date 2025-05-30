@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use derive_getters::Getters;
-use tracing::{debug, info, trace};
+use tracing::{info, trace};
 
 use crate::{
     Shutdownable,
@@ -34,7 +34,9 @@ impl CloudflareMonitor {
             control_version_id: None,
             canary_version_id: None,
             start_time: Utc::now(),
-            last_query_time: Utc::now() - Duration::minutes(5),
+            // Start the first query 5 mins early to get some extra baseline data
+            // 5 + 3 = 8 to account for Cloudflare's ~2 mins metrics delay
+            last_query_time: Utc::now() - Duration::minutes(8),
         }
     }
 }
@@ -57,13 +59,12 @@ impl Monitor for CloudflareMonitor {
         // CategoricalObservations for each response code
         let utc_now = Utc::now();
         // Cloudflare observability metrics take ~2 mins (according to the dashboard) to become available,
-        // so we actually need to start our query a few minutes before the current time
-        let end_query_time: DateTime<Utc> = utc_now - Duration::minutes(2);
+        // so we actually need to start our query a few minutes before the current time to ensure we get all the data.
+        let end_query_time: DateTime<Utc> = utc_now - Duration::minutes(3);
         let start_query_time = self.last_query_time;
 
         let mut metrics = Vec::new();
 
-        trace!("Control version id: {:?}", self.control_version_id);
         // Query all control metrics, but only if we've already received a control version id
         if let Some(control_version_id) = &self.control_version_id {
             let control_2xx_future = self.client.collect_metrics(
@@ -97,7 +98,7 @@ impl Monitor for CloudflareMonitor {
             let control_5xx = control_5xx_result?;
             let control_2xx = control_2xx_result?;
 
-            debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
+            trace!("Control metrics: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
 
             let mut baseline = CategoricalObservation::new(Group::Control, utc_now);
             baseline.increment_by(&ResponseStatusCode::_2XX, control_2xx);
@@ -107,7 +108,6 @@ impl Monitor for CloudflareMonitor {
             metrics.push(baseline);
         }
 
-        trace!("Canary version id: {:?}", self.canary_version_id);
         // Query all canary metrics, but only if we've already received a control version id
         if let Some(canary_version_id) = &self.canary_version_id {
             let canary_2xx_future = self.client.collect_metrics(
@@ -141,7 +141,7 @@ impl Monitor for CloudflareMonitor {
             let canary_5xx = canary_5xx_result?;
             let canary_2xx = canary_2xx_result?;
 
-            debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
+            trace!("Canary metrics: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
 
             let mut canary = CategoricalObservation::new(Group::Experimental, utc_now);
             canary.increment_by(&ResponseStatusCode::_2XX, canary_2xx);

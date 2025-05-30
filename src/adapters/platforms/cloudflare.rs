@@ -1,10 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     Shutdownable,
     adapters::{backend::PlatformConfig, cloudflare::CloudflareClient as Client},
     artifacts::CloudflareManifest,
-    fs::FileSystem,
     subsystems::ShutdownResult,
 };
 
@@ -12,22 +11,20 @@ use super::Platform;
 use async_trait::async_trait;
 use derive_getters::Getters;
 use miette::Result;
-use tracing::{debug, info};
+use tracing::info;
 
 #[derive(Getters)]
 pub struct CloudflareWorkerPlatform {
     client: Client,
-    fs: FileSystem,
     artifact_path: PathBuf,
     main_module: String,
 }
 
 impl CloudflareWorkerPlatform {
-    pub fn new(client: Client, fs: FileSystem, artifact_path: &Path, main_module: String) -> Self {
+    pub fn new(client: Client, artifact_path: PathBuf, main_module: String) -> Self {
         Self {
             client,
-            fs,
-            artifact_path: artifact_path.to_path_buf(),
+            artifact_path,
             main_module,
         }
     }
@@ -72,7 +69,7 @@ impl Platform for CloudflareWorkerPlatform {
         //     keep_assets = true;
         // }
 
-        // 3. Finally, upload the files
+        // 2. Finally, upload the files
         let upload_version_request = self
             .client
             .upload_version(&manifest, &self.main_module)

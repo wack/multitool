@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::adapters::backend::{ApplicationId, WorkspaceId};
 use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::fs::{FileSystem, SessionFile, project_manifest};
@@ -13,7 +11,7 @@ use tokio::join;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::Terminal;
 
@@ -25,7 +23,6 @@ const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 pub struct Run {
     _terminal: Terminal,
     manifest: Manifest,
-    artifact_path: PathBuf,
     override_workspace_name: Option<String>,
     override_application_name: Option<String>,
     backend: BackendClient,
@@ -34,13 +31,13 @@ pub struct Run {
 
 #[derive(Error, Debug, Diagnostic)]
 #[error(
-    "No workspace name found. You must provide the target workspace name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your config file"
+    "No workspace name found. You must provide the target workspace name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool.toml file"
 )]
 struct MissingWorkspace;
 
 #[derive(Error, Debug, Diagnostic)]
 #[error(
-    "No aplication name found. You must provide the target application name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your config file"
+    "No aplication name found. You must provide the target application name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool.toml file"
 )]
 struct MissingApplication;
 
@@ -50,7 +47,6 @@ impl Run {
         let session = fs.load_file(SessionFile)?;
         let manifest = project_manifest().clone();
         let backend = BackendClient::new(args.origin(), Some(session))?;
-        let artifact_path = args.artifact_path().as_ref().to_owned();
         let override_workspace_name = args.workspace().map(ToString::to_string);
         let override_application_name = args.application().map(ToString::to_string);
 
@@ -59,7 +55,6 @@ impl Run {
             _terminal: terminal,
             manifest,
             backend,
-            artifact_path,
             override_workspace_name,
             override_application_name,
         })

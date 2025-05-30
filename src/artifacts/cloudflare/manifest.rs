@@ -6,6 +6,8 @@ use miette::{IntoDiagnostic as _, Result, miette};
 
 use tracing::debug;
 
+use crate::manifest::manifest_filenames;
+
 #[derive(Getters, Clone, Debug)]
 pub(crate) struct CloudflareManifest {
     files: Vec<PathBuf>,
@@ -31,6 +33,8 @@ impl CloudflareManifest {
 
         let mut files = Vec::new();
 
+        let manifest_filenames = manifest_filenames();
+
         // Build the file tree walker.
         let walker = WalkBuilder::new(directory.clone())
             .standard_filters(false)
@@ -46,6 +50,13 @@ impl CloudflareManifest {
             }
 
             let file_path = file_entry.path().to_path_buf();
+
+            // Skip files with names that match manifest filenames
+            if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
+                if manifest_filenames.contains(&filename.to_string()) {
+                    continue;
+                }
+            }
 
             files.push(file_path);
         }

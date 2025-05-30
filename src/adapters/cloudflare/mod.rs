@@ -207,7 +207,9 @@ impl CloudflareClient {
         if !response.status().is_success() {
             return Err(miette!(
                 "Failed to upload Worker version. Error: {:?}",
-                response.json::<serde_json::Value>().await
+                response
+                    .json::<CloudflareResponse<serde_json::Value>>()
+                    .await
             ));
         }
 

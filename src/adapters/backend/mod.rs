@@ -12,7 +12,7 @@ use multitool_sdk::{
     apis::{Api, ApiClient, configuration::Configuration},
     models::{
         ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
-        LoginSuccess, Rollout, RolloutState, RolloutStateStatus, StatusCodeMetrics,
+        LoginSuccess, RolloutState, RolloutStateStatus, StatusCodeMetrics,
         UpdateRolloutStateRequest, WorkspaceSummary,
     },
 };

@@ -189,7 +189,7 @@ impl FileSystem {
 
 #[derive(Error, Debug, Diagnostic)]
 #[error("MultiTool manifest file not found")]
-struct ManifestMissing;
+pub struct ManifestMissing;
 
 /// A shorthand for referring to one of the $XDG directories.
 /// As we need additional directories, we'll add them to the enum.

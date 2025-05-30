@@ -4,7 +4,6 @@ use miette::{IntoDiagnostic as _, Result};
 use std::hash::Hasher as _;
 use tokio::pin;
 use tokio_stream::StreamExt as _;
-use tracing::{error, trace};
 use twox_hash::xxhash32::Hasher as XXHasher;
 
 use crate::fs::stream_file;
@@ -13,7 +12,7 @@ use crate::fs::stream_file;
 /// `xxHash`.
 pub struct XXHash32;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FileHash32 {
     // This is guaranteed to be an absolute path.
     path: PathBuf,
@@ -46,7 +45,6 @@ impl XXHash32 {
     const SEED: u32 = 0;
 
     pub async fn hash_file<P: AsRef<Path>>(filepath: P) -> Result<FileHash32> {
-        error!("Hashing file");
         // Convert the path into an absolute path.
         let path = absolute(filepath).into_diagnostic()?;
 
@@ -61,7 +59,6 @@ impl XXHash32 {
             hasher.write(bytes.as_ref());
         }
 
-        error!("Finished hashing file!");
         // Dump the output.
         Ok(FileHash32 {
             path,

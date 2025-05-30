@@ -1,6 +1,4 @@
 use aws_config::{BehaviorVersion, SdkConfig};
-use miette::Diagnostic;
-use thiserror::Error;
 use tokio::sync::OnceCell;
 
 pub mod circuit_breaker;

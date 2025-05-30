@@ -9,7 +9,7 @@ use super::{ShutdownResult, Shutdownable};
 /// A handle to a thread, communicating over a channel.
 /// The type `M` can be specialized to implement communication
 /// with different subsystems.
-pub(super) struct Handle<M> {
+pub(crate) struct Handle<M> {
     pub(super) outbox: Arc<Sender<M>>,
     pub(super) shutdown_trigger: Arc<Sender<()>>,
 }

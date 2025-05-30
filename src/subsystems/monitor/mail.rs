@@ -50,7 +50,7 @@ pub(crate) enum MonitorMail<T: Observation> {
     SetCanaryVersionId(VersionParams),
 }
 
-pub(super) struct QueryParams<T: Observation> {
+pub(crate) struct QueryParams<T: Observation> {
     /// The sender where the response is written.
     pub(super) outbox: oneshot::Sender<QueryResp<T>>,
 }
@@ -61,7 +61,7 @@ impl<T: Observation> QueryParams<T> {
     }
 }
 
-pub(super) struct VersionParams {
+pub(crate) struct VersionParams {
     /// The sender where the response is written.
     pub(super) outbox: oneshot::Sender<VersionResp>,
     pub(super) version_id: String,

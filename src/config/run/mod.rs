@@ -6,16 +6,13 @@ use crate::{MULTITOOL_ORIGIN, manifest::Manifest};
 
 #[derive(Args, Clone)]
 pub struct RunSubcommand {
-    // #[arg(short, long, env = "MULTI_WORKSPACE", required = false, default_value = project_manifest().workspace())]
     #[arg(short, long, env = "MULTI_WORKSPACE")]
     workspace: Option<String>,
-    // #[arg(short, long, env = "MULTI_APPLICATION", required = false, default_value = project_manifest().application())]
     #[arg(short, long, env = "MULTI_APPLICATION")]
     application: Option<String>,
-    /// The path to the zipped serverless function.
-    #[arg(value_name = "FILE")]
-    artifact_path: PathBuf,
-
+    /// The path to the function to upload.
+    #[arg(value_name = "ARTIFACT_PATH")]
+    artifact_path: Option<PathBuf>,
     #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]
     origin: Option<String>,
 
@@ -33,7 +30,7 @@ pub struct RunSubcommand {
     #[arg(long, env = "CLOUDFLARE_MAIN_MODULE")]
     cloudflare_main_module: Option<String>,
 
-    /// AWS COnfig
+    /// AWS Config
     /// The AWS region to deploy into.
     #[arg(long, env = "AWS_REGION")]
     aws_region: Option<String>,
@@ -95,6 +92,10 @@ impl RunSubcommand {
         self.aws_lambda_name.as_deref()
     }
 
+    pub fn artifact_path(&self) -> Option<impl AsRef<Path>> {
+        self.artifact_path.as_deref()
+    }
+
     pub fn workspace(&self) -> Option<&str> {
         self.workspace.as_deref()
     }
@@ -105,10 +106,6 @@ impl RunSubcommand {
 
     pub fn origin(&self) -> Option<&str> {
         self.origin.as_deref()
-    }
-
-    pub fn artifact_path(&self) -> impl AsRef<Path> {
-        &self.artifact_path
     }
 
     /// Merge the values from this manifest file into this struct.

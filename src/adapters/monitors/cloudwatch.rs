@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bon::bon;
 use derive_getters::Getters;
-use tracing::{debug, error, info};
+use tracing::{error, info, trace};
 
 use crate::{
     Shutdownable,
@@ -45,6 +45,7 @@ impl CloudWatch {
             gateway_name,
             stage_name,
             start_time: Utc::now(),
+            // Start the first query 5 mins early to get some extra baseline data
             last_query_time: Utc::now() - Duration::minutes(5),
         }
     }
@@ -287,8 +288,8 @@ impl Monitor for CloudWatch {
             end_query_time,
         );
 
-        debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
-        debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
+        trace!("Control metrics: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
+        trace!("Canary metrics: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
 
         let utc_now = Utc::now();
         let mut baseline = CategoricalObservation::new(Group::Control, utc_now);
