@@ -336,6 +336,8 @@ pub struct CloudflareConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     wrangler: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    main_module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     account_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worker_name: Option<String>,
@@ -373,6 +375,21 @@ impl CloudflareConfig {
                 || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker to deploy to.")
             )?;
         Ok(worker_name)
+    }
+
+    fn load_main_module(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
+        let wranger_main_module = if self.wrangler_enabled() {
+            let wrangler = self.load_wrangler(&fs)?;
+            Some(wrangler.main().to_owned())
+        } else {
+            None
+        };
+        let worker_main_module = args.cloudflare_main_module().map(ToString::to_string).or_else(|| self.main_module.clone())
+            .or(wranger_main_module)
+            .ok_or_else(
+                || miette!("No Cloudflare main module provided. You must provide a main module for the Cloudflare worker to use as an entrypoint.")
+            )?;
+        Ok(worker_main_module)
     }
 
     fn load_account_id(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
@@ -416,12 +433,14 @@ impl CloudflareConfig {
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
+        let main_module = self.load_main_module(&fs, args)?;
         let client = CloudflareClient::new(account_id, worker_name, &api_token);
 
         Ok(Box::new(CloudflareWorkerPlatform::new(
             client,
             fs,
             args.artifact_path().as_ref(),
+            main_module,
         )))
     }
 }

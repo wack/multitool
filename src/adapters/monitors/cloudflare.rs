@@ -52,12 +52,13 @@ impl Monitor for CloudflareMonitor {
 
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
         info!("Querying Cloudflare for new metrics.");
-
         // This function queries the metrics that we care most about (2xx, 4xx, and 5xx errors),
         // compiles them into a list, then generates the correct number of
         // CategoricalObservations for each response code
         let utc_now = Utc::now();
-        let end_query_time: DateTime<Utc> = Utc::now();
+        // Cloudflare observability metrics take ~2 mins (according to the dashboard) to become available,
+        // so we actually need to start our query a few minutes before the current time
+        let end_query_time: DateTime<Utc> = utc_now - Duration::minutes(2);
         let start_query_time = self.last_query_time;
 
         let mut metrics = Vec::new();
@@ -150,9 +151,6 @@ impl Monitor for CloudflareMonitor {
             metrics.push(canary);
         }
 
-        // Update the timer to skip old values. This has to occur
-        // before the ? in the next block, or else we might
-        // never advance our timer.
         self.last_query_time = end_query_time;
 
         let total_metrics_count = metrics.iter().map(|m| m.histogram().total()).sum();
