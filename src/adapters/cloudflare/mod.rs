@@ -4,10 +4,9 @@ use miette::{IntoDiagnostic, Result, miette};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::multipart::Part;
 use reqwest::{Client, multipart};
-use serde_json::Value;
 use std::sync::OnceLock;
 use tokio::fs::read;
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 use uploads::{UploadVersionRequest, UploadVersionResponse};
 use url::Url;
 
@@ -263,7 +262,7 @@ impl CloudflareClient {
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/create/
     pub async fn create_deployment(&self, request: CreateDeploymentRequest) -> Result<()> {
-        debug!("Creating deployment of new version(s)");
+        debug!("Deploying updated version(s)");
         let account_id = &self.account_id;
         let worker_name = &self.worker_name;
         let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/deployments");
@@ -301,9 +300,9 @@ impl CloudflareClient {
         let path = format!("accounts/{account_id}/workers/observability/telemetry/query");
         let url = Self::url_with_path(&path);
 
-        // Convert DateTime to Unix timestamps
-        let from_timestamp = from_time.timestamp() as u64;
-        let to_timestamp = to_time.timestamp() as u64;
+        // Convert DateTime to Unix Millisecond timestamps
+        let from_timestamp = from_time.timestamp_millis() as u64;
+        let to_timestamp = to_time.timestamp_millis() as u64;
 
         let query_body = serde_json::json!({
           "view": "calculations",

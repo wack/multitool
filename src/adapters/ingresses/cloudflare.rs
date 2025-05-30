@@ -99,6 +99,10 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![control_version])
             .build();
 
+        // Clear canary version ID after rolling back since there's now
+        // no canary version and so we don't try to roll it back (again) during shutdown.
+        self.canary_version_id = None;
+
         self.client.create_deployment(deployment_request).await
     }
 
@@ -113,6 +117,10 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![canary_version])
             .build();
 
+        // Clear canary version ID after promotion since it's now
+        // the control version and so we don't try to roll it back during shutdown.
+        self.canary_version_id = None;
+
         self.client.create_deployment(deployment_request).await
     }
 }
@@ -120,6 +128,9 @@ impl Ingress for CloudflareWorkerIngress {
 #[async_trait]
 impl Shutdownable for CloudflareWorkerIngress {
     async fn shutdown(&mut self) -> ShutdownResult {
+        // If there's no canary version ID set, there are 2 possibilities:
+        // 1. The canary was never released, so there's nothing to rollback.
+        // 2. The canary was already promoted, so there's nothing to rollback.
         if self.canary_version_id.is_none() {
             debug!("No canary version ID set, nothing to rollback.");
             return Ok(());
