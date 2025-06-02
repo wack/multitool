@@ -41,7 +41,7 @@ You will:
 This tutorial simulates two versions of a Lambda function:
 
 - A “healthy” version that always returns a `200` HTTP status code
-- A “buggy” version that randomly fails with a `400` HTTP status code 10% of the time
+- A “buggy” version that randomly fails with a `400` HTTP status code 50% of the time
 
 📝 **Note:** File **must** be named `index.js` to execute correctly.
 
@@ -70,13 +70,13 @@ zip -j 0%_failures.zip index.js
 
 ### Create the buggy version
 
-This version introduces a simulated bug by returning a `400` HTTP status code 10% of the time.
+This version introduces a simulated bug by returning a `400` HTTP status code 50% of the time.
 
 ```bash
 cat << EOF > index.js
 exports.handler = function (_, context) {
   const rand = Math.random();
-  if (rand < 0.9) {
+  if (rand < 0.5) {
     return context.succeed({
       statusCode: 200,
       body: JSON.stringify({
@@ -98,7 +98,7 @@ EOF
 Zip the code:
 
 ```bash
-zip -j 10%_failures.zip index.js
+zip -j 50%_failures.zip index.js
 ```
 
 ## ➕ Step 2: Create a Lambda execution IAM role
@@ -252,8 +252,8 @@ If you used the sample values throughout this tutorial, you can use this file:
 
 ```bash
 cat << EOF > MultiTool.toml
-workspace = [my_workspace_name]
-application = [my_application_name]
+workspace = my_workspace_name
+application = my_application_name
 
 config.monitor.aws-cloudwatch = {}
 
@@ -267,6 +267,7 @@ region = "us-east-2"
 [config.platform.aws-lambda]
 name = "multitool-quickstart-lambda"
 region = "us-east-2"
+artifact-path = "50%_failures.zip"
 EOF
 ```
 
@@ -276,10 +277,10 @@ EOF
 
 To test a successful rollout, use the `0%_failures.zip` file.
 
-Start the rollout using the healhty build artifact and replacing the placeholder with your MultiTool workspace name:
+Start the rollout using `0%_failures.zip` as the `artifact-path` value in your `MultiTool.toml` file:
 
 ```bash
-multi run 0%_failures.zip
+multi run
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
@@ -306,12 +307,12 @@ As traffic hits the new version, MultiTool will evaluate its behavior and promot
 
 ## ⚠️ Step 10: Roll out buggy code and simulate errors
 
-To test a broken rollout, use the `10%_failures.zip` file.
+To test a broken rollout, use the `50%_failures.zip` file.
 
-Start the rollout using the buggy build artifact and replacing the placeholder with your MultiTool workspace name:
+Start the rollout using `50%_failures.zip` as the `artifact-path` value in your `MultiTool.toml` file:
 
 ```bash
-multi run 10%_failures.zip
+multi run
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
@@ -340,7 +341,7 @@ And that’s it! 🎉
 
 ## 🧹 Step 11: Cleanup
 
-After you've tested MultiTool, be sure to clean up the demo resources created as part of this guide.
+After you've tested MultiTool, be sure to clean up the resources created as part of this guide.
 
 To delete the Lambda function:
 

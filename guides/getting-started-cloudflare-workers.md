@@ -22,173 +22,91 @@ You will:
 
 - [ ] <a href="https://app.multitool.run/create-account" target="_blank">A free MultiTool account</a>
 
-- [ ] A Cloudflare account with read and write permissions for Workers Observability - read and Workers Scripts - edit
+- [ ] A Cloudflare account and token that has permissions for Workers Observability - read and Workers Scripts - edit
 
 - [ ] <a href="https://developers.cloudflare.com/workers/wrangler/install-and-update/" target="_blank">Cloudflare Wrangler CLI installed</a>
 
-  - [ ] Create an <a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank">Cloudflare API Token</a>
+  - [ ] Create an <a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank">Cloudflare API Token</a> with Workers Observability - read and Workers Scripts - edit permissions.
 
-  - [ ] Run `wrangler login` and follow the prompts to login to Cloudflare
+  - [ ] Run `npx wrangler login` and follow the prompts to login to Cloudflare
 
 - [ ] <a href="https://github.com/wack/multitool/releases" target="_blank">MultiTool CLI installed</a>
 
   - [ ] Run `multi login` to authenticate
 
-## 📦 Step 1: Create and package the Worker code
+## 🏗️ Step 1: Create the Worker
+
+Create a new "Hello World" Cloudflare Worker
+
+```bash
+npm create cloudflare@latest -- multitool-quickstart --type hello-world --lang ts --no-git -y true
+```
+
+## 📦 Step 2: Create and package the Worker code
 
 This tutorial simulates two versions of a Worker:
 
 - A “healthy” version that always returns a `200` HTTP status code
-- A “buggy” version that randomly fails with a `400` HTTP status code 10% of the time
+- A “buggy” version that randomly fails with a `400` HTTP status code 50% of the time
 
-📝 **Note:** File **must** be named `index.js` to execute correctly.
+First, let's enter the workers `src` directory:
+
+```bash
+cd multitool-quickstart/src/
+```
+
+Overwrite the `index.js` file and add a new file for the healthy and buggy vsions:
 
 ### Create the healthy version
 
 This version always returns a `200` HTTP status code response.
 
 ```bash
-cat << EOF > index.js
-exports.handler = function (_, context) {
-  return context.succeed({
-    statusCode: 200,
-    body: JSON.stringify({
-      message: "Hello World",
-    }),
-  });
-};
+cat << EOF > index.ts
+export default {
+	async fetch(request, env, ctx): Promise<Response> {
+		return new Response('Hello World!', { status: 200 });
+	},
+} satisfies ExportedHandler<Env>;
 EOF
-```
-
-Zip the code:
-
-```bash
-zip -j 0%_failures.zip index.js
 ```
 
 ### Create the buggy version
 
-This version introduces a simulated bug by returning a `400` HTTP status code 10% of the time.
+This version introduces a simulated bug by returning a `400` HTTP status code 50% of the time.
 
 ```bash
-cat << EOF > index.js
-exports.handler = function (_, context) {
-  const rand = Math.random();
-  if (rand < 0.9) {
-    return context.succeed({
-      statusCode: 200,
-      body: JSON.stringify({
-        message: "Hello World",
-      }),
-    });
-  } else {
-    return context.succeed({
-      statusCode: 400,
-      body: JSON.stringify({
-        error: "Something went wrong",
-      }),
-    });
-  }
-};
+cat << EOF > index_errors.ts
+export default {
+	async fetch(request, env, ctx): Promise<Response> {
+		const rand = Math.random();
+		return new Response(rand < 0.5 ? 'Bad Request' : 'Hello World!', { status: rand < 0.5 ? 400 : 200 });
+	},
+} satisfies ExportedHandler<Env>;
 EOF
 ```
 
-Zip the code:
+Finally, we can go back to the root directory of our Worker:
 
 ```bash
-zip -j 10%_failures.zip index.js
+cd ..
 ```
 
-## λ Step 2: Create the Worker
+## ⚙️ Step 3: Deploy the worker
 
-TODO: @eric continue here!
-
-Upload the healthy version of the code to create the worker in Cloudflare:
+Now that we added the updated code to our worker, let's deploy it.
 
 ```bash
-LAMBDA_ARN=$(aws lambda create-function \
-  --function-name multitool-quickstart-lambda \
-  --runtime nodejs22.x \
-  --handler index.handler \
-  --role ${LAMBDA_EXECUTION_ROLE_ARN} \
-  --zip-file fileb://0%_failures.zip \
-  --publish \
-  --output text \
-  --query FunctionArn)
+npx wrangler deploy
 ```
 
-## 🧪 Step 4: Test that the Lambda is working
-
-Before moving on, make sure the Lambda function returns the expected response.
+Make sure to store the URL that looks like this, replacing `MY_ACCOUNT_URL` with the value from the output of the `deploy` command:
 
 ```bash
-aws lambda invoke --function-name multitool-quickstart-lambda out.txt >/dev/null && cat out.txt
+MY_URL="https://multitool-quickstart.[MY_ACCOUNT_URL].workers.dev"
 ```
 
-You should see:
-
-```json
-{
-  "statusCode": 200,
-  "body": "{\"message\":\"Hello World\"}"
-}
-```
-
-## ⚙️ Step 5: Set up API Gateway
-
-Expose the Lambda to the public internet by creating an API Gateway REST API:
-
-```bash
-API_ID=$(aws apigateway create-rest-api --name multitool-quickstart-apig --output text --query id)
-```
-
-Get the auto-generated root resource ID:
-
-```bash
-ROOT_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id ${API_ID} --output text --query 'items[0].id')
-```
-
-Next, create an API resource and route.
-
-Create the new path:
-
-```bash
-RESOURCE_ID=$(aws apigateway create-resource --rest-api-id ${API_ID} --parent-id ${ROOT_RESOURCE_ID} --path-part "demo" --output text --query 'id')
-```
-
-Add a GET method:
-
-```bash
-aws apigateway put-method --rest-api-id ${API_ID} --resource-id ${RESOURCE_ID} --http-method GET --authorization-type "NONE"
-```
-
-## 🤝 Step 6: Connect API Gateway to Lambda
-
-Link the API Gateway to the Lambda so it can forward incoming requests:
-
-```bash
-aws apigateway put-integration \
-  --rest-api-id ${API_ID} \
-  --resource-id ${RESOURCE_ID} \
-  --http-method GET \
-  --type AWS_PROXY \
-  --integration-http-method POST \
-  --uri arn:aws:apigateway:${AWS_REGION:=us-east-2}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations
-```
-
-Deploy the API:
-
-```bash
-aws apigateway create-deployment --rest-api-id $API_ID --stage-name prod
-```
-
-Get the new public URL:
-
-```bash
-MY_URL="https://${API_ID}.execute-api.${AWS_REGION:=us-east-2}.amazonaws.com/prod/demo"
-```
-
-Save the URL to a file for later:
+And save the URL to a file for later:
 
 ```bash
 cat << EOF > url.txt
@@ -196,24 +114,28 @@ $MY_URL
 EOF
 ```
 
-Finally, give API Gateway permission to invoke the Lambda:
+## 🧪 Step 4: Test that the Worker is accepting traffic
+
+Before moving on, make sure the Worker returns the expected response.
 
 ```bash
-aws lambda add-permission \
-  --function-name multitool-quickstart-lambda \
-  --statement-id apigateway-permission-${API_ID} \
-  --action lambda:InvokeFunction \
-  --principal apigateway.amazonaws.com
+curl $MY_URL
 ```
 
-## 🖥️ Step 7: Connect the app to MultiTool
+You should see:
 
-Now that the Lambda is deployed and accessible via API Gateway, create the app in MultiTool.
+```bash
+Hello World!
+```
+
+## 🖥️ Step 5: Connect the app to MultiTool
+
+Now that the Worker is deployed and accessible via its URL, create the application in MultiTool.
 
 From the MultiTool app:
 
 1. Create a workspace
-2. Create an application
+2. Create an application named `quickstart`
 
 After the application is set up, login to the MultiTool CLI if needed:
 
@@ -221,42 +143,35 @@ After the application is set up, login to the MultiTool CLI if needed:
 multi login
 ```
 
-## ⚙️ Step 8: Add your configuration file
+## ⚙️ Step 6: Add your configuration file
 
-Now that we have our workspace and app set up in the MultiTool app, we need to create a configuration file so the MultiTool CLI knows how to deploy your application.
+Now that we have our workspace and app set up in the MultiTool app, we need to create a manfiest file called `MultiTool.toml` so the MultiTool CLI knows how to deploy your application.
 
-If you used the sample values throughout this tutorial, you can use this file:
+If you used the sample values throughout this tutorial, you can use this file, but make sure to replace MY_WORKSPACE_NAME, and MY_CLOUDFLARE_ACCOUNT_ID with the correct values:
+
+📝 **Note:** To get your Cloudflare Account ID, [follow the instructions here](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/).
 
 ```bash
 cat << EOF > MultiTool.toml
-workspace = [my_workspace_name]
-application = [my_application_name]
+workspace = "MY_WORKSPACE_NAME"
+application = "quickstart"
 
-config.monitor.aws-cloudwatch = {}
-
-[config.ingress.aws-api-gateway]
-gateway-name = "multitool-quickstart-apig"
-stage-name = "prod"
-resource-path = "/demo"
-resource-method = "GET"
-region = "us-east-2"
-
-[config.platform.aws-lambda]
-name = "multitool-quickstart-lambda"
-region = "us-east-2"
+[config.cloudflare]
+worker-name = "multitool-quickstart"
+account-id = "MY_CLOUDFLARE_ACCOUNT_ID"
+main-module = "index.ts"
+artifact-path = "src/"
 EOF
 ```
 
-## 🚀 Step 9: Roll out healthy code and simulate stable traffic
+## 🚀 Step 7: Roll out healthy code and simulate stable traffic
 
 📝 **Note:** Exiting the terminal before a CLI operation finishes can leave your rollout in a stuck state due to a known bug. Please wait for the operation to complete before closing the terminal. If you've already run into this issue, contact support@wack.run and we’ll help resolve it. A fix is on the way.
 
-To test a successful rollout, use the `0%_failures.zip` file.
-
-Start the rollout using the healhty build artifact and replacing the placeholder with your MultiTool workspace name:
+Start the rollout using `index.ts` as the `main-module` value in your `MultiTool.toml` file:
 
 ```bash
-multi run 0%_failures.zip
+multi run
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
@@ -265,7 +180,7 @@ In a separate terminal window, load the public URL from Step 6 to use in the nex
 MY_URL=$(cat url.txt)
 ```
 
-Simulate traffic to the `/demo` endpoint using one of these options:
+Simulate traffic to the worker using one of these options:
 
 ### Option A: Using curl
 
@@ -281,14 +196,14 @@ bombardier -c 5 -n 20 ${MY_URL}
 
 As traffic hits the new version, MultiTool will evaluate its behavior and promote it to 100% traffic once it confirms stability.
 
-## ⚠️ Step 10: Roll out buggy code and simulate errors
+## ⚠️ Step 8: Roll out buggy code and simulate errors
 
-To test a broken rollout, use the `10%_failures.zip` file.
+To test a broken rollout, use the `index_errors.ts` file.
 
-Start the rollout using the buggy build artifact and replacing the placeholder with your MultiTool workspace name:
+Start the rollout using `index_errors.ts` as the `main-module` value in your `MultiTool.toml` file:
 
 ```bash
-multi run 10%_failures.zip
+multi run
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
@@ -297,7 +212,7 @@ In a separate terminal window, load the public URL from Step 6 to use in the nex
 MY_URL=$(cat url.txt)
 ```
 
-Simulate traffic to the `/demo` endpoint using one of these options:
+Simulate traffic to the Worker using one of these options:
 
 ### Option A: Using curl
 
@@ -315,20 +230,12 @@ MultiTool will detect the increase in errors and automatically trigger a rollbac
 
 And that’s it! 🎉
 
-## 🧹 Step 11: Cleanup
+## 🧹 Step 9: Cleanup
 
-After you've tested MultiTool, be sure to clean up the demo resources created as part of this guide.
-
-To delete the Lambda function:
+After you've tested MultiTool, be sure to clean up the Worker created as part of this guide:
 
 ```bash
-aws lambda delete-function --function-name multitool-quickstart-lambda
-```
-
-and to delete the API Gateway:
-
-```bash
-aws apigateway delete-rest-api --rest-api-id ${API_ID}
+npx wrangler delete multitool-quickstart
 ```
 
 ## 📬 Need help?

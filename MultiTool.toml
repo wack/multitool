@@ -1,0 +1,35 @@
+workspace = "Test"
+application = "Local"
+
+[config.cloudflare]
+worker-name = "test"
+account-id = "986dc7f2976d17c6205288a7a946ef6a"
+main-module = "index.js"
+artifact-path = "worker"
+
+# [config.monitor.cloudflare-observability]
+# worker-name = "test"
+# account-id = "986dc7f2976d17c6205288a7a946ef6a"
+
+# [config.platform.cloudflare-workers]
+# worker-name = "test"
+# account-id = "986dc7f2976d17c6205288a7a946ef6a"
+# main-module = "index.js"
+
+# [config.ingress.cloudflare-workers]
+# worker-name = "test"
+# account-id = "986dc7f2976d17c6205288a7a946ef6a"
+
+# config.monitor.aws-cloudwatch = {}
+
+# [config.platform.aws-lambda]
+# name = "eric-local-test-lambda"
+# region = "us-east-2"
+# artifact-path = "50%_failures.zip"
+
+# [config.ingress.aws-api-gateway]
+# gateway-name = "eric-local-test-apig"
+# stage-name = "prod"
+# resource-path = "/demo"
+# resource-method = "GET"
+# region = "us-east-2"
