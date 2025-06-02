@@ -236,7 +236,7 @@ Now that the Lambda is deployed and accessible via API Gateway, create the app i
 From the MultiTool app:
 
 1. Create a workspace
-2. Create an application
+2. Create an application named `quickstart`
 
 After the application is set up, login to the MultiTool CLI if needed:
 
@@ -252,8 +252,8 @@ If you used the sample values throughout this tutorial, you can use this file:
 
 ```bash
 cat << EOF > MultiTool.toml
-workspace = my_workspace_name
-application = my_application_name
+workspace = MY_WORKSPACE_NAME
+application = quickstart
 
 config.monitor.aws-cloudwatch = {}
 
@@ -267,7 +267,7 @@ region = "us-east-2"
 [config.platform.aws-lambda]
 name = "multitool-quickstart-lambda"
 region = "us-east-2"
-artifact-path = "50%_failures.zip"
+artifact-path = "0%_failures.zip"
 EOF
 ```
 
