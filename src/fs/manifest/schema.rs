@@ -455,6 +455,8 @@ impl CloudflareConfig {
 
 #[cfg(test)]
 mod tests {
+    use crate::manifest::CloudflareConfig;
+
     use super::{ConfigSection, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
 
     /// A `config` field is required in every manifest.
@@ -483,6 +485,7 @@ region = "us-east-2"
 [config.platform.aws-lambda]
 name = "buzz"
 region = "us-east-2"
+artifact-path = "my_code.zip"
 "#;
         let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
 
@@ -513,6 +516,7 @@ region = "us-east-2"
         if let Some(PlatformConfig::AwsLambda(lambda)) = observed.config.platform {
             assert_eq!(lambda.name, "buzz");
             assert_eq!(lambda.region, "us-east-2");
+            assert_eq!(lambda.artifact_path, "my_code.zip");
         } else {
             panic!("Expected AwsLambda variant");
         }
@@ -574,6 +578,8 @@ application = "multitool"
 [config.cloudflare]
 worker-name = "my_worker"
 account-id = "abc123"
+main-module = "index.js"
+artifact-path = "src"
 "#;
         let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
 
@@ -584,25 +590,28 @@ account-id = "abc123"
         matches!(
             observed
                 .config
-                .monitor
-                .expect("Monitor config should be present"),
-            MonitorConfig::CloudflareObservability(_)
+                .cloudflare
+                .clone()
+                .expect("Cloudflare config should be present"),
+            CloudflareConfig {
+                account_id: Some(_),
+                worker_name: Some(_),
+                main_module: Some(_),
+                artifact_path: Some(_),
+                wrangler: None,
+                api_token: None,
+            }
         );
 
-        // Check ingress config
-        if let Some(IngressConfig::CloudflareWorkers(config)) = observed.config.ingress {
-            assert_eq!(config.account_id, Some("abc123".to_string()));
-            assert_eq!(config.worker_name, Some("my_worker".to_string()));
+        // Check if values were set correctly
+        if let Some(cloudflare) = observed.config.cloudflare {
+            assert_eq!(cloudflare.account_id, Some("abc123".to_string()));
+            assert_eq!(cloudflare.worker_name, Some("my_worker".to_string()));
+            assert_eq!(cloudflare.main_module, Some("index.js".to_string()));
+            assert_eq!(cloudflare.artifact_path, Some("src".to_string()));
+            assert!(!cloudflare.wrangler_enabled());
         } else {
-            panic!("Expected CloudflareWorkers variant");
-        }
-
-        // Check platform config
-        if let Some(PlatformConfig::CloudflareWorkers(config)) = observed.config.platform {
-            assert_eq!(config.account_id, Some("abc123".to_string()));
-            assert_eq!(config.worker_name, Some("my_worker".to_string()));
-        } else {
-            panic!("Expected CloudflareWorkers variant");
+            panic!("Expected CloudflareConfig variant");
         }
     }
 

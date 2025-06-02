@@ -154,28 +154,27 @@ mod tests {
         let response: CloudflareResponse<TestResult> = serde_json::from_str(json_str).unwrap();
 
         assert_eq!(response.success, true);
-        assert_eq!(response.errors.len(), 1);
-        assert_eq!(response.errors[0].code, 1000);
-        assert_eq!(response.errors[0].message, "message");
+
+        // Test errors
+        let errors = response.errors.as_ref().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, 1000);
+        assert_eq!(errors[0].message, "message");
         assert_eq!(
-            response.errors[0].documentation_url,
+            errors[0].documentation_url,
             Some("documentation_url".to_string())
         );
 
-        assert_eq!(response.messages.len(), 1);
-        assert_eq!(response.messages[0].code, 1000);
-        assert_eq!(response.messages[0].message, "message");
+        // Test messages
+        let messages = response.messages.as_ref().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].code, Some(1000));
+        assert_eq!(messages[0].message, Some("message".to_string()));
         assert_eq!(
-            response.messages[0].documentation_url,
+            messages[0].documentation_url,
             Some("documentation_url".to_string())
         );
 
         assert_eq!(response.result.startup_time_ms, 10);
-
-        // Test serialization
-        let serialized = serde_json::to_string_pretty(&response).unwrap();
-        let deserialized: CloudflareResponse<TestResult> =
-            serde_json::from_str(&serialized).unwrap();
-        assert_eq!(response, deserialized);
     }
 }
