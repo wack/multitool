@@ -55,7 +55,7 @@ impl Ingress for IngressHandle {
     }
 
     fn get_config(&self) -> IngressConfig {
-        todo!(
+        panic!(
             "This should never be called, as the IngressHandle is a handle to a ingress that is already running."
         )
     }

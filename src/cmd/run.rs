@@ -1,4 +1,4 @@
-use crate::adapters::backend::{ApplicationId, WorkspaceId};
+use crate::adapters::backend::{ApplicationId, CreateRolloutParams, WorkspaceId};
 use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::fs::{FileSystem, SessionFile, project_manifest};
 use crate::manifest::Manifest;
@@ -31,13 +31,13 @@ pub struct Run {
 
 #[derive(Error, Debug, Diagnostic)]
 #[error(
-    "No workspace name found. You must provide the target workspace name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool.toml file"
+    "No workspace name found. You must provide the target workspace name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool manifest file"
 )]
 struct MissingWorkspace;
 
 #[derive(Error, Debug, Diagnostic)]
 #[error(
-    "No aplication name found. You must provide the target application name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool.toml file"
+    "No aplication name found. You must provide the target application name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool manifest file"
 )]
 struct MissingApplication;
 
@@ -196,10 +196,15 @@ impl Run {
         monitor: &BoxedMonitor,
     ) -> Result<RolloutMetadata> {
         debug!("Creating new rollout...");
-        let rollout = self
-            .backend
-            .new_rollout(workspace_id, application_id, platform, ingress, monitor)
-            .await?;
+        let params = CreateRolloutParams::builder()
+            .workspace_id(workspace_id)
+            .application_id(application_id)
+            .platform(platform)
+            .ingress(ingress)
+            .monitor(monitor)
+            .build();
+
+        let rollout = self.backend.new_rollout(params).await?;
 
         info!(
             "New rollout created! Follow along in the dashboard:\nhttps://app.multitool.run/workspaces/{}/applications/{}/activity/{}/events",

@@ -17,7 +17,6 @@ tokio = { workspace = true, features = ["full"] }
 miette.workspace = true
 tokio-stream = { workspace = true, features = ["time"] }
 thiserror.workspace = true
-tracing = { version = "0.1.41", features = ["attributes"] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -8,6 +8,7 @@ use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::Ht
 use bon::Builder;
 use chrono::DateTime;
 use miette::{IntoDiagnostic, Result, bail};
+use multitool_sdk::models::Rollout;
 use multitool_sdk::{
     apis::{Api, ApiClient, configuration::Configuration},
     models::{
@@ -17,9 +18,7 @@ use multitool_sdk::{
     },
 };
 
-use reqwest::Client;
-use reqwest::header::AUTHORIZATION;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -211,56 +210,34 @@ impl BackendClient {
         Ok(())
     }
 
-    // This is a special function that skips using the API due to the weird Structs
-    // that it creates for the config.
-    // TODO: fix this once we have a better SDK!
-    pub async fn new_rollout(
-        &self,
-        workspace_id: WorkspaceId,
-        application_id: ApplicationId,
-        platform: &BoxedPlatform,
-        ingress: &BoxedIngress,
-        monitor: &BoxedMonitor,
-    ) -> Result<RolloutMeta> {
+    pub async fn new_rollout(&self, params: CreateRolloutParams<'_>) -> Result<Rollout> {
         trace!("Creating a new rollout");
 
-        let base_path = &self.conf.base_path;
-        let url = format!(
-            "{}/api/v1/workspaces/{}/applications/{}/rollouts",
-            base_path, workspace_id, application_id
-        );
-
-        let jwt = match self.session.clone() {
-            Some(Session::User(user)) => user.jwt,
-            _ => bail!("You must be logged in to create a rollout."),
-        };
-
         let config = WebServiceConfig::builder()
-            .ingress(ingress.get_config())
-            .monitor(monitor.get_config())
-            .platform(platform.get_config())
+            .ingress(params.ingress.get_config())
+            .monitor(params.monitor.get_config())
+            .platform(params.platform.get_config())
             .build();
 
         let request = RolloutRequest::builder()
             .config(RolloutConfig::WebService(config))
             .build();
 
-        let client = Client::builder()
-            .build()
-            .expect("Must be able to build client");
+        let request_json = serde_json::to_value(&request).into_diagnostic()?;
 
-        let response = client
-            .post(url)
-            .header(AUTHORIZATION, format!("Bearer {}", jwt))
-            .json(&request)
-            .send()
+        let response = self
+            .client
+            .rollouts_api()
+            .create_rollout(
+                params.workspace_id,
+                params.application_id,
+                Some(request_json),
+            )
             .await
             .into_diagnostic()?;
 
-        let rollout = response.json::<RolloutResponse>().await.into_diagnostic()?;
-
         trace!("Rollout created successfully");
-        Ok(rollout.rollout)
+        Ok(*response.rollout)
     }
 
     /// This fuction logs the user into the backend by exchanging these credentials
@@ -559,15 +536,11 @@ pub enum PlatformConfig {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Builder)]
-#[serde(rename_all = "snake_case")]
-pub struct RolloutResponse {
-    pub rollout: RolloutMeta,
-}
-
-#[derive(Clone, Debug, Deserialize, Builder)]
-#[serde(rename_all = "snake_case")]
-pub struct RolloutMeta {
-    pub id: u64,
-    pub number: u64,
+#[derive(Builder)]
+pub struct CreateRolloutParams<'a> {
+    pub workspace_id: WorkspaceId,
+    pub application_id: ApplicationId,
+    pub platform: &'a BoxedPlatform,
+    pub ingress: &'a BoxedIngress,
+    pub monitor: &'a BoxedMonitor,
 }

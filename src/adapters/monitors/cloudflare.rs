@@ -169,7 +169,7 @@ impl Monitor for CloudflareMonitor {
         Ok(())
     }
 
-    // TODO: standardize naming to either baseline or control
+    // TODO: standardize naming to baseline when working outside of statistics packages
     async fn set_baseline_version_id(&mut self, baseline_version_id: String) -> Result<()> {
         self.control_version_id = Some(baseline_version_id);
         Ok(())

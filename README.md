@@ -64,14 +64,14 @@ MultiTool doesn’t store your cloud provider keys. The MultiTool agent runs on 
 
 MultiTool supports deploying canaries for AWS Lambda functions running in AWS API Gateway. The MultiTool team is actively expanding platform support. Our platform roadmap is presented in the following table:
 
-|                                                         Platform                                                         |            Support             |
-| :----------------------------------------------------------------------------------------------------------------------: | :----------------------------: |
-|                                               **AWS Lambda + API Gateway**                                               |     :sparkles: Available!      |
-| [Cloudflare](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/#_top) |     :sparkles: Available!      |
-|                                                   [Vercel](vercel.com)                                                   |         :eyes: Up next         |
-|  [AWS Function Aliases](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-alias.html)   |          :watch: Soon          |
-|                                           [Kubernetes](https://kubernetes.io/)                                           |         :eyes: Up next         |
-|                             [Google Cloud Run Functions](https://cloud.google.com/functions)                             | :hourglass_flowing_sand: Later |
+|                                                           Platform                                                           |            Support             |
+| :--------------------------------------------------------------------------------------------------------------------------: | :----------------------------: |
+|                                                 **AWS Lambda + API Gateway**                                                 |     :sparkles: Available!      |
+| [**Cloudflare**](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/#_top) |     :sparkles: Available!      |
+|                                                     [Vercel](vercel.com)                                                     |         :eyes: Up next         |
+|                                             [Kubernetes](https://kubernetes.io/)                                             |         :eyes: Up next         |
+|    [AWS Function Aliases](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-alias.html)     |          :watch: Soon          |
+|                               [Google Cloud Run Functions](https://cloud.google.com/functions)                               | :hourglass_flowing_sand: Later |
 
 ## 🎯 Mission
 

@@ -51,7 +51,7 @@ impl Platform for PlatformHandle {
     }
 
     fn get_config(&self) -> PlatformConfig {
-        todo!(
+        panic!(
             "This should never be called, as the PlatformHandle is a handle to a platform that is already running."
         )
     }

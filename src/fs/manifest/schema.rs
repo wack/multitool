@@ -360,7 +360,7 @@ impl CloudflareConfig {
         let worker_name = args.cloudflare_worker_name().map(ToString::to_string).or_else(|| self.worker_name.clone())
             .or(wranger_worker_name)
             .ok_or_else(
-                || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file.")
+                || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker, either via an environment variable, a CLI flag, or in your MultiTool manifest file or Wrangler.toml file.")
             )?;
         Ok(worker_name)
     }
@@ -375,7 +375,7 @@ impl CloudflareConfig {
         let worker_main_module = args.cloudflare_main_module().map(ToString::to_string).or_else(|| self.main_module.clone())
             .or(wranger_main_module)
             .ok_or_else(
-                || miette!("No Cloudflare main module provided. You must provide a main module, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file.")
+                || miette!("No Cloudflare main module provided. You must provide a main module, either via an environment variable, a CLI flag, or in your MultiTool manifest file or Wrangler.toml file.")
             )?;
         Ok(worker_main_module)
     }
@@ -389,7 +389,7 @@ impl CloudflareConfig {
         };
         let account_id = args.cloudflare_account_id().map(ToString::to_string).or_else(|| self.account_id.clone())
             .or(wranger_account_id)
-            .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file."))?;
+            .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool manfiest file or Wrangler.toml file."))?;
         Ok(account_id)
     }
 

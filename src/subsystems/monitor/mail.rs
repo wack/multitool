@@ -38,7 +38,7 @@ impl<T: Observation + Send + 'static> Monitor for MonitorHandle<T> {
     }
 
     fn get_config(&self) -> MonitorConfig {
-        todo!(
+        panic!(
             "This should never be called, as the MonitorHandle is a handle to a monitor that is already running."
         )
     }
