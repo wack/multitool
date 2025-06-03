@@ -1,10 +1,14 @@
-# Required AWS permissions for MultiTool
+# Required permissions for MultiTool
 
-MultiTool is designed to minimize security risk. <b>MultiTool never stores AWS credentials</b> and relies solely on an authenticated AWS CLI session for access.
+MultiTool is designed to minimize security risk. <b>MultiTool never stores your cloud credentials</b> and relies solely on local credentials to interact with your cloud provider.
+
+## AWS permissions
+
+MultiTool uses an authenticated CLI session for your AWS credentials.
 
 This document lists the minimum set of permissions required for MultiTool to operate end-to-end, including creating AWS resources and running deployments.
 
-## Minimum IAM policy
+### Minimum IAM policy
 
 💡 To create a new policy in the AWS console, <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create-console.html#access_policies_create-json-editor" target="_blank">follow these instructions</a>.
 
@@ -119,6 +123,19 @@ The following IAM policy defines the least privilege access MultiTool needs to f
   ]
 }
 ```
+
+## Cloudflare permissions
+
+MultiTool requires you to pass in a Cloudflare API Token using the `--cloudflare-api-token` CLI flag.
+
+💡 To create a new token in Cloudflare, <a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank">follow these instructions</a>.
+
+Your token will need at least 2 permissions:
+
+| Target  |       Resource        | Permission |
+| :-----: | :-------------------: | :--------: |
+| Account | Workers Observability |    Read    |
+| Account |    Workers Scripts    |    Edit    |
 
 ## 📬 Need help?
 
