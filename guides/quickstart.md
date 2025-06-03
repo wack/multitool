@@ -34,21 +34,76 @@ Connect the CLI to your MultiTool account:
 multi login
 ```
 
-## 🚀 Deploy your Lambda code
+## 📜 Create a manifest file
 
-Once you have a `.zip` file containing your Lambda code, run:
+For AWS Lambda:
 
-```bash
-multi run --workspace MY_WORKSPACE_NAME --application MY_APPLICATION_NAME my_code.zip
+**`MultiTool.toml`**
+
+```toml
+# Your workspace's name
+workspace = ""
+# Your application's name
+application = ""
+
+config.monitor.aws-cloudwatch = {}
+
+[config.platform.aws-lambda]
+# The name of your Lambda function
+name = ""
+# The AWS Region
+region = ""
+# The path to the zip file of your Lambda's code
+artifact-path = ".zip"
+
+[config.ingress.aws-api-gateway]
+# The name of your API gateway
+gateway-name = ""
+# The name of your API Gateway's stage
+stage-name = ""
+# The resource path of your API Gateway (including the leading slash)
+resource-path = ""
+# The resource method of your API Gateway
+resource-method = ""
+# The AWS Region
+region = ""
+
 ```
 
-Replace:
+For Cloudflare:
 
-- `MY_WORKSPACE_NAME` with the name of your MultiTool workspace
+**`MultiTool.toml`**
 
-- `MY_APPLICATION_NAME` with the name of your application
+```toml
+# Your workspace's name
+workspace = ""
+# Your application's name
+application = ""
 
-- `my_code.zip` with the path to your build artifact
+[config.cloudflare]
+# The name of your worker
+worker-name = ""
+# Your Cloudflare account id
+account-id = ""
+# The path to the directory where your main-module is
+artifact-path = ""
+# The main module of your function
+main-module = ".js"
+```
+
+## 🚀 Deploy your artifact
+
+Start your rollout!
+
+```bash
+multi run
+```
+
+Or if you're deploying to Cloudflare:
+
+```bash
+multi run --cloudflare-api-token MY_CLOUDFLARE_TOKEN
+```
 
 ## 📬 Need help?
 
