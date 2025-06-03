@@ -14,21 +14,12 @@ pub struct UploadAssetsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UploadVersionRequest {
-    pub assets: Assets,
-    pub keep_assets: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Assets {
-    pub jwt: String,
+    pub main_module: String,
 }
 
 impl UploadVersionRequest {
-    pub fn new(jwt: String, keep_assets: bool) -> Self {
-        Self {
-            assets: Assets { jwt },
-            keep_assets,
-        }
+    pub fn new(main_module: String) -> Self {
+        Self { main_module }
     }
 }
 
@@ -40,7 +31,6 @@ pub struct UploadVersionResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn test_upload_session_response_deserialization() {

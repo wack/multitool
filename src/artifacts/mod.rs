@@ -6,7 +6,7 @@ use tokio::io::AsyncReadExt;
 
 mod cloudflare;
 
-pub(crate) use cloudflare::{CloudflareManifest, read_file_as_b64};
+pub(crate) use cloudflare::CloudflareManifest;
 
 pub struct LambdaZip(Vec<u8>);
 

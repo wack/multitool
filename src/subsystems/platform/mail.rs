@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use miette::{IntoDiagnostic as _, Result};
 use tokio::sync::oneshot;
 
-use crate::{adapters::Platform, subsystems::handle::Handle};
+use crate::{
+    adapters::{Platform, backend::PlatformConfig},
+    subsystems::handle::Handle,
+};
 
 pub(super) type PlatformHandle = Handle<PlatformMail>;
 
@@ -45,6 +48,12 @@ impl Platform for PlatformHandle {
         let mail = PlatformMail::PromoteRollout(params);
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
+    }
+
+    fn get_config(&self) -> PlatformConfig {
+        panic!(
+            "This should never be called, as the PlatformHandle is a handle to a platform that is already running."
+        )
     }
 }
 

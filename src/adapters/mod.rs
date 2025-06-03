@@ -7,7 +7,7 @@ pub use monitors::*;
 pub use platforms::*;
 
 pub mod backend;
-/// MultiTool's CloudFlare HTTP client.
+/// MultiTool's Cloudflare HTTP client.
 mod cloudflare;
 /// Contains the trait definition and ingress implementations. Ingresses are responsible
 /// for actuating changes to traffic.

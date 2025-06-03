@@ -4,7 +4,7 @@
 <p align="center"><b>Agentic deployments help teams catch production bugs before they impact users. Move fast without breaking things.</b></p>
 
 <p align="center">
-🏡 <a href="https://www.multitool.run/">Home</a> • ✍️ <a href="https://www.multitool.run/blog">Blog</a> • 📚 <a href="https://docs.multitool.run/">Docs</a> • ✨ <a href="https://app.multitool.run/create-account">Try the MultiTool beta for free</a> 
+🏡 <a href="https://www.multitool.run/">Home</a> • ✍️ <a href="https://www.multitool.run/blog">Blog</a> • 📚 <a href="https://docs.multitool.run/">Docs</a> • ✨ <a href="https://app.multitool.run/create-account">Try the MultiTool beta for free</a>
 
 ## ❓ What is MultiTool?
 
@@ -26,7 +26,6 @@ Check out our [quickstart guide](https://docs.multitool.run/quickstart) to learn
 
 Check out our [getting started tutorial](https://docs.multitool.run/deploy-a-lambda-function) to try out a guided demo of MultiTool!
 
-
 ## ⚙️ Installation
 
 **Installing with Homebrew:**
@@ -46,33 +45,37 @@ Check the [releases page](https://github.com/wack/canary/releases) for pre-built
 ## ⭐ Features
 
 ### Automated canary deployments
+
 The MultiTool agent deploys every release as a canary deployment, routing a small percentage of production traffic to the canary.
 
 ### Traffic scale-up
+
 As the agent gains confidence in the release, it automatically scales up traffic. No more watching logs or waiting for alerts.
 
 ### Fast roll-backs
+
 The MultiTool agent automatically rolls back the deployment if it detects a statistical increase in errors, preventing user-facing bugs and downtime. MultiTool keeps a hot standby ready for instantaneous rollback in case of incident.
 
 ### Run locally or in CI/CD
+
 MultiTool doesn’t store your cloud provider keys. The MultiTool agent runs on your local system or any CI/CD tool you currently use.
 
 ## 🛠️ Platform support
 
 MultiTool supports deploying canaries for AWS Lambda functions running in AWS API Gateway. The MultiTool team is actively expanding platform support. Our platform roadmap is presented in the following table:
 
-|                           Platform                           |            Support             |
-| :----------------------------------------------------------: | :----------------------------: |
-|                 **AWS Lambda + API Gateway**                 |     :sparkles: Available!      |
-|                     [Vercel](vercel.com)                     |         :eyes: Up next         |
-| [CloudFlare](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/#_top) |         :eyes: Up next         |
-| [AWS Function Aliases](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-alias.html) |          :watch: Soon          |
-|             [Kubernetes](https://kubernetes.io/)             | :hourglass_flowing_sand: Later |
-| [Google Cloud Run Functions](https://cloud.google.com/functions) | :hourglass_flowing_sand: Later |
+|                                                           Platform                                                           |            Support             |
+| :--------------------------------------------------------------------------------------------------------------------------: | :----------------------------: |
+|                                                 **AWS Lambda + API Gateway**                                                 |     :sparkles: Available!      |
+| [**Cloudflare**](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/#_top) |     :sparkles: Available!      |
+|                                                     [Vercel](vercel.com)                                                     |         :eyes: Up next         |
+|                                             [Kubernetes](https://kubernetes.io/)                                             |         :eyes: Up next         |
+|    [AWS Function Aliases](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-alias.html)     |          :watch: Soon          |
+|                               [Google Cloud Run Functions](https://cloud.google.com/functions)                               | :hourglass_flowing_sand: Later |
 
-## 🎯 Mission 
+## 🎯 Mission
 
-We help teams take a more proactive approach to progressive delivery by using agentic deployments to catch regressions early. Today, operators either manually watch deployments in real time or rely on passive alerts to catch problems after they’ve hit users. We want to empower operators to *proactively* identify and rollback disruptive deployments *before* they cause widespread impact. MultiTool is bringing agentic deployments to everyone. Learn more about our team and vision at [our company website](https://www.multitool.run/company).
+We help teams take a more proactive approach to progressive delivery by using agentic deployments to catch regressions early. Today, operators either manually watch deployments in real time or rely on passive alerts to catch problems after they’ve hit users. We want to empower operators to _proactively_ identify and rollback disruptive deployments _before_ they cause widespread impact. MultiTool is bringing agentic deployments to everyone. Learn more about our team and vision at [our company website](https://www.multitool.run/company).
 
 ## 📬 Need help?
 

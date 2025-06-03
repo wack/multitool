@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use bon::bon;
-use multitool_sdk::models::CloudWatchDimensions;
-use tracing::{debug, error, info, warn};
+use derive_getters::Getters;
+use tracing::{error, info, trace};
 
 use crate::{
     Shutdownable,
+    adapters::backend::{CloudWatchDimensions, MonitorConfig},
     metrics::ResponseStatusCode,
     stats::{CategoricalObservation, Group},
     subsystems::ShutdownResult,
@@ -20,10 +21,13 @@ use miette::Result;
 
 use super::Monitor;
 
+#[derive(Getters)]
 pub struct CloudWatch {
     client: AwsClient,
-    dimensions: Vec<CloudWatchDimensions>,
-    region: String,
+    // AWS APIG Name
+    gateway_name: String,
+    // AWS APIG Stage Name
+    stage_name: String,
     // The time we started querying CloudWatch
     start_time: DateTime<Utc>,
     // The time we last queried CloudWatch
@@ -33,14 +37,15 @@ pub struct CloudWatch {
 #[bon]
 impl CloudWatch {
     #[builder]
-    pub async fn new(region: String, dimensions: Vec<CloudWatchDimensions>) -> Self {
+    pub async fn new(gateway_name: String, stage_name: String) -> Self {
         let config = load_default_aws_config().await;
         let client = aws_sdk_cloudwatch::Client::new(config);
         Self {
             client,
-            region,
-            dimensions,
+            gateway_name,
+            stage_name,
             start_time: Utc::now(),
+            // Start the first query 5 mins early to get some extra baseline data
             last_query_time: Utc::now() - Duration::minutes(5),
         }
     }
@@ -164,16 +169,23 @@ impl CloudWatch {
 }
 
 #[async_trait]
-impl Shutdownable for CloudWatch {
-    async fn shutdown(&mut self) -> ShutdownResult {
-        // When we get the shutdown signal, all we need to do is not query CloudWatch
-        Ok(())
-    }
-}
-
-#[async_trait]
 impl Monitor for CloudWatch {
     type Item = CategoricalObservation<5, ResponseStatusCode>;
+
+    fn get_config(&self) -> MonitorConfig {
+        MonitorConfig::AwsCloudwatchMetrics {
+            dimensions: vec![
+                CloudWatchDimensions {
+                    name: "ApiName".to_string(),
+                    value: self.gateway_name.clone(),
+                },
+                CloudWatchDimensions {
+                    name: "Stage".to_string(),
+                    value: self.stage_name.clone(),
+                },
+            ],
+        }
+    }
 
     async fn query(&mut self) -> Result<Vec<Self::Item>> {
         info!("Querying CloudWatch for new metrics.");
@@ -185,8 +197,8 @@ impl Monitor for CloudWatch {
 
         let control_count_future = self.query_cloudwatch(
             ApiMetric::Count,
-            self.dimensions[0].value.as_ref(),
-            self.dimensions[1].value.as_ref(),
+            &self.gateway_name,
+            &self.stage_name,
             Group::Control,
             start_query_time,
             end_query_time,
@@ -194,8 +206,8 @@ impl Monitor for CloudWatch {
 
         let control_4xx_future = self.query_cloudwatch(
             ApiMetric::Error4XX,
-            self.dimensions[0].value.as_ref(),
-            self.dimensions[1].value.as_ref(),
+            &self.gateway_name,
+            &self.stage_name,
             Group::Control,
             start_query_time,
             end_query_time,
@@ -203,8 +215,8 @@ impl Monitor for CloudWatch {
 
         let control_5xx_future = self.query_cloudwatch(
             ApiMetric::Error5XX,
-            self.dimensions[0].value.as_ref(),
-            self.dimensions[1].value.as_ref(),
+            &self.gateway_name,
+            &self.stage_name,
             Group::Control,
             start_query_time,
             end_query_time,
@@ -212,8 +224,8 @@ impl Monitor for CloudWatch {
 
         let canary_count_future = self.query_cloudwatch(
             ApiMetric::Count,
-            self.dimensions[0].value.as_ref(),
-            self.dimensions[1].value.as_ref(),
+            &self.gateway_name,
+            &self.stage_name,
             Group::Experimental,
             start_query_time,
             end_query_time,
@@ -221,8 +233,8 @@ impl Monitor for CloudWatch {
 
         let canary_4xx_future = self.query_cloudwatch(
             ApiMetric::Error4XX,
-            self.dimensions[0].value.as_ref(),
-            self.dimensions[1].value.as_ref(),
+            &self.gateway_name,
+            &self.stage_name,
             Group::Experimental,
             start_query_time,
             end_query_time,
@@ -230,8 +242,8 @@ impl Monitor for CloudWatch {
 
         let canary_5xx_future = self.query_cloudwatch(
             ApiMetric::Error5XX,
-            self.dimensions[0].value.as_ref(),
-            self.dimensions[1].value.as_ref(),
+            &self.gateway_name,
+            &self.stage_name,
             Group::Experimental,
             start_query_time,
             end_query_time,
@@ -276,8 +288,8 @@ impl Monitor for CloudWatch {
             end_query_time,
         );
 
-        debug!("Control: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
-        debug!("Canary: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
+        trace!("Control metrics: 2xx: {control_2xx}, 4xx: {control_4xx}, 5xx: {control_5xx}");
+        trace!("Canary metrics: 2xx: {canary_2xx}, 4xx: {canary_4xx}, 5xx: {canary_5xx}");
 
         let utc_now = Utc::now();
         let mut baseline = CategoricalObservation::new(Group::Control, utc_now);
@@ -299,6 +311,14 @@ impl Monitor for CloudWatch {
         Ok(())
     }
     async fn set_baseline_version_id(&mut self, _: String) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Shutdownable for CloudWatch {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        // When we get the shutdown signal, all we need to do is not query CloudWatch
         Ok(())
     }
 }

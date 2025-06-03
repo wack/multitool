@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct Wrangler {
     account_id: Option<String>,
     name: String,
+    main: String,
 }
 
 impl Wrangler {
@@ -14,6 +15,10 @@ impl Wrangler {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn main(&self) -> &str {
+        &self.main
     }
 }
 

@@ -9,7 +9,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::Duration;
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::WholePercent;
 use crate::adapters::LockedState;
@@ -109,7 +109,6 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                 //   we need to select on the observation stream.
                 //   When a new observation arrives, we send it to the backend.
                 elem = observations.recv() => {
-                    debug!("Received new observation: {:?}", &elem);
                     if let Some(batch) = elem {
                         self.backend.upload_observations(&self.meta, batch).await?;
                     } else {
@@ -120,7 +119,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                 }
                 // • We also need to poll the backend for new states.
                 elem = state_stream.recv() => {
-                    debug!("Received new state: {:?}", &elem);
+                    trace!("Received new state: {:?}", &elem);
                     if let Some(state) = elem {
                         let state_id = state.id;
                         // When we receive a new state, we attempt to lock it.
@@ -158,9 +157,8 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 self.ingress.release_canary(baseline_version_id.clone(), canary_version_id.clone()).await?;
 
                                 // Finally, we need to set the baseline and canary version ids in the monitor.
-                                // We want to let this crash if there's an error
-                                self.baseline_sender.send(baseline_version_id).await;
-                                self.canary_sender.send(canary_version_id).await;
+                                let _ = self.baseline_sender.send(baseline_version_id).await;
+                                let _ = self.canary_sender.send(canary_version_id).await;
 
                                 locked_state.mark_done().await?;
                             },

@@ -12,17 +12,17 @@ pub struct CloudflareError {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CloudflareMessage {
-    pub code: i64,
-    pub message: String,
+    pub code: Option<i64>,
+    pub message: Option<String>,
     pub documentation_url: Option<String>,
     #[serde(default)]
-    pub source: Value,
+    pub source: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct CloudflareResponse<T> {
-    pub errors: Vec<CloudflareError>,
-    pub messages: Vec<CloudflareMessage>,
+    pub errors: Option<Vec<CloudflareError>>,
+    pub messages: Option<Vec<CloudflareMessage>>,
     pub success: bool,
     pub result: T,
 }

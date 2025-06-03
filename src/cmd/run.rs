@@ -1,13 +1,9 @@
-use std::path::PathBuf;
-
-use crate::adapters::backend::{ApplicationId, WorkspaceId};
+use crate::adapters::backend::{ApplicationId, CreateRolloutParams, WorkspaceId};
 use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::fs::{FileSystem, SessionFile, project_manifest};
 use crate::manifest::Manifest;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
-use crate::{
-    ControllerSubsystem, adapters::BackendClient, artifacts::LambdaZip, config::RunSubcommand,
-};
+use crate::{ControllerSubsystem, adapters::BackendClient, config::RunSubcommand};
 use miette::{Context, Diagnostic, Result, miette};
 use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
@@ -15,7 +11,7 @@ use tokio::join;
 use tokio::runtime::Runtime;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::Terminal;
 
@@ -27,7 +23,6 @@ const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 pub struct Run {
     _terminal: Terminal,
     manifest: Manifest,
-    artifact_path: PathBuf,
     override_workspace_name: Option<String>,
     override_application_name: Option<String>,
     backend: BackendClient,
@@ -36,13 +31,13 @@ pub struct Run {
 
 #[derive(Error, Debug, Diagnostic)]
 #[error(
-    "No workspace name found. You must provide the target workspace name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your config file"
+    "No workspace name found. You must provide the target workspace name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool manifest file"
 )]
 struct MissingWorkspace;
 
 #[derive(Error, Debug, Diagnostic)]
 #[error(
-    "No aplication name found. You must provide the target application name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your config file"
+    "No aplication name found. You must provide the target application name, either using the $MULTI_WORKSPACE environment variable, the --workspace flag, or setting it in your MultiTool manifest file"
 )]
 struct MissingApplication;
 
@@ -52,7 +47,6 @@ impl Run {
         let session = fs.load_file(SessionFile)?;
         let manifest = project_manifest().clone();
         let backend = BackendClient::new(args.origin(), Some(session))?;
-        let artifact_path = args.artifact_path().as_ref().to_owned();
         let override_workspace_name = args.workspace().map(ToString::to_string);
         let override_application_name = args.application().map(ToString::to_string);
 
@@ -61,7 +55,6 @@ impl Run {
             _terminal: terminal,
             manifest,
             backend,
-            artifact_path,
             override_workspace_name,
             override_application_name,
         })
@@ -111,8 +104,12 @@ impl Run {
         manifest.load_ingress(&self.args).await
     }
 
-    async fn load_monitor(&self, manifest: &Manifest) -> Result<BoxedMonitor> {
-        manifest.load_monitor(&self.args).await
+    async fn load_monitor(
+        &self,
+        manifest: &Manifest,
+        ingress: &BoxedIngress,
+    ) -> Result<BoxedMonitor> {
+        manifest.load_monitor(&self.args, ingress).await
     }
 
     async fn validate_application(
@@ -137,11 +134,6 @@ impl Run {
         let rt = Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
-            // First, we have to load the artifact.
-            // This lets us fail fast in the case where the artifact
-            // doesn't exist or we don't have permission to read the file.
-            debug!("Loading the lambda artifact...");
-            let artifact = LambdaZip::load(&self.artifact_path).await?;
             // We need to convert our workspace and application names into the full workspace and application object
             debug!("Loading workspace and application...");
             let workspace_name = self.workspace_name()?;
@@ -156,15 +148,17 @@ impl Run {
             // from the backend. We have the name of the workspace and
             // application, but we need to look up the details.
             debug!("Loading application conf...");
-            let (platform_result, ingress_result, monitor_result) = join!(
+            let (platform_result, ingress_result) = join!(
                 self.load_platform(&self.manifest),
                 self.load_ingress(&self.manifest),
-                self.load_monitor(&self.manifest),
             );
-            let (platform, ingress, monitor) = (platform_result?, ingress_result?, monitor_result?);
+            let (platform, ingress) = (platform_result?, ingress_result?);
 
+            let monitor = self.load_monitor(&self.manifest, &ingress).await?;
             // Create a new rollout.
-            let metadata = self.create_rollout(workspace.id, application.id).await?;
+            let metadata = self
+                .create_rollout(workspace.id, application.id, &platform, &ingress, &monitor)
+                .await?;
 
             // Build the ControllerSubsystem using the boxed objects.
             debug!("Building controller...");
@@ -197,12 +191,20 @@ impl Run {
         &self,
         workspace_id: WorkspaceId,
         application_id: ApplicationId,
+        platform: &BoxedPlatform,
+        ingress: &BoxedIngress,
+        monitor: &BoxedMonitor,
     ) -> Result<RolloutMetadata> {
         debug!("Creating new rollout...");
-        let rollout = self
-            .backend
-            .new_rollout(workspace_id, application_id)
-            .await?;
+        let params = CreateRolloutParams::builder()
+            .workspace_id(workspace_id)
+            .application_id(application_id)
+            .platform(platform)
+            .ingress(ingress)
+            .monitor(monitor)
+            .build();
+
+        let rollout = self.backend.new_rollout(params).await?;
 
         info!(
             "New rollout created! Follow along in the dashboard:\nhttps://app.multitool.run/workspaces/{}/applications/{}/activity/{}/events",
@@ -215,6 +217,7 @@ impl Run {
             .application_id(application_id)
             .rollout_id(rollout.id)
             .build();
+
         Ok(meta)
     }
 }

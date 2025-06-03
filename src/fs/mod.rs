@@ -1,6 +1,6 @@
 use directories::ProjectDirs;
 use file::StaticFile;
-use miette::{Diagnostic, IntoDiagnostic, Report, Result, miette};
+use miette::{Diagnostic, IntoDiagnostic, Result, miette};
 use std::fs;
 use thiserror::Error;
 
@@ -84,7 +84,7 @@ impl FileSystem {
     /// permissions, or the pwd is outside of the bounds of the filesystem.
     /// This function only checks if the file exists, not if the file is valid.
     pub fn project_dir(&self) -> Result<Option<PathBuf>> {
-        // • Check this directory for the `Multi.toml` manifest file. If not found,
+        // • Check this directory for the `MultiTool.toml` manifest file. If not found,
         //   traverse upward until found.
         let current_dir = std::env::current_dir().into_diagnostic()?;
         for dir in current_dir.ancestors() {
@@ -189,7 +189,7 @@ impl FileSystem {
 
 #[derive(Error, Debug, Diagnostic)]
 #[error("MultiTool manifest file not found")]
-struct ManifestMissing;
+pub struct ManifestMissing;
 
 /// A shorthand for referring to one of the $XDG directories.
 /// As we need additional directories, we'll add them to the enum.

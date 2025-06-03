@@ -1,13 +1,15 @@
-use std::sync::OnceLock;
+use std::{path::PathBuf, sync::OnceLock};
 
 use miette::{Diagnostic, miette};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::error;
 
 use crate::{
     adapters::{
-        AwsApiGateway, BoxedIngress, BoxedMonitor, BoxedPlatform, CloudFlareMonitor,
-        CloudflareClient, CloudflareWorkerIngress, CloudflareWorkerPlatform, LambdaPlatform,
+        AwsApiGateway, BoxedIngress, BoxedMonitor, BoxedPlatform, CloudWatch, CloudflareClient,
+        CloudflareMonitor, CloudflareWorkerIngress, CloudflareWorkerPlatform, LambdaPlatform,
+        backend,
     },
     artifacts::LambdaZip,
     config::RunSubcommand,
@@ -84,8 +86,12 @@ impl Manifest {
         self.config.load_ingress(args).await
     }
 
-    pub(crate) async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
-        self.config.load_monitor(args).await
+    pub(crate) async fn load_monitor(
+        &self,
+        args: &RunSubcommand,
+        ingress: &BoxedIngress,
+    ) -> Result<BoxedMonitor> {
+        self.config.load_monitor(args, ingress).await
     }
 }
 
@@ -102,22 +108,6 @@ pub struct ConfigSection {
 }
 
 impl ConfigSection {
-    fn monitor(&self) -> Option<&MonitorConfig> {
-        self.monitor.as_ref()
-    }
-
-    fn ingress(&self) -> Option<&IngressConfig> {
-        self.ingress.as_ref()
-    }
-
-    fn platform(&self) -> Option<&PlatformConfig> {
-        self.platform.as_ref()
-    }
-
-    fn cloudflare(&self) -> Option<&CloudflareConfig> {
-        self.cloudflare.as_ref()
-    }
-
     async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         // Having cloudflare configured is mutually exclusive with having
         // platform configured. Error if both are set.
@@ -140,13 +130,17 @@ impl ConfigSection {
         }
     }
 
-    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+    async fn load_monitor(
+        &self,
+        args: &RunSubcommand,
+        ingress: &BoxedIngress,
+    ) -> Result<BoxedMonitor> {
         // Having cloudflare configured is mutually exclusive with having
         // ingress configured. Error if both are set.
         match (&self.cloudflare, &self.monitor) {
             (Some(_), Some(_)) => Err(CloudflareMutuallyExclusiveConfig.into()),
             (None, None) => Err(MissingMonitorConfig.into()),
-            (None, Some(monitor)) => monitor.load_monitor(args).await,
+            (None, Some(monitor)) => monitor.load_monitor(args, ingress).await,
             (Some(cloudflare), None) => cloudflare.load_monitor(args),
         }
     }
@@ -156,23 +150,23 @@ impl ConfigSection {
 #[serde(rename_all = "kebab-case")]
 pub enum MonitorConfig {
     AwsCloudwatch(AwsCloudwatch),
-    CloudflareObservability(CloudflareObservabilityConfig),
+    CloudflareObservability(CloudflareConfig),
 }
 
 impl MonitorConfig {
-    async fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+    async fn load_monitor(
+        &self,
+        args: &RunSubcommand,
+        ingress: &BoxedIngress,
+    ) -> Result<BoxedMonitor> {
         match self {
-            MonitorConfig::AwsCloudwatch(aws_cloudwatch) => aws_cloudwatch.load_monitor(args).await,
+            MonitorConfig::AwsCloudwatch(aws_cloudwatch) => {
+                aws_cloudwatch.load_monitor(args, ingress).await
+            }
             MonitorConfig::CloudflareObservability(cloudflare_observability) => {
-                cloudflare_observability.load_monitor(args).await
+                cloudflare_observability.load_monitor(args)
             }
         }
-    }
-}
-
-impl Default for MonitorConfig {
-    fn default() -> Self {
-        Self::AwsCloudwatch(AwsCloudwatch::default())
     }
 }
 
@@ -180,17 +174,61 @@ impl Default for MonitorConfig {
 pub struct AwsCloudwatch {}
 
 impl AwsCloudwatch {
-    async fn load_monitor(&self, _args: &RunSubcommand) -> Result<BoxedMonitor> {
-        todo!();
+    fn load_gateway_name(&self, args: &RunSubcommand, ingress: &BoxedIngress) -> Result<String> {
+        let gateway_name = match ingress.get_config() {
+            backend::IngressConfig::AwsRestApiGateway {
+                gateway_name,
+                region: _,
+                stage_name: _,
+                resource_path: _,
+                resource_method: _,
+            } => gateway_name,
+            _ => return Err(miette!("Ingress is not an AWS API Gateway.")),
+        };
+
+        let gateway_name = args
+            .aws_gateway_name()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| gateway_name);
+
+        Ok(gateway_name)
     }
-}
 
-#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Debug)]
-pub struct CloudflareObservabilityConfig {}
+    fn load_stage_name(&self, args: &RunSubcommand, ingress: &BoxedIngress) -> Result<String> {
+        let stage_name = match ingress.get_config() {
+            backend::IngressConfig::AwsRestApiGateway {
+                stage_name,
+                region: _,
+                gateway_name: _,
+                resource_path: _,
+                resource_method: _,
+            } => stage_name,
+            _ => return Err(miette!("Ingress is not an AWS API Gateway.")),
+        };
 
-impl CloudflareObservabilityConfig {
-    async fn load_monitor(&self, _args: &RunSubcommand) -> Result<BoxedMonitor> {
-        todo!();
+        let stage_name = args
+            .aws_stage_name()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| stage_name);
+
+        Ok(stage_name)
+    }
+
+    async fn load_monitor(
+        &self,
+        args: &RunSubcommand,
+        ingress: &BoxedIngress,
+    ) -> Result<BoxedMonitor> {
+        let gateway_name = self.load_gateway_name(args, ingress)?;
+        let stage_name = self.load_stage_name(args, ingress)?;
+
+        let monitor = CloudWatch::builder()
+            .gateway_name(gateway_name)
+            .stage_name(stage_name)
+            .build()
+            .await;
+
+        Ok(Box::new(monitor))
     }
 }
 
@@ -250,20 +288,48 @@ impl PlatformConfig {
     }
 }
 
-impl Default for PlatformConfig {
-    fn default() -> Self {
-        Self::AwsLambda(AwsLambdaConfig::default())
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct AwsLambdaConfig {
+    name: String,
+    region: String,
+    artifact_path: String,
+}
+
+impl AwsLambdaConfig {
+    async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
+        let region: String = args
+            .aws_region()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.region.clone());
+
+        let artifact = LambdaZip::load(self.artifact_path.clone()).await?;
+
+        let platform = LambdaPlatform::builder()
+            .name(self.name.clone())
+            .region(region)
+            .artifact(artifact)
+            .build()
+            .await;
+
+        Ok(Box::new(platform))
     }
 }
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
 pub struct CloudflareConfig {
-    wrangler: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wrangler: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    main_module: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     account_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worker_name: Option<String>,
-    /// This value we always get from the command line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artifact_path: Option<String>,
+    /// We always get this value from the command line.
     #[serde(skip)]
     api_token: Option<String>,
 }
@@ -274,14 +340,14 @@ impl CloudflareConfig {
     }
 
     pub fn wrangler_enabled(&self) -> bool {
-        self.wrangler
+        self.wrangler.unwrap_or(false)
     }
 
     fn load_api_token(&self, args: &RunSubcommand) -> Result<String> {
         args
             .cloudflare_api_token()
             .map(ToString::to_string)
-            .ok_or_else(|| miette!("No Cloudflare API token was provided. Either set the environment variable CLOUDFLARE_API_TOKEN, or provide it as a CLI flag."))
+            .ok_or_else(|| miette!("No Cloudflare API token was provided. Either set the environment variable CLOUDFLARE_API_TOKEN, or provide it as the --cloudflare-api-token CLI flag."))
     }
 
     fn load_worker_name(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
@@ -294,9 +360,24 @@ impl CloudflareConfig {
         let worker_name = args.cloudflare_worker_name().map(ToString::to_string).or_else(|| self.worker_name.clone())
             .or(wranger_worker_name)
             .ok_or_else(
-                || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker to deploy to.")
+                || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker, either via an environment variable, a CLI flag, or in your MultiTool manifest file or Wrangler.toml file.")
             )?;
         Ok(worker_name)
+    }
+
+    fn load_main_module(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
+        let wranger_main_module = if self.wrangler_enabled() {
+            let wrangler = self.load_wrangler(&fs)?;
+            Some(wrangler.main().to_owned())
+        } else {
+            None
+        };
+        let worker_main_module = args.cloudflare_main_module().map(ToString::to_string).or_else(|| self.main_module.clone())
+            .or(wranger_main_module)
+            .ok_or_else(
+                || miette!("No Cloudflare main module provided. You must provide a main module, either via an environment variable, a CLI flag, or in your MultiTool manifest file or Wrangler.toml file.")
+            )?;
+        Ok(worker_main_module)
     }
 
     fn load_account_id(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
@@ -306,10 +387,30 @@ impl CloudflareConfig {
         } else {
             None
         };
-        let account_id = args.cloudflare_worker_name().map(ToString::to_string).or_else(|| self.worker_name.clone())
+        let account_id = args.cloudflare_account_id().map(ToString::to_string).or_else(|| self.account_id.clone())
             .or(wranger_account_id)
-            .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool.toml file or Wrangler.toml file."))?;
+            .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool manfiest file or Wrangler.toml file."))?;
         Ok(account_id)
+    }
+
+    fn load_artifact_path(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<PathBuf> {
+        if let Some(path) = args.artifact_path() {
+            return Ok(path.as_ref().to_path_buf());
+        }
+
+        if let Some(path) = &self.artifact_path {
+            return Ok(PathBuf::from(path));
+        }
+
+        // Finally, default to current working directory
+        let current_dir = match fs.project_dir() {
+            Err(err) => Err(err),
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => std::env::current_dir()
+                .map_err(|e| miette!("Failed to get current directory: {}", e)),
+        }?;
+
+        Ok(current_dir)
     }
 
     fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
@@ -331,7 +432,7 @@ impl CloudflareConfig {
         let worker_name = self.load_worker_name(&fs, args)?;
         let client = CloudflareClient::new(account_id, worker_name, &api_token);
 
-        Ok(Box::new(CloudFlareMonitor::new(client)))
+        Ok(Box::new(CloudflareMonitor::new(client)))
     }
 
     fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
@@ -340,52 +441,23 @@ impl CloudflareConfig {
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
+        let main_module = self.load_main_module(&fs, args)?;
+        let artifact_path = self.load_artifact_path(&fs, args)?;
         let client = CloudflareClient::new(account_id, worker_name, &api_token);
 
-        Ok(Box::new(CloudflareWorkerPlatform::new(client, fs)))
-    }
-}
-
-#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
-pub struct AwsLambdaConfig {
-    name: String,
-    region: String,
-}
-
-impl AwsLambdaConfig {
-    async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
-        let region: String = args
-            .aws_region()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| self.region.clone());
-
-        let artifact = LambdaZip::load(args.artifact_path()).await?;
-
-        let platform = LambdaPlatform::builder()
-            .name(self.name.clone())
-            .region(region)
-            .artifact(artifact)
-            .build()
-            .await;
-
-        Ok(Box::new(platform))
+        Ok(Box::new(CloudflareWorkerPlatform::new(
+            client,
+            artifact_path,
+            main_module,
+        )))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::manifest::CloudflareConfig;
+
     use super::{ConfigSection, IngressConfig, Manifest, MonitorConfig, PlatformConfig};
-
-    #[test]
-    fn test_config_section_with_cloudflare() {
-        let config = r#"
-            cloudflare = { wrangler = true }
-        "#;
-
-        let config: ConfigSection = toml::from_str(config).unwrap();
-        assert!(config.cloudflare.is_some());
-        assert!(config.cloudflare.unwrap().wrangler);
-    }
 
     /// A `config` field is required in every manifest.
     #[test]
@@ -398,7 +470,7 @@ application = "multitool"
     }
 
     #[test]
-    fn parse_config_example1() {
+    fn parse_aws_config_example() {
         const RAW_MANIFEST: &str = r#"workspace = "wack"
 application = "multitool"
 config.monitor.aws-cloudwatch = {}
@@ -413,6 +485,7 @@ region = "us-east-2"
 [config.platform.aws-lambda]
 name = "buzz"
 region = "us-east-2"
+artifact-path = "my_code.zip"
 "#;
         let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
 
@@ -434,7 +507,7 @@ region = "us-east-2"
             assert_eq!(api_gateway.resource_path, "bar");
             assert_eq!(api_gateway.resource_method, "baz");
             assert_eq!(api_gateway.gateway_name, "pop");
-            assert_eq!(api_gateway.region, "us-east-2");
+            assert_eq!(api_gateway.region, "us-east-2".to_string());
         } else {
             panic!("Expected AwsApiGateway variant");
         }
@@ -443,8 +516,113 @@ region = "us-east-2"
         if let Some(PlatformConfig::AwsLambda(lambda)) = observed.config.platform {
             assert_eq!(lambda.name, "buzz");
             assert_eq!(lambda.region, "us-east-2");
+            assert_eq!(lambda.artifact_path, "my_code.zip");
         } else {
             panic!("Expected AwsLambda variant");
         }
+    }
+
+    #[test]
+    fn parse_full_cloudflare_config_example() {
+        const RAW_MANIFEST: &str = r#"workspace = "wack"
+application = "multitool"
+
+[config.monitor.cloudflare-observability]
+worker-name = "my_worker"
+account-id = "abc123"
+
+[config.platform.cloudflare-workers]
+worker-name = "my_worker"
+account-id = "abc123"
+
+[config.ingress.cloudflare-workers]
+worker-name = "my_worker"
+account-id = "abc123"
+"#;
+        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
+
+        assert_eq!(observed.workspace, Some("wack".to_string()));
+        assert_eq!(observed.application, Some("multitool".to_string()));
+
+        // Check monitor config
+        matches!(
+            observed
+                .config
+                .monitor
+                .expect("Monitor config should be present"),
+            MonitorConfig::CloudflareObservability(_)
+        );
+
+        // Check ingress config
+        if let Some(IngressConfig::CloudflareWorkers(config)) = observed.config.ingress {
+            assert_eq!(config.account_id, Some("abc123".to_string()));
+            assert_eq!(config.worker_name, Some("my_worker".to_string()));
+        } else {
+            panic!("Expected CloudflareWorkers variant");
+        }
+
+        // Check platform config
+        if let Some(PlatformConfig::CloudflareWorkers(config)) = observed.config.platform {
+            assert_eq!(config.account_id, Some("abc123".to_string()));
+            assert_eq!(config.worker_name, Some("my_worker".to_string()));
+        } else {
+            panic!("Expected CloudflareWorkers variant");
+        }
+    }
+
+    #[test]
+    fn parse_short_cloudflare_config_example() {
+        const RAW_MANIFEST: &str = r#"workspace = "wack"
+application = "multitool"
+
+[config.cloudflare]
+worker-name = "my_worker"
+account-id = "abc123"
+main-module = "index.js"
+artifact-path = "src"
+"#;
+        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
+
+        assert_eq!(observed.workspace, Some("wack".to_string()));
+        assert_eq!(observed.application, Some("multitool".to_string()));
+
+        // Check monitor config
+        matches!(
+            observed
+                .config
+                .cloudflare
+                .clone()
+                .expect("Cloudflare config should be present"),
+            CloudflareConfig {
+                account_id: Some(_),
+                worker_name: Some(_),
+                main_module: Some(_),
+                artifact_path: Some(_),
+                wrangler: None,
+                api_token: None,
+            }
+        );
+
+        // Check if values were set correctly
+        if let Some(cloudflare) = observed.config.cloudflare {
+            assert_eq!(cloudflare.account_id, Some("abc123".to_string()));
+            assert_eq!(cloudflare.worker_name, Some("my_worker".to_string()));
+            assert_eq!(cloudflare.main_module, Some("index.js".to_string()));
+            assert_eq!(cloudflare.artifact_path, Some("src".to_string()));
+            assert!(!cloudflare.wrangler_enabled());
+        } else {
+            panic!("Expected CloudflareConfig variant");
+        }
+    }
+
+    #[test]
+    fn test_config_section_with_cloudflare() {
+        let config = r#"
+            cloudflare = { wrangler = true }
+        "#;
+
+        let config: ConfigSection = toml::from_str(config).unwrap();
+        assert!(config.cloudflare.is_some());
+        assert!(config.cloudflare.unwrap().wrangler.unwrap_or(false));
     }
 }

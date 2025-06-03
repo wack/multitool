@@ -2,7 +2,11 @@ use async_trait::async_trait;
 use miette::{IntoDiagnostic as _, Result};
 use tokio::sync::oneshot;
 
-use crate::{adapters::Monitor, stats::Observation, subsystems::handle::Handle};
+use crate::{
+    adapters::{Monitor, backend::MonitorConfig},
+    stats::Observation,
+    subsystems::handle::Handle,
+};
 
 pub(super) type MonitorHandle<T> = Handle<MonitorMail<T>>;
 
@@ -32,6 +36,12 @@ impl<T: Observation + Send + 'static> Monitor for MonitorHandle<T> {
         self.outbox.send(mail).await.into_diagnostic()?;
         receiver.await.into_diagnostic()?
     }
+
+    fn get_config(&self) -> MonitorConfig {
+        panic!(
+            "This should never be called, as the MonitorHandle is a handle to a monitor that is already running."
+        )
+    }
 }
 
 pub(crate) enum MonitorMail<T: Observation> {
@@ -40,7 +50,7 @@ pub(crate) enum MonitorMail<T: Observation> {
     SetCanaryVersionId(VersionParams),
 }
 
-pub(super) struct QueryParams<T: Observation> {
+pub(crate) struct QueryParams<T: Observation> {
     /// The sender where the response is written.
     pub(super) outbox: oneshot::Sender<QueryResp<T>>,
 }
@@ -51,7 +61,7 @@ impl<T: Observation> QueryParams<T> {
     }
 }
 
-pub(super) struct VersionParams {
+pub(crate) struct VersionParams {
     /// The sender where the response is written.
     pub(super) outbox: oneshot::Sender<VersionResp>,
     pub(super) version_id: String,

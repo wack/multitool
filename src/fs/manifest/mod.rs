@@ -6,8 +6,8 @@ use super::{DirectoryType, file::StaticFile};
 
 mod schema;
 
-/// This is the prefix of the manifest file name. e.g. Multi.toml, Multi.yml, and Multi.json
-/// are all prefixed with `Multi`
+/// This is the prefix of the manifest file name. e.g. MultiTool.toml, MultiTool.yml, and MultiTool.json
+/// are all prefixed with `MultiTool`
 const MANIFEST_PREFIX: &str = "MultiTool";
 /// This is the set of allowed filetypes for the manifest. Right now,
 /// we only accept toml and Json files, but we could imagine accepting yml

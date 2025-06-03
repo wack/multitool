@@ -1,15 +1,18 @@
 use async_trait::async_trait;
 use bon::bon;
+use derive_getters::Getters;
 use miette::{Result, miette};
 use tracing::info;
 
 use crate::{
-    Shutdownable, artifacts::LambdaZip, subsystems::ShutdownResult, utils::load_default_aws_config,
+    Shutdownable, adapters::backend::PlatformConfig, artifacts::LambdaZip,
+    subsystems::ShutdownResult, utils::load_default_aws_config,
 };
 use aws_sdk_lambda::{client::Client, error::SdkError, primitives::Blob, types::FunctionCode};
 
 use super::Platform;
 
+#[derive(Getters)]
 pub struct LambdaPlatform {
     client: Client,
     region: String,
@@ -36,6 +39,13 @@ impl LambdaPlatform {
 
 #[async_trait]
 impl Platform for LambdaPlatform {
+    fn get_config(&self) -> PlatformConfig {
+        PlatformConfig::AwsLambda {
+            region: self.region.clone(),
+            name: self.name.clone(),
+        }
+    }
+
     /// Update the Lambda code with the zip we're holding.
     async fn deploy(&mut self) -> Result<(String, String)> {
         info!("Deploying Lambda!");

@@ -5,17 +5,20 @@ use super::{BoxedIngress, BoxedMonitor, BoxedPlatform, StatusCode};
 use crate::MULTITOOL_ORIGIN;
 use crate::fs::UserCreds;
 use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::HttpCircuitBreaker};
+use bon::Builder;
 use chrono::DateTime;
 use miette::{IntoDiagnostic, Result, bail};
+use multitool_sdk::models::Rollout;
 use multitool_sdk::{
     apis::{Api, ApiClient, configuration::Configuration},
     models::{
         ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
-        LoginSuccess, Rollout, RolloutState, RolloutStateStatus, StatusCodeMetrics,
+        LoginSuccess, RolloutState, RolloutStateStatus, StatusCodeMetrics,
         UpdateRolloutStateRequest, WorkspaceSummary,
     },
 };
 
+use serde::Serialize;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -207,16 +210,29 @@ impl BackendClient {
         Ok(())
     }
 
-    pub async fn new_rollout(
-        &self,
-        workspace_id: WorkspaceId,
-        application_id: ApplicationId,
-    ) -> Result<Rollout> {
+    pub async fn new_rollout(&self, params: CreateRolloutParams<'_>) -> Result<Rollout> {
         trace!("Creating a new rollout");
+
+        let config = WebServiceConfig::builder()
+            .ingress(params.ingress.get_config())
+            .monitor(params.monitor.get_config())
+            .platform(params.platform.get_config())
+            .build();
+
+        let request = RolloutRequest::builder()
+            .config(RolloutConfig::WebService(config))
+            .build();
+
+        let request_json = serde_json::to_value(&request).into_diagnostic()?;
+
         let response = self
             .client
             .rollouts_api()
-            .create_rollout(workspace_id, application_id)
+            .create_rollout(
+                params.workspace_id,
+                params.application_id,
+                Some(request_json),
+            )
             .await
             .into_diagnostic()?;
 
@@ -386,14 +402,6 @@ impl BackendClient {
     }
 }
 
-/// A parsed and configured set of adapters for interacting
-/// with external systems.
-pub struct ApplicationConfig {
-    pub platform: BoxedPlatform,
-    pub ingress: BoxedIngress,
-    pub monitor: BoxedMonitor,
-}
-
 #[derive(Clone)]
 pub(super) struct BackendConfig {
     // TODO: Add configuration for a timeout.
@@ -456,4 +464,83 @@ mod tests {
     // used independently by different tasks. And because its
     // sent between tasks, it has to be both Send and Sync, too.
     assert_impl_all!(BackendClient: Clone, Send, Sync);
+}
+
+#[derive(Clone, Debug, Serialize, Builder)]
+#[serde(rename_all = "snake_case")]
+pub struct RolloutRequest {
+    config: RolloutConfig,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RolloutConfig {
+    WebService(WebServiceConfig),
+}
+
+#[derive(Clone, Debug, Serialize, Builder)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub struct WebServiceConfig {
+    pub ingress: IngressConfig,
+    pub monitor: MonitorConfig,
+    pub platform: PlatformConfig,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum IngressConfig {
+    AwsRestApiGateway {
+        region: String,
+        gateway_name: String,
+        stage_name: String,
+        resource_path: String,
+        resource_method: String,
+    },
+    CloudflareWorker {
+        account_id: String,
+        worker_name: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CloudWatchDimensions {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MonitorConfig {
+    AwsCloudwatchMetrics {
+        dimensions: Vec<CloudWatchDimensions>,
+    },
+    CloudflareWorkersObservability {
+        account_id: String,
+        worker_name: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformConfig {
+    AwsLambda {
+        region: String,
+        name: String,
+    },
+    CloudflareWorker {
+        account_id: String,
+        worker_name: String,
+    },
+}
+
+#[derive(Builder)]
+pub struct CreateRolloutParams<'a> {
+    pub workspace_id: WorkspaceId,
+    pub application_id: ApplicationId,
+    pub platform: &'a BoxedPlatform,
+    pub ingress: &'a BoxedIngress,
+    pub monitor: &'a BoxedMonitor,
 }
