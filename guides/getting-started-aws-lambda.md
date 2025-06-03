@@ -41,7 +41,7 @@ You will:
 This tutorial simulates two versions of a Lambda function:
 
 - A “healthy” version that always returns a `200` HTTP status code
-- A “buggy” version that randomly fails with a `400` HTTP status code 10% of the time
+- A “buggy” version that randomly fails with a `400` HTTP status code 50% of the time
 
 📝 **Note:** File **must** be named `index.js` to execute correctly.
 
@@ -70,13 +70,13 @@ zip -j 0%_failures.zip index.js
 
 ### Create the buggy version
 
-This version introduces a simulated bug by returning a `400` HTTP status code 10% of the time.
+This version introduces a simulated bug by returning a `400` HTTP status code 50% of the time.
 
 ```bash
 cat << EOF > index.js
 exports.handler = function (_, context) {
   const rand = Math.random();
-  if (rand < 0.9) {
+  if (rand < 0.5) {
     return context.succeed({
       statusCode: 200,
       body: JSON.stringify({
@@ -98,7 +98,7 @@ EOF
 Zip the code:
 
 ```bash
-zip -j 10%_failures.zip index.js
+zip -j 50%_failures.zip index.js
 ```
 
 ## ➕ Step 2: Create a Lambda execution IAM role
@@ -236,17 +236,7 @@ Now that the Lambda is deployed and accessible via API Gateway, create the app i
 From the MultiTool app:
 
 1. Create a workspace
-2. Create an application with the following values:
-
-| Name                  | Value                           |
-| --------------------- | ------------------------------- |
-| Application Name      | **quickstart-app**              |
-| Region                | **us-east-2**                   |
-| REST API gateway name | **multitool-quickstart-apig**   |
-| Gateway stage         | **prod**                        |
-| Resource method       | **GET**                         |
-| Resource path         | **/demo**                       |
-| Lambda name           | **multitool-quickstart-lambda** |
+2. Create an application named `quickstart`
 
 After the application is set up, login to the MultiTool CLI if needed:
 
@@ -254,16 +244,43 @@ After the application is set up, login to the MultiTool CLI if needed:
 multi login
 ```
 
-## 🚀 Step 8: Roll out healthy code and simulate stable traffic
+## ⚙️ Step 8: Add your configuration file
+
+Now that we have our workspace and app set up in the MultiTool app, we need to create a configuration file so the MultiTool CLI knows how to deploy your application.
+
+If you used the sample values throughout this tutorial, you can use this file:
+
+```bash
+cat << EOF > MultiTool.toml
+workspace = MY_WORKSPACE_NAME
+application = quickstart
+
+config.monitor.aws-cloudwatch = {}
+
+[config.ingress.aws-api-gateway]
+gateway-name = "multitool-quickstart-apig"
+stage-name = "prod"
+resource-path = "/demo"
+resource-method = "GET"
+region = "us-east-2"
+
+[config.platform.aws-lambda]
+name = "multitool-quickstart-lambda"
+region = "us-east-2"
+artifact-path = "0%_failures.zip"
+EOF
+```
+
+## 🚀 Step 9: Roll out healthy code and simulate stable traffic
 
 📝 **Note:** Exiting the terminal before a CLI operation finishes can leave your rollout in a stuck state due to a known bug. Please wait for the operation to complete before closing the terminal. If you've already run into this issue, contact support@wack.run and we’ll help resolve it. A fix is on the way.
 
 To test a successful rollout, use the `0%_failures.zip` file.
 
-Start the rollout using the healhty build artifact and replacing the placeholder with your MultiTool workspace name:
+Start the rollout using `0%_failures.zip` as the `artifact-path` value in your `MultiTool.toml` file:
 
 ```bash
-multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 0%_failures.zip
+multi run
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
@@ -288,14 +305,14 @@ bombardier -c 5 -n 20 ${MY_URL}
 
 As traffic hits the new version, MultiTool will evaluate its behavior and promote it to 100% traffic once it confirms stability.
 
-## ⚠️ Step 9: Roll out buggy code and simulate errors
+## ⚠️ Step 10: Roll out buggy code and simulate errors
 
-To test a broken rollout, use the `10%_failures.zip` file.
+To test a broken rollout, use the `50%_failures.zip` file.
 
-Start the rollout using the buggy build artifact and replacing the placeholder with your MultiTool workspace name:
+Start the rollout using `50%_failures.zip` as the `artifact-path` value in your `MultiTool.toml` file:
 
 ```bash
-multi run --workspace ${MY_WORKSPACE_NAME} --application quickstart-app 10%_failures.zip
+multi run
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
@@ -322,9 +339,9 @@ MultiTool will detect the increase in errors and automatically trigger a rollbac
 
 And that’s it! 🎉
 
-## 🧹 Step 10: Cleanup
+## 🧹 Step 11: Cleanup
 
-After you've tested MultiTool, be sure to clean up the demo resources created as part of this guide.
+After you've tested MultiTool, be sure to clean up the resources created as part of this guide.
 
 To delete the Lambda function:
 
