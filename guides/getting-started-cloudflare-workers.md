@@ -171,7 +171,7 @@ EOF
 Start the rollout using `index.ts` as the `main-module` value in your `MultiTool.toml` file:
 
 ```bash
-multi run
+multi run --cloudflare-api-token $MY_CLOUDFLARE_TOKEN
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
@@ -203,7 +203,7 @@ To test a broken rollout, use the `index_errors.ts` file.
 Start the rollout using `index_errors.ts` as the `main-module` value in your `MultiTool.toml` file:
 
 ```bash
-multi run
+multi run --cloudflare-api-token $MY_CLOUDFLARE_TOKEN
 ```
 
 In a separate terminal window, load the public URL from Step 6 to use in the next step:
