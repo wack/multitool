@@ -66,8 +66,8 @@ MultiTool supports deploying canaries for AWS Lambda functions running in AWS AP
 
 |                                                           Platform                                                           |            Support             |
 | :--------------------------------------------------------------------------------------------------------------------------: | :----------------------------: |
-|                                                 **AWS Lambda + API Gateway**                                                 |     :sparkles: Available!      |
 | [**Cloudflare**](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/#_top) |     :sparkles: Available!      |
+|                                                 **AWS Lambda + API Gateway**                                                 |     :sparkles: Available!      |
 |                                                     [Vercel](vercel.com)                                                     |         :eyes: Up next         |
 |                                             [Kubernetes](https://kubernetes.io/)                                             |         :eyes: Up next         |
 |    [AWS Function Aliases](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-alias.html)     |          :watch: Soon          |

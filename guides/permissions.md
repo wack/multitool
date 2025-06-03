@@ -2,6 +2,19 @@
 
 MultiTool is designed to minimize security risk. <b>MultiTool never stores your cloud credentials</b> and relies solely on local credentials to interact with your cloud provider.
 
+## Cloudflare permissions
+
+MultiTool requires you to pass in a Cloudflare API Token using the `--cloudflare-api-token` CLI flag.
+
+💡 To create a new token in Cloudflare, <a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank">follow these instructions</a>.
+
+Your token will need at least 2 permissions:
+
+| Target  |       Resource        | Permission |
+| :-----: | :-------------------: | :--------: |
+| Account | Workers Observability |    Read    |
+| Account |    Workers Scripts    |    Edit    |
+
 ## AWS permissions
 
 MultiTool uses an authenticated CLI session for your AWS credentials.
@@ -123,19 +136,6 @@ The following IAM policy defines the least privilege access MultiTool needs to f
   ]
 }
 ```
-
-## Cloudflare permissions
-
-MultiTool requires you to pass in a Cloudflare API Token using the `--cloudflare-api-token` CLI flag.
-
-💡 To create a new token in Cloudflare, <a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank">follow these instructions</a>.
-
-Your token will need at least 2 permissions:
-
-| Target  |       Resource        | Permission |
-| :-----: | :-------------------: | :--------: |
-| Account | Workers Observability |    Read    |
-| Account |    Workers Scripts    |    Edit    |
 
 ## 📬 Need help?
 
