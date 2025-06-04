@@ -36,40 +36,6 @@ multi login
 
 ## 📜 Create a manifest file
 
-For AWS Lambda:
-
-**`MultiTool.toml`**
-
-```toml
-# Your workspace's name
-workspace = ""
-# Your application's name
-application = ""
-
-config.monitor.aws-cloudwatch = {}
-
-[config.platform.aws-lambda]
-# The name of your Lambda function
-name = ""
-# The AWS Region
-region = ""
-# The path to the zip file of your Lambda's code
-artifact-path = ".zip"
-
-[config.ingress.aws-api-gateway]
-# The name of your API gateway
-gateway-name = ""
-# The name of your API Gateway's stage
-stage-name = ""
-# The resource path of your API Gateway (including the leading slash)
-resource-path = ""
-# The resource method of your API Gateway
-resource-method = ""
-# The AWS Region
-region = ""
-
-```
-
 For Cloudflare:
 
 **`MultiTool.toml`**
@@ -91,18 +57,51 @@ artifact-path = ""
 main-module = ".js"
 ```
 
+For AWS Lambda:
+
+**`MultiTool.toml`**
+
+```toml
+# Your workspace's name
+workspace = ""
+# Your application's name
+application = ""
+
+config.monitor.aws-cloudwatch = {}
+
+[config.platform.aws-lambda]
+# The name of your Lambda function
+name = ""
+# The AWS Region
+region = ""
+# The path to the zip file of your Lambda's code
+artifact-path = ".zip"
+
+[config.ingress.aws-api-gateway]
+# The name of your API Gateway
+gateway-name = ""
+# The name of your API Gateway's stage
+stage-name = ""
+# The resource path of your API Gateway (including the leading slash)
+resource-path = ""
+# The resource method of your API Gateway
+resource-method = ""
+# The AWS Region
+region = ""
+```
+
 ## 🚀 Deploy your artifact
 
 Start your rollout!
 
 ```bash
-multi run
+multi run --cloudflare-api-token MY_CLOUDFLARE_TOKEN
 ```
 
-Or if you're deploying to Cloudflare:
+Or if you're deploying to AWS:
 
 ```bash
-multi run --cloudflare-api-token MY_CLOUDFLARE_TOKEN
+multi run
 ```
 
 ## 📬 Need help?
