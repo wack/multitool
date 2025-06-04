@@ -1,6 +1,6 @@
 [package]
 name = "multitool"
-version = "0.3.1"
+version = "0.3.0"
 edition = "2024"
 default-run = "multi"
 repository = "https://github.com/wack/multitool"
@@ -33,7 +33,6 @@ bigdecimal = { version = "0.4.7", features = ["serde-json"] }
 bon = "3.3.2"
 chrono = "0.4.38"
 clap = { version = "4.3", features = ["derive", "env"] }
-clap-markdown = { version = "0.1.4", optional = true }
 console = "0.15.8"
 derive-getters = "0.5.0"
 dialoguer = "0.11.0"
@@ -91,7 +90,6 @@ static_assertions.workspace = true
 
 [features]
 proxy = ["dep:pingora"]
-markdown = ["dep:clap-markdown"] # Generate markdown docs for the CLI
 
 # The profile that 'dist' will build with
 [profile.dist]
