@@ -17,7 +17,7 @@ You can install the CLI using `curl`, <a href="https://brew.sh/" target="_blank"
 ### Install with `curl`
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wack/multitool/releases/download/v0.2.5/multitool-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wack/multitool/releases/download/v0.3.0/multitool-installer.sh | sh
 ```
 
 ### Install with <a href="https://brew.sh/" target="_blank">`Homebrew`</a>
