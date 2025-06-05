@@ -39,7 +39,7 @@ You will:
 Create a new "Hello World" Cloudflare Worker
 
 ```bash
-npm create cloudflare@latest -- multitool-quickstart --type hello-world --lang ts --no-git -y true
+npm create cloudflare@latest -- multitool-quickstart --type hello-world --lang js --no-git -y
 ```
 
 ## 📦 Step 2: Create and package the Worker code
@@ -49,25 +49,19 @@ This tutorial simulates two versions of a Worker:
 - A “healthy” version that always returns a `200` HTTP status code
 - A “buggy” version that randomly fails with a `400` HTTP status code 50% of the time
 
-First, let's enter the workers `src` directory:
-
-```bash
-cd multitool-quickstart/src/
-```
-
-Overwrite the `index.js` file and add a new file for the healthy and buggy vsions:
+We'll overwrite the `index.js` file and add a new file for the buggy version:
 
 ### Create the healthy version
 
 This version always returns a `200` HTTP status code response.
 
 ```bash
-cat << EOF > index.ts
+cat << EOF > multitool-quickstart/src/index.js
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
+	async fetch(request, env, ctx) {
 		return new Response('Hello World!', { status: 200 });
 	},
-} satisfies ExportedHandler<Env>;
+};
 EOF
 ```
 
@@ -76,20 +70,14 @@ EOF
 This version introduces a simulated bug by returning a `400` HTTP status code 50% of the time.
 
 ```bash
-cat << EOF > index_errors.ts
+cat << EOF > multitool-quickstart/src/index_errors.js
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
+	async fetch(request, env, ctx) {
 		const rand = Math.random();
 		return new Response(rand < 0.5 ? 'Bad Request' : 'Hello World!', { status: rand < 0.5 ? 400 : 200 });
 	},
-} satisfies ExportedHandler<Env>;
+};
 EOF
-```
-
-Finally, we can go back to the root directory of our Worker:
-
-```bash
-cd ..
 ```
 
 ## ⚙️ Step 3: Deploy the worker
@@ -100,7 +88,7 @@ Now that we added the updated code to our worker, let's deploy it.
 npx wrangler deploy
 ```
 
-Make sure to store the URL that looks like this, replacing `MY_ACCOUNT_URL` with the value from the output of the `deploy` command:
+Store the URL, replacing `MY_ACCOUNT_URL`:
 
 ```bash
 MY_URL="https://multitool-quickstart.[MY_ACCOUNT_URL].workers.dev"
@@ -124,7 +112,7 @@ curl $MY_URL
 
 You should see:
 
-```bash
+```
 Hello World!
 ```
 
