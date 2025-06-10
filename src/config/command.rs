@@ -3,10 +3,10 @@ use miette::Result;
 
 #[cfg(feature = "proxy")]
 use crate::cmd::Proxy;
-use crate::cmd::{Login, Logout, Run, Version};
+use crate::cmd::{Init, Login, Logout, Run, Version};
 use crate::terminal::Terminal;
 
-use super::{LoginSubcommand, RunSubcommand};
+use super::{InitSubcommand, LoginSubcommand, RunSubcommand};
 
 #[cfg(feature = "proxy")]
 use super::ProxySubcommand;
@@ -18,6 +18,8 @@ pub enum MultiCommand {
     /// Log in to the hosted SaaS.
     Login(LoginSubcommand),
     Logout,
+    #[command(hide = true)]
+    Init(InitSubcommand),
     #[cfg(feature = "proxy")]
     Proxy(ProxySubcommand),
     /// Run will execute `multi` in "runner mode", where it will
@@ -33,6 +35,7 @@ impl MultiCommand {
         match self {
             Self::Login(flags) => Login::new(console, flags)?.dispatch(),
             Self::Logout => Logout::new(console).dispatch(),
+            Self::Init(_) => Init::new(console).dispatch(),
             #[cfg(feature = "proxy")]
             Self::Proxy(flags) => Proxy::new(console, flags).dispatch(),
             Self::Run(flags) => Run::new(console, flags)?.dispatch(),
