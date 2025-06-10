@@ -26,6 +26,7 @@ const APPLICATION_NAME: &str = "multi";
 
 /// An abstraction over the user's filesystem ensuring mediated
 /// access to the most commonly used files.
+#[derive(Clone)]
 pub struct FileSystem {
     /// OS-specific file locations for standard operations,
     /// respecting $XDG_CONFIG and similar variables, and falling

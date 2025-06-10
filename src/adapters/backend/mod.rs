@@ -78,6 +78,10 @@ impl BackendClient {
         })
     }
 
+    pub fn origin(&self) -> &str {
+        &self.conf.base_path
+    }
+
     pub fn is_authenicated(&self) -> Result<()> {
         if self.session.clone().is_some_and(Session::is_not_expired) {
             return Ok(());
