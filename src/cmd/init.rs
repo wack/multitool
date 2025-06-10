@@ -25,38 +25,34 @@ impl Init {
         // TODO: In the future, we should load this manifest
         // from filesystem. See the git branch `robbie/init`
         // for the code.
-        let start: Box<dyn InitState<Ctx = Manifest>> = Box::new(());
         let mut manifest = Manifest::default();
+        let start: Box<dyn StateMachine> = Box::new(Start(&mut manifest));
         let mut state = Some(start);
         while let Some(next) = state {
-            state = next.run(&mut manifest)?;
+            state = next.run()?;
         }
 
         Ok(())
     }
 }
 
-impl<T> InitState for T {
-    type Ctx = Manifest;
+struct Start<'a>(&'a mut Manifest);
 
-    fn run(self, _: &mut Self::Ctx) -> Result<Option<Box<dyn InitState<Ctx = Self::Ctx>>>> {
+impl<'a> StateMachine for Start<'a> {
+    fn run(self: Box<Self>) -> Result<Option<Box<dyn StateMachine>>> {
         println!("Running once.");
         Ok(None)
     }
 }
 
-trait InitState {
-    type Ctx;
-
-    fn run(self, _: &mut Self::Ctx) -> Result<Option<Box<dyn InitState<Ctx = Self::Ctx>>>>;
+trait StateMachine {
+    fn run(self: Box<Self>) -> Result<Option<Box<dyn StateMachine>>>;
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::manifest::Manifest;
-
-    use super::InitState;
+    use super::StateMachine;
     use static_assertions::assert_obj_safe;
 
-    assert_obj_safe!(InitState<Ctx = Manifest>);
+    assert_obj_safe!(StateMachine);
 }
