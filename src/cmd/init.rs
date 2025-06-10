@@ -7,6 +7,7 @@
 //! until you reach a leaf node. Each leaf node corresponds to a
 //! field in the manifest.
 
+use bon::Builder;
 use miette::Result;
 
 use crate::{Terminal, manifest::Manifest};
@@ -20,13 +21,18 @@ impl Init {
         Self { terminal }
     }
 
-    pub fn dispatch(self) -> Result<()> {
+    pub fn dispatch(mut self) -> Result<()> {
         // Create a new manifest instance.
         // TODO: In the future, we should load this manifest
         // from filesystem. See the git branch `robbie/init`
         // for the code.
         let mut manifest = Manifest::default();
-        let start: Box<dyn StateMachine> = Box::new(Start(&mut manifest));
+        // Build the start state, passing in the terminal and manifest.
+        let start: &mut dyn StateMachine = &mut Start::builder()
+            .manifest(&mut manifest)
+            .terminal(&mut self.terminal)
+            .build();
+        // Run the state machine to completion.
         let mut state = Some(start);
         while let Some(next) = state {
             state = next.run()?;
@@ -36,17 +42,25 @@ impl Init {
     }
 }
 
-struct Start<'a>(&'a mut Manifest);
+#[derive(Builder)]
+struct Start<'a> {
+    manifest: &'a mut Manifest,
+    terminal: &'a mut Terminal,
+}
 
-impl<'a> StateMachine for Start<'a> {
-    fn run(self: Box<Self>) -> Result<Option<Box<dyn StateMachine>>> {
+impl StateMachine for Start<'_> {
+    fn run(&mut self) -> Result<Option<&mut dyn StateMachine>> {
         println!("Running once.");
+        let next = Self::builder()
+            .manifest(&mut self.manifest)
+            .terminal(&mut self.terminal)
+            .build();
         Ok(None)
     }
 }
 
 trait StateMachine {
-    fn run(self: Box<Self>) -> Result<Option<Box<dyn StateMachine>>>;
+    fn run(&mut self) -> Result<Option<&mut dyn StateMachine>>;
 }
 
 #[cfg(test)]
