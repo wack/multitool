@@ -134,7 +134,7 @@ impl FileSystem {
         Ok(document)
     }
 
-    /// Open the file and deserialize it with serde.
+    /// Store the file, using its canonical path.
     pub(crate) fn save_file<F: File>(&self, file: &F, blob: &F::Data) -> Result<()> {
         // • Get the path to the file.
         let path = file.path(self)?;

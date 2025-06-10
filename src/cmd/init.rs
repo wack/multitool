@@ -8,37 +8,69 @@
 //! field in the manifest.
 
 use bon::Builder;
-use miette::Result;
+use miette::{IntoDiagnostic, Result};
+use tokio::runtime::Runtime;
+use tracing::info;
 
-use crate::{Terminal, manifest::Manifest};
+use crate::{
+    Terminal,
+    adapters::BackendClient,
+    config::InitSubcommand,
+    fs::FileSystem,
+    manifest::{InitTomlManifest, Manifest, TomlManifest},
+};
 
 pub struct Init {
     terminal: Terminal,
+    backend: BackendClient,
 }
 
 impl Init {
-    pub fn new(terminal: Terminal) -> Self {
-        Self { terminal }
+    pub fn new(terminal: Terminal, flags: InitSubcommand) -> Result<Self> {
+        let origin = flags.origin().as_deref();
+        let backend = BackendClient::new(origin, None)?;
+        Ok(Self { terminal, backend })
     }
 
     pub fn dispatch(mut self) -> Result<()> {
-        // Create a new manifest instance.
-        // TODO: In the future, we should load this manifest
-        // from filesystem. See the git branch `robbie/init`
-        // for the code.
-        let mut manifest = Manifest::default();
-        // Build the start state, passing in the terminal and manifest.
-        let start: &mut dyn InitStateMachine = &mut Start::builder()
-            .manifest(&mut manifest)
-            .terminal(&mut self.terminal)
-            .build();
-        // Run the state machine to completion.
-        let mut state = Some(start);
-        while let Some(next) = state {
-            state = next.run()?;
-        }
+        // Kick off the async runtime.
+        let rt = Runtime::new().into_diagnostic()?;
+        let _guard = rt.enter();
+        rt.block_on(async {
+            let mut fs = FileSystem::new()?;
+            // Exit early if there's already a project manifest.
+            //
+            // For now, we don't allow users to use init to
+            // edit their manifest (because we can't preserve
+            // comments right Serde right now...)
+            // TODO: Upgrade our config-file reading to use
+            // the toml and toml_edit crates to preserve comments
+            // in the TOML files we read.
+            // https://docs.rs/toml_edit/latest/toml_edit/
+            if let Ok(_) = fs.project_manifest() {
+                info!("It looks like you already have an initialized project manifest. Exiting.");
+                return Ok(());
+            }
+            info!("No project manifest file found. Let's create one!");
+            // Create a new manifest instance.
+            let mut manifest = Manifest::default();
 
-        Ok(())
+            // Build the start state, passing in the terminal and manifest.
+            let start: &mut dyn InitStateMachine = &mut Start::builder()
+                .manifest(&mut manifest)
+                .terminal(&mut self.terminal)
+                .fs(&mut fs)
+                .build();
+
+            // Run the state machine to completion.
+            let mut state = Some(start);
+            while let Some(next) = state {
+                state = next.run()?;
+            }
+
+            // Dump the file to disk.
+            fs.save_file(&InitTomlManifest, &manifest)
+        })
     }
 }
 
@@ -46,6 +78,7 @@ impl Init {
 struct Start<'a> {
     manifest: &'a mut Manifest,
     terminal: &'a mut Terminal,
+    fs: &'a mut FileSystem,
 }
 
 impl InitStateMachine for Start<'_> {
@@ -54,6 +87,7 @@ impl InitStateMachine for Start<'_> {
         let next = Self::builder()
             .manifest(&mut self.manifest)
             .terminal(&mut self.terminal)
+            .fs(self.fs)
             .build();
         Ok(None)
     }

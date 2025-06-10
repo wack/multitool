@@ -18,6 +18,7 @@ pub enum MultiCommand {
     /// Log in to the hosted SaaS.
     Login(LoginSubcommand),
     Logout,
+    /// Initialize a new project or prepare the configuration of an existing one
     #[command(hide = true)]
     Init(InitSubcommand),
     #[cfg(feature = "proxy")]
@@ -35,7 +36,7 @@ impl MultiCommand {
         match self {
             Self::Login(flags) => Login::new(console, flags)?.dispatch(),
             Self::Logout => Logout::new(console).dispatch(),
-            Self::Init(_) => Init::new(console).dispatch(),
+            Self::Init(flags) => Init::new(console, flags)?.dispatch(),
             #[cfg(feature = "proxy")]
             Self::Proxy(flags) => Proxy::new(console, flags).dispatch(),
             Self::Run(flags) => Run::new(console, flags)?.dispatch(),
