@@ -103,6 +103,22 @@ impl BackendClient {
         Ok(workspaces)
     }
 
+    pub(crate) async fn list_applications(
+        &self,
+        id: WorkspaceId,
+    ) -> Result<Vec<ApplicationDetails>> {
+        self.is_authenicated()?;
+        let applications = self
+            .client
+            .applications_api()
+            .list_applications(id)
+            .await
+            .into_diagnostic()?
+            .applications;
+
+        Ok(applications)
+    }
+
     pub(crate) async fn lock_state(
         &self,
         meta: &RolloutMetadata,

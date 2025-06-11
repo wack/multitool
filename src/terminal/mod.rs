@@ -106,6 +106,14 @@ impl Terminal {
             .unwrap()
     }
 
+    pub fn prompt_application_selection(&self, items: &[String]) -> usize {
+        Select::with_theme(self.stdout.theme())
+            .items(items)
+            .with_prompt("Application")
+            .interact()
+            .unwrap()
+    }
+
     // TODO: Use a secure string to ensure password safety.
     pub fn prompt_password(&self) -> String {
         Password::with_theme(self.stdout.theme())
