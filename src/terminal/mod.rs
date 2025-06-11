@@ -1,4 +1,4 @@
-use dialoguer::{Input, Password};
+use dialoguer::{Input, Password, Select};
 use logging::setup_logger;
 use miette::{DebugReportHandler, GraphicalReportHandler, IntoDiagnostic, Result};
 
@@ -94,6 +94,14 @@ impl Terminal {
     pub fn prompt_email(&self) -> String {
         Input::with_theme(self.stdout.theme())
             .with_prompt("Email")
+            .interact()
+            .unwrap()
+    }
+
+    pub fn prompt_workspace_selection(&self, items: &[String]) -> usize {
+        Select::with_theme(self.stdout.theme())
+            .items(items)
+            .with_prompt("Workspace")
             .interact()
             .unwrap()
     }

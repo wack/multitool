@@ -90,6 +90,19 @@ impl BackendClient {
         }
     }
 
+    pub(crate) async fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
+        self.is_authenicated()?;
+        let workspaces: Vec<_> = self
+            .client
+            .workspaces_api()
+            .list_workspaces(None)
+            .await
+            .into_diagnostic()?
+            .workspaces;
+
+        Ok(workspaces)
+    }
+
     pub(crate) async fn lock_state(
         &self,
         meta: &RolloutMetadata,

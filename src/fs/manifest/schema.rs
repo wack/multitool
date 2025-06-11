@@ -74,6 +74,10 @@ impl Manifest {
         self.workspace.as_deref()
     }
 
+    pub fn set_workspace<T: AsRef<str>>(&mut self, value: T) {
+        self.workspace = Some(value.as_ref().to_owned());
+    }
+
     pub fn application(&self) -> Option<&str> {
         self.application.as_deref()
     }

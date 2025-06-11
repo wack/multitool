@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bon::Builder;
 use miette::{IntoDiagnostic, Result};
-use tokio::runtime::Runtime;
+use tokio::{runtime::Runtime, sync::Mutex};
 use tracing::info;
 
 use crate::{
@@ -59,7 +59,7 @@ impl Init {
             }
             info!("No project manifest file found. Let's create one!");
             // Create a new manifest instance.
-            let manifest = Arc::new(Manifest::default());
+            let manifest = Arc::new(Mutex::new(Manifest::default()));
             let terminal = Arc::new(self.terminal);
             let start = Start::builder()
                 .manifest(manifest)
@@ -76,16 +76,20 @@ impl Init {
                     State::Err(report) => return Err(report),
                 }
             };
+            // Now that we've edited the inner manifest and finalized
+            // the value, we can copy the guts out from inside the mutex.
+            let manifest_guard = manifest.lock().await;
+            let final_manifest = manifest_guard.clone();
 
             // Dump the file to disk.
-            fs.save_file(&InitTomlManifest, &*manifest)
+            fs.save_file(&InitTomlManifest, &final_manifest)
         })
     }
 }
 
 #[derive(Builder)]
 struct Start {
-    manifest: Arc<Manifest>,
+    manifest: Arc<Mutex<Manifest>>,
     terminal: Arc<Terminal>,
     origin: String,
     fs: FileSystem,
@@ -93,7 +97,7 @@ struct Start {
 
 #[async_trait]
 impl InitStateMachine for Start {
-    type Output = Arc<Manifest>;
+    type Output = Arc<Mutex<Manifest>>;
 
     async fn run(&mut self) -> State<Self::Output> {
         let next = CheckLogin::builder()
@@ -108,7 +112,7 @@ impl InitStateMachine for Start {
 
 #[derive(Builder)]
 struct CheckLogin {
-    manifest: Arc<Manifest>,
+    manifest: Arc<Mutex<Manifest>>,
     terminal: Arc<Terminal>,
     fs: FileSystem,
     origin: String,
@@ -135,7 +139,7 @@ impl<T> From<miette::Report> for State<T> {
 
 #[async_trait]
 impl InitStateMachine for CheckLogin {
-    type Output = Arc<Manifest>;
+    type Output = Arc<Mutex<Manifest>>;
 
     async fn run(&mut self) -> State<Self::Output> {
         // Check to ensure the user is logged in.
@@ -177,7 +181,7 @@ impl InitStateMachine for CheckLogin {
 
 #[derive(Builder)]
 struct PromptWorkspace {
-    manifest: Arc<Manifest>,
+    manifest: Arc<Mutex<Manifest>>,
     terminal: Arc<Terminal>,
     fs: FileSystem,
     backend: BackendClient,
@@ -185,7 +189,65 @@ struct PromptWorkspace {
 
 #[async_trait]
 impl InitStateMachine for PromptWorkspace {
-    type Output = Arc<Manifest>;
+    type Output = Arc<Mutex<Manifest>>;
+
+    async fn run(&mut self) -> State<Self::Output> {
+        debug_assert!(self.backend.is_authenicated().is_ok());
+        // Now that we have an authenticated client, we
+        // can read their workspaces and ask if they want
+        // to use an existing workspace or create a new one.
+        let workspaces = match self.backend.list_workspaces().await {
+            Ok(workspaces) => workspaces,
+            Err(err) => return State::Err(err),
+        };
+        let workspace_names: Vec<_> = workspaces
+            .into_iter()
+            .map(|workspace| workspace.display_name)
+            .collect();
+        // We're going to prompt the user to pick out their workspace
+        // from the list, or to create a new one.
+        // To give them that option, we have to add a new element
+        // to the list.
+        let mut options = workspace_names.clone();
+        options.push("Create new".to_owned());
+        // Now, we can prompt the user to select an option.
+        info!("Which workspace would you like to use?");
+        let selection = self.terminal.prompt_workspace_selection(options.as_slice());
+        if selection < workspace_names.len() {
+            // The user has selected an existing workspace.
+            // Set this field and continue.
+            let workspace = workspace_names[selection].clone();
+            let mut manifest_guard = self.manifest.lock().await;
+            manifest_guard.set_workspace(workspace);
+            drop(manifest_guard);
+            // Awesome, now we can move on to the application id.
+            let next = PromptApplication::builder()
+                .manifest(self.manifest.clone())
+                .fs(self.fs.clone())
+                .terminal(self.terminal.clone())
+                .backend(self.backend.clone())
+                .build();
+            State::Next(Box::new(next))
+        } else {
+            // The user has decided to create a new workspace.
+            // Prompt for the workspace name, create a new workspace,
+            // and then set the field and continue.
+            todo!();
+        }
+    }
+}
+
+#[derive(Builder)]
+struct PromptApplication {
+    manifest: Arc<Mutex<Manifest>>,
+    terminal: Arc<Terminal>,
+    fs: FileSystem,
+    backend: BackendClient,
+}
+
+#[async_trait]
+impl InitStateMachine for PromptApplication {
+    type Output = Arc<Mutex<Manifest>>;
 
     async fn run(&mut self) -> State<Self::Output> {
         State::Done(self.manifest.clone())
