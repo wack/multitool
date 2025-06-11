@@ -28,7 +28,7 @@ impl Init {
         // for the code.
         let mut manifest = Manifest::default();
         // Build the start state, passing in the terminal and manifest.
-        let start: &mut dyn StateMachine = &mut Start::builder()
+        let start: &mut dyn InitStateMachine = &mut Start::builder()
             .manifest(&mut manifest)
             .terminal(&mut self.terminal)
             .build();
@@ -48,8 +48,8 @@ struct Start<'a> {
     terminal: &'a mut Terminal,
 }
 
-impl StateMachine for Start<'_> {
-    fn run(&mut self) -> Result<Option<&mut dyn StateMachine>> {
+impl InitStateMachine for Start<'_> {
+    fn run(&mut self) -> Result<Option<&mut dyn InitStateMachine>> {
         println!("Running once.");
         let next = Self::builder()
             .manifest(&mut self.manifest)
@@ -59,14 +59,14 @@ impl StateMachine for Start<'_> {
     }
 }
 
-trait StateMachine {
-    fn run(&mut self) -> Result<Option<&mut dyn StateMachine>>;
+trait InitStateMachine {
+    fn run(&mut self) -> Result<Option<&mut dyn InitStateMachine>>;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::StateMachine;
+    use super::InitStateMachine;
     use static_assertions::assert_obj_safe;
 
-    assert_obj_safe!(StateMachine);
+    assert_obj_safe!(InitStateMachine);
 }
