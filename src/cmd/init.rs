@@ -236,7 +236,30 @@ impl InitStateMachine for PromptWorkspace {
             // The user has decided to create a new workspace.
             // Prompt for the workspace name, create a new workspace,
             // and then set the field and continue.
-            todo!();
+            info!("Let's create a new workspace");
+            let workspace_name = self.terminal.prompt_workspace_name();
+
+            // Create the workspace
+            let workspace = match self.backend.create_workspace(workspace_name.clone()).await {
+                Ok(workspace) => workspace,
+                Err(err) => return State::Err(err),
+            };
+
+            // Set the workspace name in the manifest
+            let mut manifest_guard = self.manifest.lock().await;
+            manifest_guard.set_workspace(workspace_name);
+            drop(manifest_guard);
+
+            // Continue to the next state
+            let next = PromptApplication::builder()
+                .manifest(self.manifest.clone())
+                .fs(self.fs.clone())
+                .terminal(self.terminal.clone())
+                .backend(self.backend.clone())
+                .workspace_id(workspace.id)
+                .build();
+
+            State::Next(Box::new(next))
         }
     }
 }
@@ -289,7 +312,28 @@ impl InitStateMachine for PromptApplication {
             // The user has decided to create a new application.
             // Prompt for the application name, create a new application,
             // and then set the field and continue.
-            todo!();
+            info!("Let's create a new application");
+            let application_name = self.terminal.prompt_application_name();
+
+            // Create the application
+            // Since we have a todo! in the create_application method,
+            // this code will not actually run until that's implemented
+            let application = match self
+                .backend
+                .create_application(self.workspace_id, application_name.clone())
+                .await
+            {
+                Ok(application) => application,
+                Err(err) => return State::Err(err),
+            };
+
+            // Set the application name in the manifest
+            let mut manifest_guard = self.manifest.lock().await;
+            manifest_guard.set_application(application_name);
+            drop(manifest_guard);
+
+            // Return the completed manifest
+            State::Done(self.manifest.clone())
         }
     }
 }

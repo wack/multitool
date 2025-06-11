@@ -121,4 +121,18 @@ impl Terminal {
             .interact()
             .unwrap()
     }
+
+    pub fn prompt_workspace_name(&self) -> String {
+        Input::with_theme(self.stdout.theme())
+            .with_prompt("Workspace name")
+            .interact()
+            .unwrap()
+    }
+
+    pub fn prompt_application_name(&self) -> String {
+        Input::with_theme(self.stdout.theme())
+            .with_prompt("Application name")
+            .interact()
+            .unwrap()
+    }
 }
