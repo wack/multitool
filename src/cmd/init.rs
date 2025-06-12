@@ -294,7 +294,7 @@ impl InitStateMachine for PromptApplication {
         // from the list, or to create a new one.
         // To give them that option, we have to add a new element
         // to the list.
-        options.push("Create new".to_owned());
+        options.push("+ Create new application".to_owned());
         // Now, we can prompt the user to select an option.
         info!("Which application would you like to use?");
         let selection = self.terminal.prompt_workspace_selection(options.as_slice());
