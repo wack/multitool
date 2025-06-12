@@ -51,7 +51,7 @@ impl Terminal {
     pub fn init_check(&self) -> Result<()> {
         self.stdout
             .term()
-            .write_line("Checking if the project is already initialized")
+            .write_line("Checking if the application is already initialized")
             .into_diagnostic()
     }
 

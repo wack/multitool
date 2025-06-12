@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub use schema::{CloudflareConfig, Manifest, project_manifest};
+pub use schema::{CloudflareConfig, Manifest, application_manifest};
 
 use super::{DirectoryType, file::StaticFile};
 
@@ -28,7 +28,7 @@ pub struct TomlManifest;
 
 /// A manifest that was originally loaded from a TOML file.
 impl StaticFile for TomlManifest {
-    const DIR: DirectoryType = DirectoryType::Project;
+    const DIR: DirectoryType = DirectoryType::ApplicationRoot;
     const NAME: &'static str = MANIFEST_PREFIX;
     const EXTENSION: &'static str = MANIFEST_EXTENSIONS[0];
 
@@ -39,7 +39,7 @@ impl StaticFile for TomlManifest {
 pub struct JsonManifest;
 
 impl StaticFile for JsonManifest {
-    const DIR: DirectoryType = DirectoryType::Project;
+    const DIR: DirectoryType = DirectoryType::ApplicationRoot;
     const NAME: &'static str = MANIFEST_PREFIX;
     const EXTENSION: &'static str = MANIFEST_EXTENSIONS[1];
 

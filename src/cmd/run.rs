@@ -1,6 +1,6 @@
 use crate::adapters::backend::{ApplicationId, CreateRolloutParams, WorkspaceId};
 use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
-use crate::fs::{FileSystem, SessionFile, project_manifest};
+use crate::fs::{FileSystem, SessionFile, application_manifest};
 use crate::manifest::Manifest;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{ControllerSubsystem, adapters::BackendClient, config::RunSubcommand};
@@ -45,7 +45,7 @@ impl Run {
     pub fn new(terminal: Terminal, args: RunSubcommand) -> Result<Self> {
         let fs = FileSystem::new().unwrap();
         let session = fs.load_file(SessionFile)?;
-        let manifest = project_manifest().clone();
+        let manifest = application_manifest().clone();
         let backend = BackendClient::new(args.origin(), Some(session))?;
         let override_workspace_name = args.workspace().map(ToString::to_string);
         let override_application_name = args.application().map(ToString::to_string);

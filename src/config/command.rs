@@ -18,7 +18,7 @@ pub enum MultiCommand {
     /// Log in to the hosted SaaS.
     Login(LoginSubcommand),
     Logout,
-    /// Initialize a new project or prepare the configuration of an existing one
+    /// Initialize a new application or prepare the configuration of an existing one
     #[command(hide = true)]
     Init(InitSubcommand),
     #[cfg(feature = "proxy")]

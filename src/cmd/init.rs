@@ -44,7 +44,7 @@ impl Init {
         rt.block_on(async {
             let fs = FileSystem::new()?;
 
-            // Exit early if there's already a project manifest.
+            // Exit early if there's already a application manifest.
             //
             // For now, we don't allow users to use init to
             // edit their manifest (because we can't preserve
@@ -53,11 +53,13 @@ impl Init {
             // the toml and toml_edit crates to preserve comments
             // in the TOML files we read.
             // https://docs.rs/toml_edit/latest/toml_edit/
-            if let Ok(_) = fs.project_manifest() {
-                info!("It looks like you already have an initialized project manifest. Exiting.");
+            if let Ok(_) = fs.application_manifest() {
+                info!(
+                    "It looks like you already have an initialized application manifest. Exiting."
+                );
                 return Ok(());
             }
-            info!("No project manifest file found. Let's create one!");
+            info!("No application manifest file found. Let's create one!");
             // Create a new manifest instance.
             let manifest = Arc::new(Mutex::new(Manifest::default()));
             let terminal = Arc::new(self.terminal);

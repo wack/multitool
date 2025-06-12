@@ -10,7 +10,7 @@ use std::{
 };
 
 pub(crate) use file::File;
-pub(crate) use manifest::project_manifest;
+pub(crate) use manifest::application_manifest;
 pub(crate) use session::{Session, SessionFile, UserCreds};
 
 use manifest::{JsonManifest, Manifest, TomlManifest};
@@ -61,9 +61,9 @@ impl FileSystem {
         }
     }
 
-    /// Load the project manifest file, looking for manifests in
+    /// Load the application manifest file, looking for manifests in
     /// priority order up the file hierarchy.
-    pub fn project_manifest(&self) -> Result<Manifest, ManifestMissing> {
+    pub fn application_manifest(&self) -> Result<Manifest, ManifestMissing> {
         // • Attempt to load a TOML manifest. Fallback to JSON.
         let toml_manifest = self.load_file(TomlManifest);
         let json_manifest = self.load_file(JsonManifest);
@@ -75,8 +75,8 @@ impl FileSystem {
         Ok(manifest_box)
     }
 
-    /// The project directory is the first directory with a MultiTool manifest
-    /// staritng in the current directory and walking up the directory
+    /// The application directory is the first directory with a MultiTool manifest
+    /// starting in the current directory and walking up the directory
     /// tree until one is observed.
     /// `Ok(Some(_))`` is returned when the file is found successfully.
     /// `Ok(None)` is returned when the file cannot be found.
@@ -84,7 +84,7 @@ impl FileSystem {
     /// occurred, like the file could not be read due to insufficient
     /// permissions, or the pwd is outside of the bounds of the filesystem.
     /// This function only checks if the file exists, not if the file is valid.
-    pub fn project_dir(&self) -> Result<Option<PathBuf>> {
+    pub fn application_dir(&self) -> Result<Option<PathBuf>> {
         // • Check this directory for the `MultiTool.toml` manifest file. If not found,
         //   traverse upward until found.
         let current_dir = std::env::current_dir().into_diagnostic()?;
@@ -159,7 +159,7 @@ impl FileSystem {
     fn dir(&self, typ: DirectoryType) -> Result<PathBuf> {
         match typ {
             DirectoryType::Cache => Ok(self.xdg_dirs.cache_dir().to_path_buf()),
-            DirectoryType::Project => self.project_dir()?.ok_or(ManifestMissing.into()),
+            DirectoryType::ApplicationRoot => self.application_dir()?.ok_or(ManifestMissing.into()),
             DirectoryType::Pwd => std::env::current_dir().into_diagnostic(),
             DirectoryType::Data => Ok(self.xdg_dirs.data_dir().to_path_buf()),
         }
@@ -199,13 +199,13 @@ pub enum DirectoryType {
     Cache,
     /// Persistent data lives here between runs.
     Data,
-    /// The project directory is the dir that contains the manifest
+    /// The application root directory is the dir that contains the manifest
     /// file relevant to the current operating context. It's usually
-    /// the nearest wack.toml file, starting in the pwd and crawling
-    /// up the directory tree until its found.
-    Project,
+    /// the directory containing the nearest `MultiTool.toml` file, starting
+    /// in the pwd and crawling up the directory tree until its found.
+    ApplicationRoot,
     /// Sometimes, we need to create new files from scratch in the
     /// working directory. This extension is for cases when we're
-    /// not interested in the project root. e.g. `wack init`
+    /// not interested in the application root. e.g. `multi init`
     Pwd,
 }
