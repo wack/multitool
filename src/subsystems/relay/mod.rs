@@ -92,16 +92,14 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
         // Kick off a task to poll the backend for new states.
         let mut poller = self.new_poller();
         let mut state_stream = poller.take_stream()?;
-        subsys.start(SubsystemBuilder::new(
-            "StatePoller",
-            poller.into_subsystem(),
-        ));
+        subsys.start(SubsystemBuilder::new("StatePoller", poller.into_subsystem()).detached());
 
         let mut observations = self.observations;
         loop {
             select! {
                 // Besides that, we can just hang out.
                 _ = subsys.on_shutdown_requested() => {
+                    subsys.request_local_shutdown();
                     subsys.wait_for_children().await;
                     return Ok(());
                 }
@@ -133,7 +131,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         subsys.start(SubsystemBuilder::new(
                             format!("LockManager {}", state_id),
                             lock_manager.into_subsystem(),
-                        ));
+                        ).detached());
                         // Now that we have the lock managed, we
                         // need to tell the Platform/Ingress
                         // to effect the state.

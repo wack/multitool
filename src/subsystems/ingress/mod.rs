@@ -88,6 +88,8 @@ impl IntoSubsystem<Report> for IngressSubsystem {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
+                    subsys.request_local_shutdown();
+                    subsys.wait_for_children().await;
                     return self.shutdown().await;
                 }
                 // Shutdown signal from one of the handles. Since this thread has exclusive

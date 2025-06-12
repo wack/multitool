@@ -79,29 +79,34 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
             .build();
 
         // • Start the ingress subsystem.
-        subsys.start(SubsystemBuilder::new(
-            INGRESS_SUBSYSTEM_NAME,
-            ingress_subsystem.into_subsystem(),
-        ));
+        subsys.start(
+            SubsystemBuilder::new(INGRESS_SUBSYSTEM_NAME, ingress_subsystem.into_subsystem())
+                .detached(),
+        );
 
         // • Start the platform subsystem.
-        subsys.start(SubsystemBuilder::new(
-            PLATFORM_SUBSYSTEM_NAME,
-            platform_subsystem.into_subsystem(),
-        ));
+        subsys.start(
+            SubsystemBuilder::new(PLATFORM_SUBSYSTEM_NAME, platform_subsystem.into_subsystem())
+                .detached(),
+        );
 
         // • Start the MonitorController subsytem.
-        subsys.start(SubsystemBuilder::new(
-            MONITOR_CONTROLLER_SUBSYSTEM_NAME,
-            monitor_controller.into_subsystem(),
-        ));
+        subsys.start(
+            SubsystemBuilder::new(
+                MONITOR_CONTROLLER_SUBSYSTEM_NAME,
+                monitor_controller.into_subsystem(),
+            )
+            .detached(),
+        );
 
         // • Start the relay subsystem.
-        subsys.start(SubsystemBuilder::new(
-            RELAY_SUBSYSTEM_NAME,
-            relay_subsystem.into_subsystem(),
-        ));
+        subsys.start(
+            SubsystemBuilder::new(RELAY_SUBSYSTEM_NAME, relay_subsystem.into_subsystem())
+                .detached(),
+        );
 
+        subsys.on_shutdown_requested().await;
+        subsys.request_local_shutdown();
         subsys.wait_for_children().await;
         Ok(())
     }

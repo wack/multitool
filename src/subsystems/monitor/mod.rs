@@ -81,6 +81,8 @@ impl IntoSubsystem<Report> for MonitorSubsystem<StatusCode> {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
+                    subsys.request_local_shutdown();
+                    subsys.wait_for_children().await;
                     return self.shutdown().await;
                 }
                 _ = self.shutdown.recv() => {

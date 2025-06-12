@@ -79,6 +79,8 @@ impl IntoSubsystem<Report> for LockManager {
                     }
                  }
                 _ = subsys.on_shutdown_requested() => {
+                    subsys.request_local_shutdown();
+                    subsys.wait_for_children().await;
                     // Release the lock.
                     return self.shutdown().await;
                 }
