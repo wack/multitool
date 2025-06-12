@@ -26,7 +26,7 @@ pub struct WranglerFile;
 
 impl StaticFile for WranglerFile {
     type Data = Wrangler;
-    const DIR: DirectoryType = DirectoryType::Project;
+    const DIR: DirectoryType = DirectoryType::ApplicationRoot;
     const NAME: &'static str = "wrangler";
     const EXTENSION: &'static str = "toml";
 }

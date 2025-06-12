@@ -78,12 +78,29 @@ impl BackendClient {
         })
     }
 
+    pub fn origin(&self) -> &str {
+        &self.conf.base_path
+    }
+
     pub fn is_authenicated(&self) -> Result<()> {
         if self.session.clone().is_some_and(Session::is_not_expired) {
             return Ok(());
         } else {
             bail!("Please login before running this command.");
         }
+    }
+
+    pub(crate) async fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
+        self.is_authenicated()?;
+        let workspaces: Vec<_> = self
+            .client
+            .workspaces_api()
+            .list_workspaces(None)
+            .await
+            .into_diagnostic()?
+            .workspaces;
+
+        Ok(workspaces)
     }
 
     pub(crate) async fn lock_state(

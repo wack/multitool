@@ -9,7 +9,7 @@ use super::theme::{SIMPLE_THEME, colorful_theme};
 pub(super) struct TermDestination {
     term: Term,
     allow_color: bool,
-    theme: &'static dyn Theme,
+    theme: &'static (dyn Theme + Send + Sync),
 }
 
 impl TermDestination {
@@ -38,7 +38,7 @@ impl TermDestination {
             .color_preference()
             .unwrap_or_else(colors_enabled);
         // Pick the theme based on the user's color preference.
-        let theme: &'static dyn Theme = if allow_color {
+        let theme: &'static (dyn Theme + Send + Sync) = if allow_color {
             colorful_theme()
         } else {
             SIMPLE_THEME
@@ -62,7 +62,7 @@ impl TermDestination {
             .color_preference()
             .unwrap_or_else(colors_enabled_stderr);
         // Pick the theme based on the user's color preference.
-        let theme: &'static dyn Theme = if allow_color {
+        let theme: &'static (dyn Theme + Send + Sync) = if allow_color {
             colorful_theme()
         } else {
             SIMPLE_THEME

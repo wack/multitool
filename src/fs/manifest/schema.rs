@@ -20,14 +20,14 @@ use crate::{
 };
 use miette::Result;
 
-/// The project manifest only needs to be loaded once, so we
+/// The application manifest only needs to be loaded once, so we
 /// cache it as a global singleton.
-static PROJECT_MANIFEST: OnceLock<Manifest> = OnceLock::new();
+static APPLICATION_MANIFEST: OnceLock<Manifest> = OnceLock::new();
 
-/// Return the project's manifest file, or an empty manifest if none
+/// Return the application's manifest file, or an empty manifest if none
 /// is found. Use the globally available cached file.
-pub fn project_manifest() -> &'static Manifest {
-    PROJECT_MANIFEST.get_or_init(Manifest::load_or_default)
+pub fn application_manifest() -> &'static Manifest {
+    APPLICATION_MANIFEST.get_or_init(Manifest::load_or_default)
 }
 
 #[derive(Error, Debug, Diagnostic)]
@@ -62,16 +62,20 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Attempts to read a config file for this project, and
+    /// Attempts to read a config file for this application, and
     /// returns an empty manifest file if none is found.
     pub(crate) fn load_or_default() -> Self {
         FileSystem::new().map_or(Self::default(), |fs| {
-            fs.project_manifest().unwrap_or_default()
+            fs.application_manifest().unwrap_or_default()
         })
     }
 
     pub fn workspace(&self) -> Option<&str> {
         self.workspace.as_deref()
+    }
+
+    pub fn set_workspace<T: AsRef<str>>(&mut self, value: T) {
+        self.workspace = Some(value.as_ref().to_owned());
     }
 
     pub fn application(&self) -> Option<&str> {
@@ -403,7 +407,7 @@ impl CloudflareConfig {
         }
 
         // Finally, default to current working directory
-        let current_dir = match fs.project_dir() {
+        let current_dir = match fs.application_dir() {
             Err(err) => Err(err),
             Ok(Some(path)) => Ok(path),
             Ok(None) => std::env::current_dir()
