@@ -128,7 +128,7 @@ impl CheckLogin {
         let creds = backend.exchange_creds(&email, &password).await?;
         self.fs.save_file(&SessionFile, &creds)?;
         self.terminal.login_successful()?;
-        info!("Now that you're logged in, we can continue.");
+        info!("Now that you're logged in, let's continue.");
         Ok(creds)
     }
 }
@@ -211,7 +211,7 @@ impl InitStateMachine for PromptWorkspace {
         // To give them that option, we have to add a new element
         // to the list.
         let mut options = workspace_names.clone();
-        options.push("Create new".to_owned());
+        options.push("+ Create new workspace".to_owned());
         // Now, we can prompt the user to select an option.
         info!("Which workspace would you like to use?");
         let selection = self.terminal.prompt_workspace_selection(options.as_slice());
