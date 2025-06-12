@@ -136,10 +136,10 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
         let mut handle = monitor_subsystem.handle();
 
         // • Launch the subsystem.
-        subsys.start(
-            SubsystemBuilder::new(MONITOR_SUBSYSTEM_NAME, monitor_subsystem.into_subsystem())
-                .detached(),
-        );
+        subsys.start(SubsystemBuilder::new(
+            MONITOR_SUBSYSTEM_NAME,
+            monitor_subsystem.into_subsystem(),
+        ));
 
         // Now, we can periodically poll the monitor for
         // new data.
@@ -163,7 +163,6 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
                     // the monitor is shut down.
                     // NB: We can't implement the shutdown trait because
                     // self has been partially moved.
-                    subsys.request_local_shutdown();
                     subsys.wait_for_children().await;
                     return Ok(());
                 }

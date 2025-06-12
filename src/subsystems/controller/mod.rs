@@ -79,35 +79,51 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
             .build();
 
         // • Start the ingress subsystem.
-        subsys.start(
+        let ingress_subsys = subsys.start(
             SubsystemBuilder::new(INGRESS_SUBSYSTEM_NAME, ingress_subsystem.into_subsystem())
                 .detached(),
         );
 
         // • Start the platform subsystem.
-        subsys.start(
+        let platform_subsys = subsys.start(
             SubsystemBuilder::new(PLATFORM_SUBSYSTEM_NAME, platform_subsystem.into_subsystem())
                 .detached(),
         );
 
         // • Start the MonitorController subsytem.
-        subsys.start(
-            SubsystemBuilder::new(
-                MONITOR_CONTROLLER_SUBSYSTEM_NAME,
-                monitor_controller.into_subsystem(),
-            )
-            .detached(),
-        );
+        // The MonitorController and Monitor don't need to be
+        // detached because they can be shutdown in tandem.
+        // We need them to drop their channels to signal to
+        // the other subsystems why the shutdown has occurred.
+        subsys.start(SubsystemBuilder::new(
+            MONITOR_CONTROLLER_SUBSYSTEM_NAME,
+            monitor_controller.into_subsystem(),
+        ));
 
         // • Start the relay subsystem.
-        subsys.start(
+        let relay_subsys = subsys.start(
             SubsystemBuilder::new(RELAY_SUBSYSTEM_NAME, relay_subsystem.into_subsystem())
                 .detached(),
         );
 
         subsys.on_shutdown_requested().await;
-        subsys.request_local_shutdown();
+        // Waiting for children will block until the Monitor and
+        // MonitorController are shut down.
         subsys.wait_for_children().await;
+        // Next, we wait for the relay, because we need to abandon
+        // any state locks that we've taken before we can roll back
+        // the ingress or yank the platform.
+        relay_subsys.initiate_shutdown();
+        relay_subsys.join().await?;
+
+        ingress_subsys.initiate_shutdown();
+        ingress_subsys.join().await?;
+
+        platform_subsys.initiate_shutdown();
+        platform_subsys.join().await?;
+
+        // TODO: Tell the backend to mark the rollout as
+        // cancelled (if it isn't already marked as completed).
         Ok(())
     }
 }

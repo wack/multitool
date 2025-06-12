@@ -92,7 +92,10 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
         // Kick off a task to poll the backend for new states.
         let mut poller = self.new_poller();
         let mut state_stream = poller.take_stream()?;
-        subsys.start(SubsystemBuilder::new("StatePoller", poller.into_subsystem()).detached());
+        subsys.start(SubsystemBuilder::new(
+            "StatePoller",
+            poller.into_subsystem(),
+        ));
 
         let mut observations = self.observations;
         loop {
@@ -100,6 +103,8 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                 // Besides that, we can just hang out.
                 _ = subsys.on_shutdown_requested() => {
                     subsys.request_local_shutdown();
+                    // Waiting for children ensure that all of the locks
+                    // we've taken have been released.
                     subsys.wait_for_children().await;
                     return Ok(());
                 }
@@ -112,7 +117,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                     } else {
                         // The stream has been closed, so we should shutdown.
                         debug!("Shutting down in relay");
-                        subsys.request_shutdown();
+                        subsys.request_local_shutdown();
                     }
                 }
                 // • We also need to poll the backend for new states.
@@ -131,7 +136,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         subsys.start(SubsystemBuilder::new(
                             format!("LockManager {}", state_id),
                             lock_manager.into_subsystem(),
-                        ).detached());
+                        ));
                         // Now that we have the lock managed, we
                         // need to tell the Platform/Ingress
                         // to effect the state.
@@ -186,7 +191,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         }
                     } else {
                         // The stream has been closed, so we should shutdown.
-                        subsys.request_shutdown();
+                        subsys.request_local_shutdown();
                     }
                 }
             }

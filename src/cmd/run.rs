@@ -178,7 +178,7 @@ impl Run {
                 s.start(SubsystemBuilder::new(
                     CONTROLLER_SUBSYSTEM_NAME,
                     controller.into_subsystem(),
-                ).detached());
+                ));
             })
             .catch_signals()
             .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
