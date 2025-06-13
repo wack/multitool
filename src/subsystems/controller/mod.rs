@@ -106,24 +106,50 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
                 .detached(),
         );
 
+        trace!("Controller waiting for shutdown request...");
         subsys.on_shutdown_requested().await;
+        subsys.initiate_shutdown();
+        trace!("Controller shutdown requested!");
         // Waiting for children will block until the Monitor and
         // MonitorController are shut down.
+        trace!("Contoller waiting for children to shutdown");
         subsys.wait_for_children().await;
+        trace!("Controller children shutdown");
         // Next, we wait for the relay, because we need to abandon
         // any state locks that we've taken before we can roll back
         // the ingress or yank the platform.
+        trace!("Controller waiting for relay to shutdown");
         relay_subsys.initiate_shutdown();
+        trace!("Controller waiting for relay to shutdown complete");
+        trace!("Controller waiting for relay to join");
         relay_subsys.join().await?;
+        trace!("Relay joined");
 
+        trace!("Relay shutdown!");
+
+        trace!("Controller waiting for ingress to shutdown");
         ingress_subsys.initiate_shutdown();
+        trace!("Controller waiting for ingress to shutdown complete");
+        trace!("Controller waiting for ingress to join");
         ingress_subsys.join().await?;
+        trace!("Ingress joined");
 
+        trace!("Ingress shutdown!");
+
+        trace!("Controller waiting for platform to shutdown");
         platform_subsys.initiate_shutdown();
+        trace!("Controller waiting for platform to shutdown complete");
+        trace!("Controller waiting for platform to join");
         platform_subsys.join().await?;
+        trace!("Platform joined");
+
+        trace!("Platform shutdown!");
 
         // TODO: Tell the backend to mark the rollout as
         // cancelled (if it isn't already marked as completed).
+        trace!("TODO: API CALL TO CANCEL ROLLOUT");
+
+        trace!("Controller shutdown complete!");
         Ok(())
     }
 }

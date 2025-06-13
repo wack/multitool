@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::{IntoDiagnostic, Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use tracing::trace;
 
 use crate::{
     Shutdownable,
@@ -70,8 +71,13 @@ impl IntoSubsystem<Report> for StatePoller {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
+                    trace!("StatePoller received shutdown request");
                     subsys.request_local_shutdown();
+                    trace!("StatePoller requested local shutdown complete.");
+
+                    trace!("StatePoller waiting for children to shutdown.");
                     subsys.wait_for_children().await;
+                    trace!("StatePoller children shutdown complete.");
                     return self.shutdown().await
                 }
                 _ = self.timer.tick() => {
@@ -90,6 +96,7 @@ impl IntoSubsystem<Report> for StatePoller {
 #[async_trait]
 impl Shutdownable for StatePoller {
     async fn shutdown(&mut self) -> ShutdownResult {
+        trace!("StatePoller shut down!");
         // Nothing to do! We just stop polling.
         Ok(())
     }

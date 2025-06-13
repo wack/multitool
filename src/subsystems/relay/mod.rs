@@ -102,10 +102,14 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
             select! {
                 // Besides that, we can just hang out.
                 _ = subsys.on_shutdown_requested() => {
+                    trace!("RelaySubsystem received shutdown request.");
                     subsys.request_local_shutdown();
+                    trace!("RelaySubsystem requested local shutdown complete.");
                     // Waiting for children ensure that all of the locks
                     // we've taken have been released.
+                    trace!("RelaySubsystem waiting for children to shutdown.");
                     subsys.wait_for_children().await;
+                    trace!("RelaySubstsem children shutdown complete");
                     return Ok(());
                 }
                 // • When we start the RelaySubsystem,
@@ -116,7 +120,6 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         self.backend.upload_observations(&self.meta, batch).await?;
                     } else {
                         // The stream has been closed, so we should shutdown.
-                        debug!("Shutting down in relay");
                         subsys.request_local_shutdown();
                     }
                 }
@@ -175,7 +178,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 let percent = WholePercent::try_from(percent_traffic).unwrap();
                                 self.ingress.set_canary_traffic(percent).await?;
 
-                                locked_state.mark_done().await?;
+                                // locked_state.mark_done().await?;
                             },
                             RollbackCanary => {
                                 // Set traffic to 0 immediately.
@@ -191,6 +194,7 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                         }
                     } else {
                         // The stream has been closed, so we should shutdown.
+                        trace!("Shutting down in relay from closed state stream");
                         subsys.request_local_shutdown();
                     }
                 }

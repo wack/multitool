@@ -6,7 +6,7 @@ use miette::{Report, Result};
 use tokio::sync::mpsc::channel;
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::adapters::BoxedIngress;
 
@@ -88,8 +88,13 @@ impl IntoSubsystem<Report> for IngressSubsystem {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
+                    trace!("IngressSubsystem received shutdown request.");
                     subsys.request_local_shutdown();
+                    trace!("IngressSubsystem requested local shutdown complete.");
+
+                    trace!("IngressSubsystem waiting for children to shutdown.");
                     subsys.wait_for_children().await;
+                    trace!("IngressSubsystem children shutdown complete.");
                     return self.shutdown().await;
                 }
                 // Shutdown signal from one of the handles. Since this thread has exclusive

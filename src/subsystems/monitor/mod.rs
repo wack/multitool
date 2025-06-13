@@ -11,7 +11,7 @@ use tokio::{
     sync::mpsc::{Receiver, channel},
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use super::handle::Handle;
 use super::{ShutdownResult, Shutdownable};
@@ -81,8 +81,13 @@ impl IntoSubsystem<Report> for MonitorSubsystem<StatusCode> {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
+                    trace!("MonitorSubsystem received shutdown request.");
                     subsys.request_local_shutdown();
+                    trace!("MonitorSubsystem requested local shutdown complete.");
+
+                    trace!("MonitorSubsystem waiting for children to shutdown.");
                     subsys.wait_for_children().await;
+                    trace!("MonitorSubsystem children shutdown complete.");
                     return self.shutdown().await;
                 }
                 _ = self.shutdown.recv() => {
@@ -104,9 +109,12 @@ impl IntoSubsystem<Report> for MonitorSubsystem<StatusCode> {
 #[async_trait]
 impl Shutdownable for MonitorSubsystem<StatusCode> {
     async fn shutdown(&mut self) -> ShutdownResult {
+        trace!("Shutting down MonitorSubsystem...");
         // We just have to shut the monitor down manually,
         // since we have an exclusive lock on it.
-        self.monitor.shutdown().await
+        let _ = self.monitor.shutdown().await;
+        trace!("MonitorSubsystem shut down!");
+        Ok(())
     }
 }
 

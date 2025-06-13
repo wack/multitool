@@ -8,6 +8,7 @@ use tokio::sync::mpsc::{self, Receiver};
 use tokio::sync::oneshot;
 use tokio::time::{Interval, interval};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use tracing::{debug, trace};
 
 use crate::{
     Shutdownable,
@@ -44,7 +45,9 @@ impl LockManager {
     ) -> Result<Self> {
         let (done_sender, task_done) = mpsc::channel(1);
         // Take the initial lock.
+        trace!("LockManager taking initial lock...");
         let locked_state = backend.lock_state(&metadata, &state, done_sender).await?;
+        trace!("LockManager taking initial lock complete.");
         let freq = *locked_state.frequency();
         let timer = interval(freq / 2);
         Ok(Self {
@@ -79,8 +82,13 @@ impl IntoSubsystem<Report> for LockManager {
                     }
                  }
                 _ = subsys.on_shutdown_requested() => {
+                    trace!("LockManager received shutdown request.");
                     subsys.request_local_shutdown();
+                    trace!("LockManager requested local shutdown complete.");
+
+                    trace!("LockManager waiting for children to shutdown.");
                     subsys.wait_for_children().await;
+                    trace!("LockManager children shutdown complete.");
                     // Release the lock.
                     return self.shutdown().await;
                 }
@@ -96,7 +104,10 @@ impl IntoSubsystem<Report> for LockManager {
 #[async_trait]
 impl Shutdownable for LockManager {
     async fn shutdown(&mut self) -> ShutdownResult {
+        trace!("LockManager shutting down...");
         // Release any of the locks we've taken.
-        self.backend.abandon_lock(&self.meta, &self.state).await
+        let _ = self.backend.abandon_lock(&self.meta, &self.state).await;
+        trace!("LockManager shut down!");
+        Ok(())
     }
 }
