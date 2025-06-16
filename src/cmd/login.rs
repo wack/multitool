@@ -35,7 +35,7 @@ impl Login {
                 .email()
                 .as_deref()
                 .map(ToString::to_string)
-                .unwrap_or_else(|| self.terminal.prompt_email());
+                .unwrap_or_else(|| self.terminal.prompt_text("Email"));
 
             // If no password was provided, prompt for their password.
             let password = self

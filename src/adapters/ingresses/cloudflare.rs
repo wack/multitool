@@ -17,6 +17,8 @@ use tracing::{debug, info};
 #[derive(Getters)]
 pub struct CloudflareWorkerIngress {
     client: Client,
+    // The name of the worker being monitored
+    worker_name: String,
     // The version id of the baseline version
     control_version_id: Option<String>,
     // The version id of the canary version
@@ -24,9 +26,10 @@ pub struct CloudflareWorkerIngress {
 }
 
 impl CloudflareWorkerIngress {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, worker_name: String) -> Self {
         Self {
             client,
+            worker_name,
             control_version_id: None,
             canary_version_id: None,
         }
@@ -38,7 +41,7 @@ impl Ingress for CloudflareWorkerIngress {
     fn get_config(&self) -> IngressConfig {
         IngressConfig::CloudflareWorker {
             account_id: self.client.account_id().clone(),
-            worker_name: self.client.worker_name().clone(),
+            worker_name: self.worker_name().clone(),
         }
     }
 
@@ -67,7 +70,9 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![control_version, canary_version])
             .build();
 
-        self.client.create_deployment(deployment_request).await
+        self.client
+            .create_deployment(self.worker_name(), deployment_request)
+            .await
     }
 
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
@@ -85,7 +90,9 @@ impl Ingress for CloudflareWorkerIngress {
             .versions(vec![control_version, canary_version])
             .build();
 
-        self.client.create_deployment(deployment_request).await
+        self.client
+            .create_deployment(self.worker_name(), deployment_request)
+            .await
     }
 
     async fn rollback_canary(&mut self) -> Result<()> {
@@ -103,7 +110,9 @@ impl Ingress for CloudflareWorkerIngress {
         // no canary version and so we don't try to roll it back (again) during shutdown.
         self.canary_version_id = None;
 
-        self.client.create_deployment(deployment_request).await
+        self.client
+            .create_deployment(self.worker_name(), deployment_request)
+            .await
     }
 
     async fn promote_canary(&mut self) -> Result<()> {
@@ -121,7 +130,9 @@ impl Ingress for CloudflareWorkerIngress {
         // the control version and so we don't try to roll it back during shutdown.
         self.canary_version_id = None;
 
-        self.client.create_deployment(deployment_request).await
+        self.client
+            .create_deployment(self.worker_name(), deployment_request)
+            .await
     }
 }
 

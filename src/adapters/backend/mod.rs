@@ -105,13 +105,13 @@ impl BackendClient {
 
     pub(crate) async fn list_applications(
         &self,
-        id: WorkspaceId,
+        workspace_id: WorkspaceId,
     ) -> Result<Vec<ApplicationDetails>> {
         self.is_authenicated()?;
-        let applications = self
+        let applications: Vec<_> = self
             .client
             .applications_api()
-            .list_applications(id)
+            .list_applications(workspace_id)
             .await
             .into_diagnostic()?
             .applications;

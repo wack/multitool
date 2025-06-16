@@ -86,6 +86,26 @@ impl Manifest {
         self.application.as_deref()
     }
 
+    pub fn set_application<T: AsRef<str>>(&mut self, value: T) {
+        self.application = Some(value.as_ref().to_owned());
+    }
+
+    pub fn set_cloudflare_config(&mut self, config: CloudflareConfig) {
+        self.config.cloudflare = Some(config);
+    }
+
+    pub fn set_platform_config(&mut self, config: PlatformConfig) {
+        self.config.platform = Some(config);
+    }
+
+    pub fn set_ingress_config(&mut self, config: IngressConfig) {
+        self.config.ingress = Some(config);
+    }
+
+    pub fn set_monitor_config(&mut self, config: MonitorConfig) {
+        self.config.monitor = Some(config);
+    }
+
     pub(crate) async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         self.config.load_platform(args).await
     }
@@ -267,6 +287,22 @@ pub struct AwsApiGatewayConfig {
 }
 
 impl AwsApiGatewayConfig {
+    pub fn new(
+        stage_name: String,
+        gateway_name: String,
+        resource_path: String,
+        resource_method: String,
+        region: String,
+    ) -> Self {
+        Self {
+            stage_name,
+            gateway_name,
+            resource_path,
+            resource_method,
+            region,
+        }
+    }
+
     async fn load_ingress(&self, _: &RunSubcommand) -> Result<BoxedIngress> {
         let ingress = AwsApiGateway::builder()
             .gateway_name(self.gateway_name.clone())
@@ -305,6 +341,14 @@ pub struct AwsLambdaConfig {
 }
 
 impl AwsLambdaConfig {
+    pub fn new(name: String, region: String, artifact_path: String) -> Self {
+        Self {
+            name,
+            region,
+            artifact_path,
+        }
+    }
+
     async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         let region: String = args
             .aws_region()
@@ -343,6 +387,23 @@ pub struct CloudflareConfig {
 }
 
 impl CloudflareConfig {
+    pub fn new(
+        wrangler: bool,
+        main_module: String,
+        account_id: String,
+        worker_name: String,
+        artifact_path: String,
+    ) -> Self {
+        Self {
+            wrangler: Some(wrangler),
+            main_module: Some(main_module),
+            account_id: Some(account_id),
+            worker_name: Some(worker_name),
+            artifact_path: Some(artifact_path),
+            api_token: None, // This is set via CLI/env, not stored in manifest
+        }
+    }
+
     pub fn load_wrangler(&self, fs: &FileSystem) -> Result<Wrangler> {
         fs.load_file(WranglerFile)
     }
@@ -427,9 +488,9 @@ impl CloudflareConfig {
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
-        let client = CloudflareClient::new(account_id, worker_name, &api_token);
+        let client = CloudflareClient::new(account_id, &api_token);
 
-        Ok(Box::new(CloudflareWorkerIngress::new(client)))
+        Ok(Box::new(CloudflareWorkerIngress::new(client, worker_name)))
     }
 
     fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
@@ -438,9 +499,9 @@ impl CloudflareConfig {
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(&fs, args)?;
         let worker_name = self.load_worker_name(&fs, args)?;
-        let client = CloudflareClient::new(account_id, worker_name, &api_token);
+        let client = CloudflareClient::new(account_id, &api_token);
 
-        Ok(Box::new(CloudflareMonitor::new(client)))
+        Ok(Box::new(CloudflareMonitor::new(client, worker_name)))
     }
 
     fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
@@ -451,10 +512,11 @@ impl CloudflareConfig {
         let worker_name = self.load_worker_name(&fs, args)?;
         let main_module = self.load_main_module(&fs, args)?;
         let artifact_path = self.load_artifact_path(&fs, args)?;
-        let client = CloudflareClient::new(account_id, worker_name, &api_token);
+        let client = CloudflareClient::new(account_id, &api_token);
 
         Ok(Box::new(CloudflareWorkerPlatform::new(
             client,
+            worker_name,
             artifact_path,
             main_module,
         )))
