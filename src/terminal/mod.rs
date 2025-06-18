@@ -91,17 +91,17 @@ impl Terminal {
             .into_diagnostic()
     }
 
-    pub fn prompt_email(&self) -> String {
+    pub fn prompt_text(&self, prompt: &str) -> String {
         Input::with_theme(self.stdout.theme())
-            .with_prompt("Email")
+            .with_prompt(prompt)
             .interact()
             .unwrap()
     }
 
-    pub fn prompt_workspace_selection(&self, items: &[String]) -> usize {
+    pub fn prompt_single_selection(&self, prompt: &str, items: &[String]) -> usize {
         Select::with_theme(self.stdout.theme())
             .items(items)
-            .with_prompt("Workspace")
+            .with_prompt(prompt)
             .interact()
             .unwrap()
     }

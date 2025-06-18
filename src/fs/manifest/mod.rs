@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-pub use schema::{CloudflareConfig, Manifest, application_manifest};
+pub use schema::{
+    AwsApiGatewayConfig, AwsCloudwatch, AwsLambdaConfig, CloudflareConfig, IngressConfig, Manifest,
+    MonitorConfig, PlatformConfig, application_manifest,
+};
 
 use super::{DirectoryType, file::StaticFile};
 

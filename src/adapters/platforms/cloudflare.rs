@@ -16,14 +16,21 @@ use tracing::info;
 #[derive(Getters)]
 pub struct CloudflareWorkerPlatform {
     client: Client,
+    worker_name: String,
     artifact_path: PathBuf,
     main_module: String,
 }
 
 impl CloudflareWorkerPlatform {
-    pub fn new(client: Client, artifact_path: PathBuf, main_module: String) -> Self {
+    pub fn new(
+        client: Client,
+        worker_name: String,
+        artifact_path: PathBuf,
+        main_module: String,
+    ) -> Self {
         Self {
             client,
+            worker_name,
             artifact_path,
             main_module,
         }
@@ -35,13 +42,13 @@ impl Platform for CloudflareWorkerPlatform {
     fn get_config(&self) -> PlatformConfig {
         PlatformConfig::CloudflareWorker {
             account_id: self.client.account_id().clone(),
-            worker_name: self.client.worker_name().clone(),
+            worker_name: self.worker_name().clone(),
         }
     }
 
     async fn deploy(&mut self) -> Result<(String, String)> {
         info!("Deploying Worker!");
-        let baseline_version_id = self.client.get_current_version().await?;
+        let baseline_version_id = self.client.get_current_version(self.worker_name()).await?;
 
         // 1. First, we create a manifest of the files to upload
         let manifest = CloudflareManifest::new(&self.artifact_path).await?;
@@ -72,7 +79,7 @@ impl Platform for CloudflareWorkerPlatform {
         // 2. Finally, upload the files
         let upload_version_request = self
             .client
-            .upload_version(&manifest, &self.main_module)
+            .upload_version(self.worker_name(), &manifest, &self.main_module)
             .await?;
 
         Ok((baseline_version_id, upload_version_request.id))

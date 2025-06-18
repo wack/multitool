@@ -17,6 +17,8 @@ use super::Monitor;
 #[derive(Getters)]
 pub struct CloudflareMonitor {
     client: Client,
+    // The name of the worker being monitored
+    worker_name: String,
     // The version id of the baseline version
     control_version_id: Option<String>,
     // The version id of the canary version
@@ -28,9 +30,10 @@ pub struct CloudflareMonitor {
 }
 
 impl CloudflareMonitor {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, worker_name: String) -> Self {
         Self {
             client,
+            worker_name,
             control_version_id: None,
             canary_version_id: None,
             start_time: Utc::now(),
@@ -48,7 +51,7 @@ impl Monitor for CloudflareMonitor {
     fn get_config(&self) -> MonitorConfig {
         MonitorConfig::CloudflareWorkersObservability {
             account_id: self.client.account_id().clone(),
-            worker_name: self.client.worker_name().clone(),
+            worker_name: self.worker_name().clone(),
         }
     }
 
@@ -68,7 +71,8 @@ impl Monitor for CloudflareMonitor {
         // Query all control metrics, but only if we've already received a control version id
         if let Some(control_version_id) = &self.control_version_id {
             let control_2xx_future = self.client.collect_metrics(
-                control_version_id.clone(),
+                self.worker_name(),
+                control_version_id,
                 200,
                 299,
                 start_query_time,
@@ -76,7 +80,8 @@ impl Monitor for CloudflareMonitor {
             );
 
             let control_4xx_future = self.client.collect_metrics(
-                control_version_id.clone(),
+                self.worker_name(),
+                control_version_id,
                 400,
                 499,
                 start_query_time,
@@ -84,7 +89,8 @@ impl Monitor for CloudflareMonitor {
             );
 
             let control_5xx_future = self.client.collect_metrics(
-                control_version_id.clone(),
+                self.worker_name(),
+                control_version_id,
                 500,
                 599,
                 start_query_time,
@@ -111,7 +117,8 @@ impl Monitor for CloudflareMonitor {
         // Query all canary metrics, but only if we've already received a control version id
         if let Some(canary_version_id) = &self.canary_version_id {
             let canary_2xx_future = self.client.collect_metrics(
-                canary_version_id.clone(),
+                self.worker_name(),
+                canary_version_id,
                 200,
                 299,
                 start_query_time,
@@ -119,7 +126,8 @@ impl Monitor for CloudflareMonitor {
             );
 
             let canary_4xx_future = self.client.collect_metrics(
-                canary_version_id.clone(),
+                self.worker_name(),
+                canary_version_id,
                 400,
                 499,
                 start_query_time,
@@ -127,7 +135,8 @@ impl Monitor for CloudflareMonitor {
             );
 
             let canary_5xx_future = self.client.collect_metrics(
-                canary_version_id.clone(),
+                self.worker_name(),
+                canary_version_id,
                 500,
                 599,
                 start_query_time,

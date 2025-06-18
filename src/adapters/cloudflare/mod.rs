@@ -4,6 +4,7 @@ use miette::{IntoDiagnostic, Result, miette};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::multipart::Part;
 use reqwest::{Client, multipart};
+use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tokio::fs::read;
 use tracing::{debug, error};
@@ -15,6 +16,15 @@ use metrics::MetricsResponse;
 use responses::CloudflareResponse;
 
 use crate::artifacts::CloudflareManifest;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Getters)]
+pub struct WorkerScript {
+    id: String,
+    created_on: String,
+    modified_on: String,
+    usage_model: Option<String>,
+    etag: String,
+}
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -28,12 +38,10 @@ pub struct CloudflareClient {
     client: Client,
     /// This is the Cloudflare account id
     account_id: String,
-    /// The name of the Cloudflare worker
-    worker_name: String,
 }
 
 impl CloudflareClient {
-    pub fn new(account_id: String, worker_name: String, token: &str) -> Self {
+    pub fn new(account_id: String, token: &str) -> Self {
         // TODO: Add a timeout.
         let mut default_headers = HeaderMap::new();
         let auth = format!("Bearer {token}");
@@ -46,11 +54,7 @@ impl CloudflareClient {
             .build()
             .expect("Must be able to construct client");
 
-        Self {
-            client,
-            account_id,
-            worker_name,
-        }
+        Self { client, account_id }
     }
 
     // Commented out until we verify if we need an upload session.
@@ -164,12 +168,12 @@ impl CloudflareClient {
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/create/
     pub async fn upload_version(
         &self,
+        worker_name: &String,
         manifest: &CloudflareManifest,
         main_module: &String,
     ) -> Result<UploadVersionResponse> {
         debug!("Uploading Worker version");
         let account_id = &self.account_id;
-        let worker_name = &self.worker_name;
         let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/versions");
         let url = Self::url_with_path(&path);
 
@@ -224,10 +228,9 @@ impl CloudflareClient {
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/get/
-    pub async fn get_current_version(&self) -> Result<String> {
+    pub async fn get_current_version(&self, worker_name: &String) -> Result<String> {
         debug!("Getting current Worker version");
         let account_id = &self.account_id;
-        let worker_name = &self.worker_name;
         let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/deployments");
         let url = Self::url_with_path(&path);
 
@@ -263,10 +266,13 @@ impl CloudflareClient {
 
     // Corresponds to:
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/create/
-    pub async fn create_deployment(&self, request: CreateDeploymentRequest) -> Result<()> {
+    pub async fn create_deployment(
+        &self,
+        worker_name: &String,
+        request: CreateDeploymentRequest,
+    ) -> Result<()> {
         debug!("Deploying updated version(s)");
         let account_id = &self.account_id;
-        let worker_name = &self.worker_name;
         let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/deployments");
         let url = Self::url_with_path(&path);
 
@@ -291,14 +297,14 @@ impl CloudflareClient {
     // For the monitor to grab metrics within a time range.
     pub async fn collect_metrics(
         &self,
-        worker_version_id: String,
+        worker_name: &String,
+        worker_version_id: &String,
         status_code_range_start: u16,
         status_code_range_end: u16,
         from_time: DateTime<chrono::Utc>,
         to_time: DateTime<chrono::Utc>,
     ) -> Result<u32> {
         let account_id = &self.account_id;
-        let worker_name = &self.worker_name;
         let path = format!("accounts/{account_id}/workers/observability/telemetry/query");
         let url = Self::url_with_path(&path);
 
@@ -388,6 +394,35 @@ impl CloudflareClient {
             .map_or(0, |a| a.count);
 
         Ok(count)
+    }
+
+    // List all workers for the account
+    // Corresponds to: https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/list/
+    pub async fn list_workers(&self) -> Result<Vec<WorkerScript>> {
+        debug!("Listing Cloudflare Workers");
+        let account_id = &self.account_id;
+        let path = format!("accounts/{account_id}/workers/scripts");
+        let url = Self::url_with_path(&path);
+
+        // Make request to Cloudflare API
+        let response = self.client.get(url).send().await.into_diagnostic()?;
+
+        // Check if we get a non-2xx response
+        if !response.status().is_success() {
+            return Err(miette!(
+                "Failed to list Workers. Error: {:?}",
+                response.json::<serde_json::Value>().await
+            ));
+        }
+
+        // Serialize the response into our struct
+        let workers_response = response
+            .json::<CloudflareResponse<Vec<WorkerScript>>>()
+            .await
+            .into_diagnostic()?;
+
+        debug!("Workers listed successfully");
+        Ok(workers_response.result)
     }
 
     fn base_url() -> &'static Url {
