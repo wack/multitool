@@ -91,38 +91,6 @@ impl Terminal {
             .into_diagnostic()
     }
 
-    pub fn prompt_workspace_selection(&self, items: &[String]) -> usize {
-        Select::with_theme(self.stdout.theme())
-            .items(items)
-            .with_prompt("Workspace")
-            .interact()
-            .unwrap()
-    }
-
-    pub fn prompt_application_selection(&self, items: &[String]) -> usize {
-        Select::with_theme(self.stdout.theme())
-            .items(items)
-            .with_prompt("Application")
-            .interact()
-            .unwrap()
-    }
-
-    pub fn prompt_cloud_provider_selection(&self, items: &[String]) -> usize {
-        Select::with_theme(self.stdout.theme())
-            .items(items)
-            .with_prompt("Cloud Provider")
-            .interact()
-            .unwrap()
-    }
-
-    pub fn prompt_worker_selection(&self, items: &[String]) -> usize {
-        Select::with_theme(self.stdout.theme())
-            .items(items)
-            .with_prompt("Worker")
-            .interact()
-            .unwrap()
-    }
-
     pub fn prompt_text(&self, prompt: &str) -> String {
         Input::with_theme(self.stdout.theme())
             .with_prompt(prompt)
@@ -130,10 +98,10 @@ impl Terminal {
             .unwrap()
     }
 
-    pub fn prompt_single_selection(&self, items: &[String]) -> usize {
+    pub fn prompt_single_selection(&self, prompt: &str, items: &[String]) -> usize {
         Select::with_theme(self.stdout.theme())
             .items(items)
-            .with_prompt("Workspace")
+            .with_prompt(prompt)
             .interact()
             .unwrap()
     }

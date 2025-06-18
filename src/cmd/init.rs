@@ -219,7 +219,9 @@ impl InitStateMachine for PromptWorkspace {
         options.push("+ Create new workspace".to_owned());
         // Now, we can prompt the user to select an option.
         info!("Which workspace would you like to use?");
-        let selection = self.terminal.prompt_workspace_selection(options.as_slice());
+        let selection = self
+            .terminal
+            .prompt_single_selection("Workspace", options.as_slice());
         if selection < workspaces.len() {
             // The user has selected an existing workspace.
             let selected_workspace = &workspaces[selection];
@@ -306,7 +308,7 @@ impl InitStateMachine for PromptApplication {
         info!("Which application would you like to use?");
         let selection = self
             .terminal
-            .prompt_application_selection(options.as_slice());
+            .prompt_single_selection("Application", options.as_slice());
         if selection < application_names.len() {
             // The user has selected an existing application.
             let application = application_names[selection].clone();
@@ -349,7 +351,7 @@ impl InitStateMachine for PromptCloudProvider {
         info!("Which cloud provider are you using?");
         let selection = self
             .terminal
-            .prompt_cloud_provider_selection(cloud_providers.as_slice());
+            .prompt_single_selection("Provider", cloud_providers.as_slice());
 
         let selected_provider = &cloud_providers[selection];
 
@@ -401,7 +403,7 @@ impl PromptCloudflareSetup {
         };
 
         // Prompt user to select which worker they want to use
-        let worker_names: Vec<String> = workers.iter().map(|w| w.id.clone()).collect();
+        let worker_names: Vec<String> = workers.iter().map(|w| w.id().clone()).collect();
         if worker_names.is_empty() {
             return Err(miette::miette!(
                 "No workers found in your Cloudflare account"
@@ -409,7 +411,9 @@ impl PromptCloudflareSetup {
         }
 
         info!("Which Cloudflare Worker would you like to use?");
-        let selection = self.terminal.prompt_worker_selection(&worker_names);
+        let selection = self
+            .terminal
+            .prompt_single_selection("Worker", &worker_names);
         Ok(worker_names[selection].clone())
     }
 
@@ -515,7 +519,9 @@ impl PromptAWSSetup {
             .collect();
 
         info!("Which Lambda function would you like to use?");
-        let lambda_selection = self.terminal.prompt_single_selection(&lambda_names);
+        let lambda_selection = self
+            .terminal
+            .prompt_single_selection("Lambda", &lambda_names);
         Ok(lambda_names[lambda_selection].clone())
     }
 
@@ -573,7 +579,9 @@ impl PromptAWSSetup {
             .collect();
 
         info!("Which API Gateway would you like to use?");
-        let gateway_selection = self.terminal.prompt_single_selection(&gateway_names);
+        let gateway_selection = self
+            .terminal
+            .prompt_single_selection("API Gateway", &gateway_names);
         let selected_gateway_name = gateway_names[gateway_selection].clone();
         let selected_gateway = &api_gateways[gateway_selection];
         let gateway_id = selected_gateway.id().unwrap().to_string();
@@ -616,7 +624,7 @@ impl PromptAWSSetup {
             .collect();
 
         info!("Which stage would you like to use?");
-        let stage_selection = self.terminal.prompt_single_selection(&stage_names);
+        let stage_selection = self.terminal.prompt_single_selection("Stage", &stage_names);
         Ok(stage_names[stage_selection].clone())
     }
 
@@ -669,7 +677,9 @@ impl PromptAWSSetup {
         }
 
         info!("Which resource method and path would you like to use?");
-        let resource_selection = self.terminal.prompt_workspace_selection(&resource_options);
+        let resource_selection = self
+            .terminal
+            .prompt_single_selection("Resource Method", &resource_options);
         let selected_resource_option = &resource_options[resource_selection];
 
         // Parse the selected option to extract method and path

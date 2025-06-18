@@ -17,13 +17,13 @@ use responses::CloudflareResponse;
 
 use crate::artifacts::CloudflareManifest;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Getters)]
 pub struct WorkerScript {
-    pub id: String,
-    pub created_on: String,
-    pub modified_on: String,
-    pub usage_model: Option<String>,
-    pub etag: String,
+    id: String,
+    created_on: String,
+    modified_on: String,
+    usage_model: Option<String>,
+    etag: String,
 }
 
 static URL: OnceLock<Url> = OnceLock::new();
@@ -404,8 +404,10 @@ impl CloudflareClient {
         let path = format!("accounts/{account_id}/workers/scripts");
         let url = Self::url_with_path(&path);
 
+        // Make request to Cloudflare API
         let response = self.client.get(url).send().await.into_diagnostic()?;
 
+        // Check if we get a non-2xx response
         if !response.status().is_success() {
             return Err(miette!(
                 "Failed to list Workers. Error: {:?}",
@@ -413,6 +415,7 @@ impl CloudflareClient {
             ));
         }
 
+        // Serialize the response into our struct
         let workers_response = response
             .json::<CloudflareResponse<Vec<WorkerScript>>>()
             .await
