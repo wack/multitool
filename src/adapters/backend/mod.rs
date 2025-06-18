@@ -103,6 +103,22 @@ impl BackendClient {
         Ok(workspaces)
     }
 
+    pub(crate) async fn list_applications(
+        &self,
+        id: WorkspaceId,
+    ) -> Result<Vec<ApplicationDetails>> {
+        self.is_authenicated()?;
+        let applications = self
+            .client
+            .applications_api()
+            .list_applications(id)
+            .await
+            .into_diagnostic()?
+            .applications;
+
+        Ok(applications)
+    }
+
     pub(crate) async fn lock_state(
         &self,
         meta: &RolloutMetadata,
@@ -333,6 +349,38 @@ impl BackendClient {
     }
 
     /// Return information about the workspace given its name.
+    pub(crate) async fn create_workspace<T: AsRef<str>>(
+        &self,
+        name: T,
+    ) -> Result<WorkspaceSummary> {
+        self.is_authenicated()?;
+
+        trace!("Creating a new workspace");
+        let request = multitool_sdk::models::CreateWorkspaceRequest::new(name.as_ref().to_owned());
+
+        let response = self
+            .client
+            .workspaces_api()
+            .create_workspace(request)
+            .await
+            .into_diagnostic()?;
+
+        trace!("Workspace created successfully");
+        Ok(*response.workspace)
+    }
+
+    pub(crate) async fn create_application<T: AsRef<str>>(
+        &self,
+        workspace_id: WorkspaceId,
+        name: T,
+    ) -> Result<ApplicationDetails> {
+        self.is_authenicated()?;
+
+        trace!("Creating a new application");
+        // TODO: Implement the actual application creation
+        todo!("Implement application creation")
+    }
+
     pub(crate) async fn get_workspace_by_name(&self, name: &str) -> Result<WorkspaceSummary> {
         self.is_authenicated()?;
 
