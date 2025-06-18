@@ -86,10 +86,6 @@ impl Manifest {
         self.application.as_deref()
     }
 
-    pub fn set_application<T: AsRef<str>>(&mut self, value: T) {
-        self.application = Some(value.as_ref().to_owned());
-    }
-
     pub fn set_cloudflare_config(&mut self, config: CloudflareConfig) {
         self.config.cloudflare = Some(config);
     }
