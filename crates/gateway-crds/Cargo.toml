@@ -1,0 +1,11 @@
+[package]
+name = "gateway-crds"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+k8s-openapi = { workspace = true, features = ["latest"] }
+serde = { workspace = true, features = ["derive"] }
+kube = { version = "1.1.0", features = ["runtime", "client", "derive"] }
+serde_json.workspace = true

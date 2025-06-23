@@ -13,7 +13,7 @@ path = "src/bin/main.rs"
 edition = "2024"
 
 [workspace]
-members = ["crates/multi-core"]
+members = ["crates/gateway-crds", "crates/multi-core"]
 
 [workspace.package]
 authors = ["The MultiTool Team"]
@@ -47,8 +47,8 @@ multitool-sdk = { git = "https://github.com/wack/multitool-rust-sdk.git", branch
 pingora = { version = "0.3", features = ["lb", "proxy"], optional = true }
 rand = { version = "0.9.0", features = ["small_rng"] }
 reqwest = "0.12.15"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 serde_with = { version = "3.12", features = ["chrono"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
@@ -70,6 +70,7 @@ uuid = { version = "1.9", features = ["serde", "v4"] }
 ignore.workspace = true
 base64.workspace = true
 tokio-util.workspace = true
+gateway-crds = { path = "crates/gateway-crds", optional = true }
 
 [workspace.dependencies]
 pretty_assertions = "1.4"
@@ -82,7 +83,10 @@ tokio = { version = "1.37.0", features = ["full"] }
 miette = { version = "7", features = ["fancy"] }
 tokio-stream = { version = "0.1", features = ["time"] }
 async-stream = "0.3.6"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
+k8s-openapi = { version = "0.25.0", features = ["latest"] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true
@@ -90,6 +94,7 @@ static_assertions.workspace = true
 
 [features]
 proxy = ["dep:pingora"]
+gateway = ["dep:gateway-crds"]
 
 # The profile that 'dist' will build with
 [profile.dist]

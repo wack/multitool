@@ -14,6 +14,7 @@ CLI_REFERENCE_FILE_NAME = "reference.md"
 
 [env.development]
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+# K8S_OPENAPI_ENABLED_VERSION = "1.33"
 
 [tasks.dev-test-flow]
 dependencies = [
@@ -109,3 +110,15 @@ args = [
   "--workspace",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
+
+[tasks.gen-crds]
+description = "Generate CRDS from YAML"
+category = "Development"
+script_runner = "@shell"
+script = '''
+kopium --filename .crds/v1.3.0/gateway.yml > crates/gateway-crds/src/gateway.rs
+kopium --filename .crds/v1.3.0/gateway-class.yml > crates/gateway-crds/src/gateway_class.rs
+kopium --filename .crds/v1.3.0/grpc.yml > crates/gateway-crds/src/grpc.rs
+kopium --filename .crds/v1.3.0/http.yml > crates/gateway-crds/src/http.rs
+kopium --filename .crds/v1.3.0/reference-grants.yml > crates/gateway-crds/src/reference_grants.rs
+'''
