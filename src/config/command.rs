@@ -3,6 +3,10 @@ use miette::Result;
 
 #[cfg(feature = "proxy")]
 use crate::cmd::Proxy;
+
+#[cfg(feature = "gateway")]
+use crate::cmd::Gateway;
+
 use crate::cmd::{Init, Login, Logout, Run, Version};
 use crate::terminal::Terminal;
 
@@ -23,6 +27,8 @@ pub enum MultiCommand {
     Init(InitSubcommand),
     #[cfg(feature = "proxy")]
     Proxy(ProxySubcommand),
+    #[cfg(feature = "gateway")]
+    Gateway,
     /// Run will execute `multi` in "runner mode", where it will
     /// immediately deploy the provided artifact and start canarying.
     Run(RunSubcommand),
@@ -39,6 +45,8 @@ impl MultiCommand {
             Self::Init(flags) => Init::new(console, flags)?.dispatch(),
             #[cfg(feature = "proxy")]
             Self::Proxy(flags) => Proxy::new(console, flags).dispatch(),
+            #[cfg(feature = "gateway")]
+            Self::Gateway => Gateway::new(console).dispatch(),
             Self::Run(flags) => Run::new(console, flags)?.dispatch(),
             Self::Version => Version::new(console).dispatch(),
         }

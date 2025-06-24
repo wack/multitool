@@ -71,6 +71,14 @@ ignore.workspace = true
 base64.workspace = true
 tokio-util.workspace = true
 gateway-crds = { path = "crates/gateway-crds", optional = true }
+k8s-openapi = { workspace = true, features = ["latest"] }
+kube = { workspace = true, default-features = false, features = [
+  "runtime",
+  "client",
+  "rustls-tls",
+  "derive",
+  "aws-lc-rs",
+] }
 
 [workspace.dependencies]
 pretty_assertions = "1.4"
@@ -87,6 +95,13 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 k8s-openapi = { version = "0.25.0", features = ["latest"] }
+kube = { version = "1.1.0", default-features = false, features = [
+  "runtime",
+  "client",
+  "derive",
+  "rustls-tls",
+  "aws-lc-rs",
+] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true
