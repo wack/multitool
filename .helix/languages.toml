@@ -1,0 +1,5 @@
+[[language]]
+name = "rust"
+
+[language-server.ra-multiplex.config.cargo]
+features = ["gateway"]

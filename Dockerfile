@@ -1,9 +1,41 @@
-# This Dockerfile defines a development environment for working with
-# MultiTool. It's meant to serve as a jumping off point for contributors
-# who may not have the right tools installed for development.
+# Build stage
+FROM rust:1.87 as builder
 
-FROM rust:1.86.0-slim-bookworm
+# Install cargo-make for build process
+RUN cargo install cargo-make
 
-RUN apt-get update && \
-    apt-get install libssl-dev pkg-config -yq && \
-    cargo install cargo-make cargo-nextest
+# Set working directory
+WORKDIR /usr/src/multitool
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock Makefile.toml ./
+COPY crates/ ./crates/
+
+# Copy source code
+COPY src/ ./src/
+
+# Build the application using cargo make
+RUN cargo make build
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd -r -s /bin/false multitool
+
+# Copy the binary from builder stage
+COPY --from=builder /usr/src/multitool/target/debug/multi /usr/local/bin/multi
+
+# Change ownership to non-root user
+RUN chown multitool:multitool /usr/local/bin/multi
+
+# Switch to non-root user
+USER multitool
+
+# Set the entrypoint
+ENTRYPOINT ["/usr/local/bin/multi"]

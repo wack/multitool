@@ -1,24 +1,30 @@
 #![cfg(feature = "gateway")]
 
 use crate::Terminal;
+use crate::config::GatewayMode;
+use crate::config::GatewaySubcommand;
 use futures_util::StreamExt;
-use gateway_crds::GatewayClass;
+use gateway_crds::{Gateway as GatewayResource, GatewayClass};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
 use k8s_openapi::chrono::Utc;
 use kube::{
     Api, Client, ResourceExt,
     api::{Patch, PatchParams},
-    runtime::controller::{Action, Controller},
+    runtime::{
+        controller::{Action, Controller},
+        watcher,
+    },
 };
 use miette::{IntoDiagnostic as _, Report, miette};
 use serde_json::json;
 use std::future::ready;
 use std::{sync::Arc, time::Duration};
-use tokio::runtime::Runtime;
+use tokio::{runtime::Runtime, select};
 use tracing::info;
 
 pub struct Gateway {
     _terminal: Terminal,
+    flags: GatewaySubcommand,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -29,9 +35,10 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl Gateway {
-    pub fn new(terminal: Terminal) -> Self {
+    pub fn new(terminal: Terminal, flags: GatewaySubcommand) -> Self {
         Self {
             _terminal: terminal,
+            flags,
         }
     }
 
@@ -40,11 +47,18 @@ impl Gateway {
         let _guard = rt.enter();
         rt.block_on(async {
             info!("Starting the MultiTool API Gateway!");
-            self.run_gateway().await.map_err(Report::msg)
+            match self.flags.mode() {
+                GatewayMode::ApiServer => self.run_api_server().await,
+                GatewayMode::Controller => self.run_controller().await.map_err(Report::msg),
+            }
         })
     }
 
-    async fn run_gateway(self) -> miette::Result<()> {
+    async fn run_api_server(self) -> miette::Result<()> {
+        todo!();
+    }
+
+    async fn run_controller(self) -> miette::Result<()> {
         // Create a new Kubernetes client using the credentials
         // stored natively in the cluster.
         info!("Creating client.");
@@ -52,21 +66,62 @@ impl Gateway {
             .await
             .map_err(|err| miette!("Cannot create Kubernetes client: {err:?}"))?;
 
-        info!("Watching pods.");
+        info!("Watching GatewayClass and Gateway CRDs.");
         // Watch for changes to GatewayClass resources.
-        let gateway_classes = Api::<GatewayClass>::all(client);
+        let gateway_classes = Api::<GatewayClass>::all(client.clone());
+        // Watch for changes to Gateway resources.
+        let gateways = Api::<GatewayResource>::all(client);
 
-        info!("Starting controller");
-        Controller::new(gateway_classes.clone(), Default::default())
-            .run(reconcile, error_policy, Arc::new(()))
-            .for_each(|_| ready(()))
-            .await;
+        info!("Starting controllers");
+        let gateway_class_controller = Controller::new(gateway_classes.clone(), watcher::Config::default())
+            .run(reconcile_gateway_class, error_policy_gateway_class, Arc::new(()))
+            .for_each(|_| ready(()));
+
+        let gateway_controller = Controller::new(gateways, watcher::Config::default())
+            .run(reconcile_gateway, error_policy_gateway, Arc::new(()))
+            .for_each(|_| ready(()));
+
+        select! {
+            _ = gateway_class_controller => {},
+            _ = gateway_controller => {},
+        }
 
         Ok(())
     }
 }
 
-async fn reconcile(obj: Arc<GatewayClass>, ctx: Arc<()>) -> Result<Action> {
+async fn update_gateway_class_status(
+    gateway_class: &GatewayClass,
+) -> Result<GatewayClass, kube::Error> {
+    // Create a Kubernetes client to update the status
+    let client = Client::try_default().await?;
+    let api: Api<GatewayClass> = Api::all(client);
+
+    let now = Time(Utc::now());
+    let condition = Condition {
+        type_: "Accepted".to_string(),
+        status: "True".to_string(),
+        observed_generation: gateway_class.metadata.generation,
+        last_transition_time: now,
+        reason: "Accepted".to_string(),
+        message: "GatewayClass accepted by controller".to_string(),
+    };
+
+    let status = json!({
+        "status": {
+            "conditions": [condition]
+        }
+    });
+
+    api.patch_status(
+        &gateway_class.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(&status),
+    )
+    .await
+}
+
+async fn reconcile_gateway_class(obj: Arc<GatewayClass>, _ctx: Arc<()>) -> Result<Action> {
     info!("reconcile request: {}", obj.name_any());
 
     if obj.spec.controller_name != "multitool.run/multitool" {
@@ -74,7 +129,17 @@ async fn reconcile(obj: Arc<GatewayClass>, ctx: Arc<()>) -> Result<Action> {
     }
 
     // Check if status is already set to Accepted
-    let is_accepted = obj
+    if !is_accepted(&*obj) {
+        update_gateway_class_status(&*obj).await?;
+        info!("Updated GatewayClass {} status to Accepted", obj.name_any());
+    }
+
+    Ok(Action::requeue(Duration::from_secs(3600)))
+}
+
+// Check if a gateway class has been accepted.
+fn is_accepted(gateway_class: &GatewayClass) -> bool {
+    gateway_class
         .status
         .as_ref()
         .and_then(|status| status.conditions.as_ref())
@@ -83,42 +148,21 @@ async fn reconcile(obj: Arc<GatewayClass>, ctx: Arc<()>) -> Result<Action> {
                 .iter()
                 .any(|condition| condition.type_ == "Accepted" && condition.status == "True")
         })
-        .unwrap_or(false);
-
-    if !is_accepted {
-        // Create a Kubernetes client to update the status
-        let client = Client::try_default().await?;
-        let api: Api<GatewayClass> = Api::all(client);
-
-        let now = Time(Utc::now());
-        let condition = Condition {
-            type_: "Accepted".to_string(),
-            status: "True".to_string(),
-            observed_generation: obj.metadata.generation,
-            last_transition_time: now,
-            reason: "Accepted".to_string(),
-            message: "GatewayClass accepted by controller".to_string(),
-        };
-
-        let status = json!({
-            "status": {
-                "conditions": [condition]
-            }
-        });
-
-        api.patch_status(
-            &obj.name_any(),
-            &PatchParams::default(),
-            &Patch::Merge(&status),
-        )
-        .await?;
-
-        info!("Updated GatewayClass {} status to Accepted", obj.name_any());
-    }
-
-    Ok(Action::requeue(Duration::from_secs(3600)))
+        .unwrap_or(false)
 }
 
-fn error_policy(_object: Arc<GatewayClass>, _err: &Error, _ctx: Arc<()>) -> Action {
+fn error_policy_gateway_class(_object: Arc<GatewayClass>, _err: &Error, _ctx: Arc<()>) -> Action {
     Action::requeue(Duration::from_secs(5))
+}
+
+fn error_policy_gateway(_object: Arc<GatewayResource>, _err: &Error, _ctx: Arc<()>) -> Action {
+    Action::requeue(Duration::from_secs(5))
+}
+
+
+// TODO: Implement Gateway-specific reconciliation logic
+async fn reconcile_gateway(obj: Arc<GatewayResource>, _ctx: Arc<()>) -> Result<Action> {
+    info!("Gateway reconcile request: {}", obj.name_any());
+    // TODO: Add Gateway reconciliation logic here
+    Ok(Action::requeue(Duration::from_secs(3600)))
 }
