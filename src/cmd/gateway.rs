@@ -121,6 +121,37 @@ async fn update_gateway_class_status(
     .await
 }
 
+async fn update_gateway_status(
+    gateway: &GatewayResource,
+) -> Result<GatewayResource, kube::Error> {
+    // Create a Kubernetes client to update the status
+    let client = Client::try_default().await?;
+    let api: Api<GatewayResource> = Api::namespaced(client, gateway.namespace().as_deref().unwrap_or("default"));
+
+    let now = Time(Utc::now());
+    let condition = Condition {
+        type_: "Accepted".to_string(),
+        status: "True".to_string(),
+        observed_generation: gateway.metadata.generation,
+        last_transition_time: now,
+        reason: "Accepted".to_string(),
+        message: "Gateway accepted by controller".to_string(),
+    };
+
+    let status = json!({
+        "status": {
+            "conditions": [condition]
+        }
+    });
+
+    api.patch_status(
+        &gateway.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(&status),
+    )
+    .await
+}
+
 async fn reconcile_gateway_class(obj: Arc<GatewayClass>, _ctx: Arc<()>) -> Result<Action> {
     info!("reconcile request: {}", obj.name_any());
 
@@ -151,6 +182,20 @@ fn is_accepted(gateway_class: &GatewayClass) -> bool {
         .unwrap_or(false)
 }
 
+// Check if a gateway has been accepted.
+fn is_gateway_accepted(gateway: &GatewayResource) -> bool {
+    gateway
+        .status
+        .as_ref()
+        .and_then(|status| status.conditions.as_ref())
+        .map(|conditions| {
+            conditions
+                .iter()
+                .any(|condition| condition.type_ == "Accepted" && condition.status == "True")
+        })
+        .unwrap_or(false)
+}
+
 fn error_policy_gateway_class(_object: Arc<GatewayClass>, _err: &Error, _ctx: Arc<()>) -> Action {
     Action::requeue(Duration::from_secs(5))
 }
@@ -160,9 +205,17 @@ fn error_policy_gateway(_object: Arc<GatewayResource>, _err: &Error, _ctx: Arc<(
 }
 
 
-// TODO: Implement Gateway-specific reconciliation logic
 async fn reconcile_gateway(obj: Arc<GatewayResource>, _ctx: Arc<()>) -> Result<Action> {
     info!("Gateway reconcile request: {}", obj.name_any());
-    // TODO: Add Gateway reconciliation logic here
+
+    // Check if the Gateway references a GatewayClass that our controller manages
+    // For now, we'll accept all Gateways - this could be filtered later
+    
+    // Check if status is already set to Accepted
+    if !is_gateway_accepted(&*obj) {
+        update_gateway_status(&*obj).await?;
+        info!("Updated Gateway {} status to Accepted", obj.name_any());
+    }
+
     Ok(Action::requeue(Duration::from_secs(3600)))
 }
