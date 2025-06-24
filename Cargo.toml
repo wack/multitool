@@ -10,7 +10,6 @@ homepage = "https://multitool.run/"
 [[bin]]
 name = "multi"
 path = "src/bin/main.rs"
-edition = "2024"
 
 [workspace]
 members = ["crates/gateway-crds", "crates/multi-core"]

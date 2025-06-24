@@ -9,8 +9,4 @@ args = ["apply", "-f", "./gatewayclass.yml"]
 [tasks.unload-gatewayclass]
 description = "Unload the development gateway class"
 command = "kubectl"
-args = [
-  "delete",
-  "gatewayclasses.gateway.networking.k8s.io",
-  "multitool-gateway-class",
-]
+args = ["delete", "gatewayclasses.gateway.networking.k8s.io", "multitool"]
