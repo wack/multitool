@@ -33,6 +33,8 @@ pub struct CloudflareClient {
     account_id: String,
     /// The name of the Cloudflare worker
     worker_name: String,
+    /// The API token used for authentication
+    api_token: String,
 }
 
 impl CloudflareClient {
@@ -51,6 +53,7 @@ impl CloudflareClient {
 
         Self {
             client,
+            api_token: token.to_string(),
             account_id,
             worker_name,
         }
