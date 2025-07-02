@@ -90,6 +90,7 @@ static_assertions.workspace = true
 
 [features]
 proxy = ["dep:pingora"]
+errorlogs = []
 
 # The profile that 'dist' will build with
 [profile.dist]

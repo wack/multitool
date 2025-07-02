@@ -11,7 +11,7 @@ use uploads::{UploadVersionRequest, UploadVersionResponse};
 use url::Url;
 
 use deployments::{CreateDeploymentRequest, DeploymentResponse};
-use metrics::MetricsResponse;
+use metrics::{CloudflareErrorLog, ErrorLogsResponse, ErrorSource, MetricsResponse};
 use responses::CloudflareResponse;
 
 use crate::artifacts::CloudflareManifest;
@@ -388,6 +388,110 @@ impl CloudflareClient {
             .map_or(0, |a| a.count);
 
         Ok(count)
+    }
+
+    /// Collects the logs produced by Cloudflare worker invocations that result in errors
+    /// Only collects 5xx errrors for now.
+    /// Returns grouped error logs maintaining the original invocation structure.
+    pub async fn collect_errors(
+        &self,
+        cf_worker_name: String,
+        from_time: DateTime<chrono::Utc>,
+        to_time: DateTime<chrono::Utc>,
+    ) -> Result<Vec<Vec<CloudflareErrorLog>>> {
+        let account_id = &self.account_id;
+        let path = format!("accounts/{account_id}/workers/observability/telemetry/query");
+        let url = Self::url_with_path(&path);
+
+        // Convert DateTime to Unix Millisecond timestamps
+        let from_timestamp = from_time.timestamp_millis() as u64;
+        let to_timestamp = to_time.timestamp_millis() as u64;
+
+        let query_body = serde_json::json!({
+            "view": "invocations",
+            "queryId": "workers-logs-invocations",
+            "parameters": {
+                "datasets": [],
+                "filters": [
+                    {
+                        "key": "$metadata.service",
+                        "operation": "eq",
+                        "type": "string",
+                        "value": cf_worker_name
+                    },
+                    {
+                        "key": "$workers.event.response.status",
+                        "operation": "gte",
+                        "type": "number",
+                        "value": 500
+                    },
+                    {
+                        "key": "$workers.event.response.status",
+                        "operation": "lte",
+                        "type": "number",
+                        "value": 599
+                    }
+                ],
+                "calculations": [],
+                "groupBys": [],
+                "havings": []
+            },
+            "timeframe": {
+                "to": to_timestamp,
+                "from": from_timestamp
+            }
+        });
+
+        let response = self
+            .client
+            .post(url)
+            .json(&query_body)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        // If there's an error, just return empty results
+        if !response.status().is_success() {
+            error!(
+                "Failed to query Cloudflare error logs for worker: {}, error: {:?}",
+                cf_worker_name,
+                response.json::<serde_json::Value>().await
+            );
+            return Ok(Vec::new());
+        }
+
+        let error_logs_response = response
+            .json::<CloudflareResponse<ErrorLogsResponse>>()
+            .await
+            .into_diagnostic()?;
+
+        let mut error_log_groups = Vec::new();
+
+        // Turn invocations into CloudflareErrorLogs, maintaining grouping
+        for invocation_group in error_logs_response.result.invocations {
+            let mut error_logs_in_group = Vec::new();
+
+            for invocation in invocation_group {
+                let error_log = CloudflareErrorLog {
+                    url: invocation.workers.event.request.url,
+                    method: invocation.workers.event.request.method,
+                    path: invocation.workers.event.request.path,
+                    response: invocation.workers.event.response,
+                    source: ErrorSource {
+                        message: invocation.source.message,
+                        exception: invocation.source.exception,
+                    },
+                };
+                error_logs_in_group.push(error_log);
+            }
+
+            // Only add non-empty groups
+            if !error_logs_in_group.is_empty() {
+                error_log_groups.push(error_logs_in_group);
+            }
+        }
+
+        Ok(error_log_groups)
     }
 
     fn base_url() -> &'static Url {
