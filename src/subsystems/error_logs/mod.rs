@@ -31,12 +31,8 @@ impl ErrorLogsController {
             MonitorConfig::CloudflareWorkersObservability {
                 account_id,
                 worker_name,
+                api_token,
             } => {
-                // TODO: find out how to pull the API token from the BoxedMonitor
-                let api_token = std::env::var("CLOUDFLARE_API_TOKEN").map_err(|_| {
-                    miette::miette!("CLOUDFLARE_API_TOKEN environment variable not found")
-                })?;
-
                 let client = Client::new(account_id, worker_name.clone(), &api_token);
 
                 Ok(Self {

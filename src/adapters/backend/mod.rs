@@ -583,6 +583,7 @@ pub enum MonitorConfig {
         dimensions: Vec<CloudWatchDimensions>,
     },
     CloudflareWorkersObservability {
+        api_token: String,
         account_id: String,
         worker_name: String,
     },
