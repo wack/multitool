@@ -2,12 +2,14 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
 use crate::{IngressSubsystem, PlatformSubsystem};
 
+#[cfg(feature = "errorlogs")]
+use crate::subsystems::{ERROR_LOGS_SUBSYSTEM_NAME, ErrorLogsController};
 use monitor::{MONITOR_CONTROLLER_SUBSYSTEM_NAME, MonitorController};
 
 use super::{INGRESS_SUBSYSTEM_NAME, RELAY_SUBSYSTEM_NAME, RelaySubsystem};
@@ -62,6 +64,11 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
         let platform_subsystem = PlatformSubsystem::new(self.platform);
         let platform_handle = platform_subsystem.handle();
 
+        // Extract monitor config before moving the monitor so we can use it
+        // in the ErrorLogsController.
+        #[cfg(feature = "errorlogs")]
+        let monitor_config = self.monitor.get_config();
+
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
         let observation_stream = monitor_controller.stream()?;
 
@@ -101,6 +108,24 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
             RELAY_SUBSYSTEM_NAME,
             relay_subsystem.into_subsystem(),
         ));
+
+        #[cfg(feature = "errorlogs")]
+        {
+            match ErrorLogsController::builder()
+                .monitor(monitor_config)
+                .build()
+            {
+                Ok(error_logs_controller) => {
+                    subsys.start(SubsystemBuilder::new(
+                        ERROR_LOGS_SUBSYSTEM_NAME,
+                        error_logs_controller.into_subsystem(),
+                    ));
+                }
+                Err(err) => {
+                    error!("Could not start error logs subsystem: {}", err);
+                }
+            }
+        }
 
         subsys.wait_for_children().await;
         Ok(())
