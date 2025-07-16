@@ -2,8 +2,12 @@ use std::path::PathBuf;
 
 use crate::{
     Shutdownable,
-    adapters::{backend::PlatformConfig, cloudflare::CloudflareClient as Client},
-    artifacts::CloudflareManifest,
+    adapters::{
+        backend::PlatformConfig,
+        cloudflare::{CloudflareClient as Client, uploads::UploadVersionRequest},
+    },
+    artifacts::CloudflareFileManifest,
+    fs::wrangler::Wrangler,
     subsystems::ShutdownResult,
 };
 
@@ -17,15 +21,15 @@ use tracing::info;
 pub struct CloudflareWorkerPlatform {
     client: Client,
     artifact_path: PathBuf,
-    main_module: String,
+    wrangler: Wrangler,
 }
 
 impl CloudflareWorkerPlatform {
-    pub fn new(client: Client, artifact_path: PathBuf, main_module: String) -> Self {
+    pub fn new(client: Client, artifact_path: PathBuf, wrangler: Wrangler) -> Self {
         Self {
             client,
             artifact_path,
-            main_module,
+            wrangler,
         }
     }
 }
@@ -44,36 +48,13 @@ impl Platform for CloudflareWorkerPlatform {
         let baseline_version_id = self.client.get_current_version().await?;
 
         // 1. First, we create a manifest of the files to upload
-        let manifest = CloudflareManifest::new(&self.artifact_path).await?;
+        let file_manifest = CloudflareFileManifest::new(&self.artifact_path).await?;
 
-        // Commented out until we verify if we need an upload session.
-        // let upload_session_response = self.client.create_assets_upload_session(&manifest).await?;
-
-        // let mut completion_jwt = upload_session_response.jwt.clone();
-
-        // debug!("jwt: {}", completion_jwt);
-        // debug!("buckets: {:?}", upload_session_response.buckets);
-
-        // let mut keep_assets = false;
-        // 2. Then, you upload your assets, but only if Cloudflare wants them
-        // by telling us which files to upload in buckets.
-        // if !upload_session_response.buckets.is_empty() {
-        //     for bucket in upload_session_response.buckets {
-        //         let upload_response = self
-        //             .client
-        //             .upload_assets(&upload_session_response.jwt, bucket, manifest.clone())
-        //             .await?;
-        //         completion_jwt = upload_response.jwt;
-        //     }
-        // } else {
-        //     keep_assets = true;
-        // }
+        // Convert our wrangler file to the Request format Cloudflare expects
+        let request = UploadVersionRequest::from(self.wrangler.clone());
 
         // 2. Finally, upload the files
-        let upload_version_request = self
-            .client
-            .upload_version(&manifest, &self.main_module)
-            .await?;
+        let upload_version_request = self.client.upload_version(&file_manifest, &request).await?;
 
         Ok((baseline_version_id, upload_version_request.id))
     }

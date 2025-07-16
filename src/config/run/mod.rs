@@ -20,15 +20,12 @@ pub struct RunSubcommand {
     /// The Cloudflare account ID to use when deploying to Workers.
     #[arg(long, env = "CLOUDFLARE_ACCOUNT_ID")]
     cloudflare_account_id: Option<String>,
-    /// The name of the Cloudflare Worker to deploy.
-    #[arg(long, env = "CLOUDFLARE_WORKER_NAME")]
-    cloudflare_worker_name: Option<String>,
-    /// The name of the Cloudflare Worker to deploy.
+    /// The API token to use for Cloudflare API requests.
     #[arg(long, env = "CLOUDFLARE_API_TOKEN")]
     cloudflare_api_token: Option<String>,
-    /// The name of the main module for the Cloudflare Worker.
-    #[arg(long, env = "CLOUDFLARE_MAIN_MODULE")]
-    cloudflare_main_module: Option<String>,
+    /// The path to the Cloudflare Worker artifact to deploy.
+    #[arg(long, env = "CLOUDFLARE_ARTIFACT_PATH")]
+    cloudflare_artifact_path: Option<String>,
 
     /// AWS Config
     /// The AWS region to deploy into.
@@ -54,14 +51,6 @@ pub struct RunSubcommand {
 impl RunSubcommand {
     pub fn cloudflare_account_id(&self) -> Option<&str> {
         self.cloudflare_account_id.as_deref()
-    }
-
-    pub fn cloudflare_worker_name(&self) -> Option<&str> {
-        self.cloudflare_worker_name.as_deref()
-    }
-
-    pub fn cloudflare_main_module(&self) -> Option<&str> {
-        self.cloudflare_main_module.as_deref()
     }
 
     pub fn cloudflare_api_token(&self) -> Option<&str> {

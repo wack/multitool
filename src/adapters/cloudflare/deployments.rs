@@ -38,6 +38,89 @@ pub struct Deployment {
     pub versions: Vec<DeploymentVersion>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum Binding {
+    #[serde(rename = "ai")]
+    Ai { name: String },
+    #[serde(rename = "analytics_engine")]
+    AnalyticsEngine { dataset: String, name: String },
+    #[serde(rename = "assets")]
+    Assets { name: String },
+    #[serde(rename = "browser")]
+    Browser { name: String },
+    #[serde(rename = "d1")]
+    D1 { id: String, name: String },
+    #[serde(rename = "dispatch_namespace")]
+    DispatchNamespace {
+        name: String,
+        namespace: String,
+        outbound: Option<(Vec<String>, (String, String))>,
+    },
+    #[serde(rename = "durable_object_namespace")]
+    DurableObjectNamespace {
+        name: String,
+        class_name: Option<String>,
+        environment: Option<String>,
+        script_name: Option<String>,
+    },
+    #[serde(rename = "hyperdrive")]
+    Hyperdrive { id: String, name: String },
+    #[serde(rename = "json")]
+    Json { json: String, name: String },
+    #[serde(rename = "kv_namespace")]
+    KvNamespace { name: String, namespace_id: String },
+    #[serde(rename = "mtls_certificate")]
+    MtlsCertificate {
+        certificate_id: String,
+        name: String,
+    },
+    #[serde(rename = "plain_text")]
+    PlainText { name: String, text: String },
+    #[serde(rename = "pipelines")]
+    Pipelines { name: String, pipeline: String },
+    #[serde(rename = "queue")]
+    Queue { name: String, queue_name: String },
+    #[serde(rename = "r2_bucket")]
+    R2Bucket { bucket_name: String, name: String },
+    #[serde(rename = "secret_text")]
+    SecretText { name: String, text: String },
+    #[serde(rename = "service")]
+    Service {
+        environment: String,
+        name: String,
+        service: String,
+    },
+    #[serde(rename = "tail_consumer")]
+    TailConsumer { name: String, service: String },
+    #[serde(rename = "vectorize")]
+    Vectorize { index_name: String, name: String },
+    #[serde(rename = "version_metadata")]
+    VersionMetadata { name: String },
+    #[serde(rename = "secrets_store_secret")]
+    SecretsStoreSecret {
+        name: String,
+        secret_name: String,
+        store_id: String,
+    },
+    #[serde(rename = "secret_key")]
+    SecretKey {
+        algorithm: String,
+        format: String,
+        name: String,
+        usages: Vec<String>,
+        key_base64: Option<String>,
+        key_jwk: Option<String>,
+    },
+    #[serde(rename = "workflow")]
+    Workflow {
+        name: String,
+        workflow_name: String,
+        class_name: Option<String>,
+        script_name: Option<String>,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use crate::adapters::cloudflare::responses::CloudflareResponse;

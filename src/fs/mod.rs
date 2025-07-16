@@ -12,14 +12,16 @@ use std::{
 pub(crate) use file::File;
 pub(crate) use manifest::application_manifest;
 pub(crate) use session::{Session, SessionFile, UserCreds};
+pub(crate) use wrangler::{JsonWranglerFile, TomlWranglerFile};
 
 use manifest::{JsonManifest, Manifest, TomlManifest};
+use wrangler::Wrangler;
 
 mod file;
 /// The schema and parsing code for the Wack.toml manifest file.
 pub mod manifest;
 mod session;
-mod wrangler;
+pub mod wrangler;
 
 /// The name of the application as used on the filesystem for XDG conventions.
 const APPLICATION_NAME: &str = "multi";
@@ -64,7 +66,7 @@ impl FileSystem {
     /// Load the application manifest file, looking for manifests in
     /// priority order up the file hierarchy.
     pub fn application_manifest(&self) -> Result<Manifest, ManifestMissing> {
-        // • Attempt to load a TOML manifest. Fallback to JSON.
+        // Attempt to load a TOML manifest. Fallback to JSON.
         let toml_manifest = self.load_file(TomlManifest);
         let json_manifest = self.load_file(JsonManifest);
         let manifest_box = match (toml_manifest, json_manifest) {
@@ -73,6 +75,19 @@ impl FileSystem {
             (Err(_), Err(_)) => return Err(ManifestMissing),
         };
         Ok(manifest_box)
+    }
+
+    /// Load the wrangler configuration file, looking for both TOML and JSON formats
+    pub fn wrangler_config(&self) -> Result<Wrangler, WranglerMissing> {
+        // Attempt to load a TOML wrangler file. Fallback to JSON.
+        let toml_wrangler = self.load_file(TomlWranglerFile);
+        let json_wrangler = self.load_file(JsonWranglerFile);
+        let wrangler_config = match (toml_wrangler, json_wrangler) {
+            (Ok(wrangler), _) => wrangler,
+            (Err(_), Ok(wrangler)) => wrangler,
+            (Err(_), Err(_)) => return Err(WranglerMissing),
+        };
+        Ok(wrangler_config)
     }
 
     /// The application directory is the first directory with a MultiTool manifest
@@ -191,6 +206,10 @@ impl FileSystem {
 #[derive(Error, Debug, Diagnostic)]
 #[error("MultiTool manifest file not found")]
 pub struct ManifestMissing;
+
+#[derive(Error, Debug, Diagnostic)]
+#[error("Wrangler JSON or TOML file required for Cloudflare Workers")]
+pub struct WranglerMissing;
 
 /// A shorthand for referring to one of the $XDG directories.
 /// As we need additional directories, we'll add them to the enum.

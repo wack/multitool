@@ -13,10 +13,7 @@ use crate::{
     },
     artifacts::LambdaZip,
     config::RunSubcommand,
-    fs::{
-        FileSystem,
-        wrangler::{Wrangler, WranglerFile},
-    },
+    fs::{FileSystem, wrangler::Wrangler},
 };
 use miette::Result;
 
@@ -327,16 +324,9 @@ impl AwsLambdaConfig {
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct CloudflareConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    wrangler: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    main_module: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    account_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    worker_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // NOTE: These fields can override values from the Wrangler file
     artifact_path: Option<String>,
+
     /// We always get this value from the command line.
     #[serde(skip)]
     api_token: Option<String>,
@@ -344,11 +334,8 @@ pub struct CloudflareConfig {
 
 impl CloudflareConfig {
     pub fn load_wrangler(&self, fs: &FileSystem) -> Result<Wrangler> {
-        fs.load_file(WranglerFile)
-    }
-
-    pub fn wrangler_enabled(&self) -> bool {
-        self.wrangler.unwrap_or(false)
+        fs.wrangler_config()
+            .map_err(|e| miette!("Failed to load wrangler configuration: {}", e))
     }
 
     fn load_api_token(&self, args: &RunSubcommand) -> Result<String> {
@@ -358,46 +345,10 @@ impl CloudflareConfig {
             .ok_or_else(|| miette!("No Cloudflare API token was provided. Either set the environment variable CLOUDFLARE_API_TOKEN, or provide it as the --cloudflare-api-token CLI flag."))
     }
 
-    fn load_worker_name(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
-        let wranger_worker_name = if self.wrangler_enabled() {
-            let wrangler = self.load_wrangler(&fs)?;
-            Some(wrangler.name().to_owned())
-        } else {
-            None
-        };
-        let worker_name = args.cloudflare_worker_name().map(ToString::to_string).or_else(|| self.worker_name.clone())
-            .or(wranger_worker_name)
-            .ok_or_else(
-                || miette!("No Cloudflare worker name provided. You must provide the name of a Cloudflare worker, either via an environment variable, a CLI flag, or in your MultiTool manifest file or Wrangler.toml file.")
-            )?;
-        Ok(worker_name)
-    }
-
-    fn load_main_module(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
-        let wranger_main_module = if self.wrangler_enabled() {
-            let wrangler = self.load_wrangler(&fs)?;
-            Some(wrangler.main().to_owned())
-        } else {
-            None
-        };
-        let worker_main_module = args.cloudflare_main_module().map(ToString::to_string).or_else(|| self.main_module.clone())
-            .or(wranger_main_module)
-            .ok_or_else(
-                || miette!("No Cloudflare main module provided. You must provide a main module, either via an environment variable, a CLI flag, or in your MultiTool manifest file or Wrangler.toml file.")
-            )?;
-        Ok(worker_main_module)
-    }
-
-    fn load_account_id(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<String> {
-        let wranger_account_id = if self.wrangler_enabled() {
-            let wrangler = self.load_wrangler(fs)?;
-            wrangler.account_id().map(ToString::to_string)
-        } else {
-            None
-        };
-        let account_id = args.cloudflare_account_id().map(ToString::to_string).or_else(|| self.account_id.clone())
-            .or(wranger_account_id)
-            .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool manfiest file or Wrangler.toml file."))?;
+    fn load_account_id(&self, args: &RunSubcommand, wrangler: &Wrangler) -> Result<String> {
+        let account_id = args.cloudflare_account_id().map(ToString::to_string)
+            .or_else(|| wrangler.account_id().as_deref().map(ToString::to_string))
+            .ok_or_else(|| miette!("No Cloudflare account id provided. You must provide the account id to deploy into, either via an environment variable, a CLI flag, or in your MultiTool manifest file or Wrangler.toml file."))?;
         Ok(account_id)
     }
 
@@ -423,40 +374,39 @@ impl CloudflareConfig {
 
     fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
         let fs = FileSystem::new()?;
+        let wrangler = self.load_wrangler(&fs)?;
         // First, let's check and make sure we have an API token.
         let api_token = self.load_api_token(args)?;
-        let account_id = self.load_account_id(&fs, args)?;
-        let worker_name = self.load_worker_name(&fs, args)?;
-        let client = CloudflareClient::new(account_id, worker_name, &api_token);
+        let account_id = self.load_account_id(args, &wrangler)?;
+        let client = CloudflareClient::new(account_id, wrangler.name().clone(), &api_token);
 
         Ok(Box::new(CloudflareWorkerIngress::new(client)))
     }
 
     fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
         let fs = FileSystem::new()?;
+        let wrangler = self.load_wrangler(&fs)?;
         // First, let's check and make sure we have an API token.
         let api_token = self.load_api_token(args)?;
-        let account_id = self.load_account_id(&fs, args)?;
-        let worker_name = self.load_worker_name(&fs, args)?;
-        let client = CloudflareClient::new(account_id, worker_name, &api_token);
+        let account_id = self.load_account_id(args, &wrangler)?;
+        let client = CloudflareClient::new(account_id, wrangler.name().clone(), &api_token);
 
         Ok(Box::new(CloudflareMonitor::new(client)))
     }
 
     fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         let fs = FileSystem::new()?;
+        let wrangler = self.load_wrangler(&fs)?;
         // First, let's check and make sure we have an API token.
         let api_token = self.load_api_token(args)?;
-        let account_id = self.load_account_id(&fs, args)?;
-        let worker_name = self.load_worker_name(&fs, args)?;
-        let main_module = self.load_main_module(&fs, args)?;
+        let account_id = self.load_account_id(args, &wrangler)?;
         let artifact_path = self.load_artifact_path(&fs, args)?;
-        let client = CloudflareClient::new(account_id, worker_name, &api_token);
+        let client = CloudflareClient::new(account_id, wrangler.name().clone(), &api_token);
 
         Ok(Box::new(CloudflareWorkerPlatform::new(
             client,
             artifact_path,
-            main_module,
+            wrangler,
         )))
     }
 }
@@ -531,62 +481,11 @@ artifact-path = "my_code.zip"
     }
 
     #[test]
-    fn parse_full_cloudflare_config_example() {
-        const RAW_MANIFEST: &str = r#"workspace = "wack"
-application = "multitool"
-
-[config.monitor.cloudflare-observability]
-worker-name = "my_worker"
-account-id = "abc123"
-
-[config.platform.cloudflare-workers]
-worker-name = "my_worker"
-account-id = "abc123"
-
-[config.ingress.cloudflare-workers]
-worker-name = "my_worker"
-account-id = "abc123"
-"#;
-        let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
-
-        assert_eq!(observed.workspace, Some("wack".to_string()));
-        assert_eq!(observed.application, Some("multitool".to_string()));
-
-        // Check monitor config
-        matches!(
-            observed
-                .config
-                .monitor
-                .expect("Monitor config should be present"),
-            MonitorConfig::CloudflareObservability(_)
-        );
-
-        // Check ingress config
-        if let Some(IngressConfig::CloudflareWorkers(config)) = observed.config.ingress {
-            assert_eq!(config.account_id, Some("abc123".to_string()));
-            assert_eq!(config.worker_name, Some("my_worker".to_string()));
-        } else {
-            panic!("Expected CloudflareWorkers variant");
-        }
-
-        // Check platform config
-        if let Some(PlatformConfig::CloudflareWorkers(config)) = observed.config.platform {
-            assert_eq!(config.account_id, Some("abc123".to_string()));
-            assert_eq!(config.worker_name, Some("my_worker".to_string()));
-        } else {
-            panic!("Expected CloudflareWorkers variant");
-        }
-    }
-
-    #[test]
     fn parse_short_cloudflare_config_example() {
         const RAW_MANIFEST: &str = r#"workspace = "wack"
 application = "multitool"
 
 [config.cloudflare]
-worker-name = "my_worker"
-account-id = "abc123"
-main-module = "index.js"
 artifact-path = "src"
 "#;
         let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
@@ -602,22 +501,14 @@ artifact-path = "src"
                 .clone()
                 .expect("Cloudflare config should be present"),
             CloudflareConfig {
-                account_id: Some(_),
-                worker_name: Some(_),
-                main_module: Some(_),
                 artifact_path: Some(_),
-                wrangler: None,
                 api_token: None,
             }
         );
 
         // Check if values were set correctly
         if let Some(cloudflare) = observed.config.cloudflare {
-            assert_eq!(cloudflare.account_id, Some("abc123".to_string()));
-            assert_eq!(cloudflare.worker_name, Some("my_worker".to_string()));
-            assert_eq!(cloudflare.main_module, Some("index.js".to_string()));
             assert_eq!(cloudflare.artifact_path, Some("src".to_string()));
-            assert!(!cloudflare.wrangler_enabled());
         } else {
             panic!("Expected CloudflareConfig variant");
         }
@@ -631,6 +522,5 @@ artifact-path = "src"
 
         let config: ConfigSection = toml::from_str(config).unwrap();
         assert!(config.cloudflare.is_some());
-        assert!(config.cloudflare.unwrap().wrangler.unwrap_or(false));
     }
 }

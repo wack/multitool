@@ -14,7 +14,7 @@ use deployments::{CreateDeploymentRequest, DeploymentResponse};
 use metrics::MetricsResponse;
 use responses::CloudflareResponse;
 
-use crate::artifacts::CloudflareManifest;
+use crate::artifacts::CloudflareFileManifest;
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -164,8 +164,8 @@ impl CloudflareClient {
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/create/
     pub async fn upload_version(
         &self,
-        manifest: &CloudflareManifest,
-        main_module: &String,
+        manifest: &CloudflareFileManifest,
+        request: &UploadVersionRequest,
     ) -> Result<UploadVersionResponse> {
         debug!("Uploading Worker version");
         let account_id = &self.account_id;
@@ -173,11 +173,9 @@ impl CloudflareClient {
         let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/versions");
         let url = Self::url_with_path(&path);
 
-        let metadata = UploadVersionRequest::new(main_module.to_owned());
-
         let mut request = multipart::Form::new().text(
             "metadata",
-            serde_json::to_string(&metadata).into_diagnostic()?,
+            serde_json::to_string(&request).into_diagnostic()?,
         );
 
         for file_path in manifest.files() {
@@ -195,6 +193,8 @@ impl CloudflareClient {
             file_part = file_part.mime_str("application/javascript+module").unwrap();
             request = request.part(file_path_str, file_part);
         }
+
+        debug!("Uploading Worker version with metadata: {:?}", request);
 
         let response = self
             .client
@@ -405,4 +405,4 @@ impl CloudflareClient {
 pub mod deployments;
 mod metrics;
 mod responses;
-mod uploads;
+pub mod uploads;
