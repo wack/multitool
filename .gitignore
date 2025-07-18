@@ -13,3 +13,5 @@ MultiTool.yaml
 
 # Remove any workers user for development
 /worker/**
+wrangler.toml
+wrangler.json
