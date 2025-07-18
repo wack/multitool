@@ -47,11 +47,7 @@ pub struct Service {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Route {
     pub pattern: String,
-    // NOTE: one of zone_id or zone_name must be provided
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub zone_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub zone_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -93,6 +89,8 @@ pub struct Wrangler {
     routes: Option<Vec<Route>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     observability: Option<Observability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vars: Option<HashMap<String, String>>,
 }
 
 const WRANGLER_PREFIX: &str = "wrangler";
@@ -153,6 +151,7 @@ mod tests {
                 enabled: true,
                 head_sampling_rate: Some(0.1),
             }),
+            vars: Some(HashMap::from([("KEY".to_string(), "value".to_string())])),
         };
 
         // Test JSON serialization/deserialization
@@ -181,6 +180,7 @@ mod tests {
                 enabled: true,
                 head_sampling_rate: Some(0.1),
             }),
+            vars: Some(HashMap::from([("KEY".to_string(), "value".to_string())])),
         };
 
         // Test TOML serialization/deserialization

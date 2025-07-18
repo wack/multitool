@@ -4,6 +4,7 @@ use miette::{IntoDiagnostic, Result, miette};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::multipart::Part;
 use reqwest::{Client, multipart};
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tokio::fs::read;
 use tracing::{debug, error};
@@ -13,8 +14,10 @@ use url::Url;
 use deployments::{CreateDeploymentRequest, DeploymentResponse};
 use metrics::MetricsResponse;
 use responses::CloudflareResponse;
+use routes::{CloudflareRoute, CreateCloudflareRouteRequest, UpdateCloudflareRouteRequest};
 
 use crate::artifacts::CloudflareFileManifest;
+use crate::fs::wrangler::Route;
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -193,8 +196,6 @@ impl CloudflareClient {
             file_part = file_part.mime_str("application/javascript+module").unwrap();
             request = request.part(file_path_str, file_part);
         }
-
-        debug!("Uploading Worker version with metadata: {:?}", request);
 
         let response = self
             .client
@@ -390,6 +391,183 @@ impl CloudflareClient {
         Ok(count)
     }
 
+    // Syncs the routes from wrangler.toml with Cloudflare
+    pub async fn sync_routes(&self, wrangler_routes: Vec<Route>) -> Result<()> {
+        debug!("Syncing routes with Cloudflare");
+
+        // Group routes by zone_id so we can process them in batches since
+        // each route could have a different zone_id
+        let mut routes_by_zone: HashMap<String, Vec<&Route>> = HashMap::new();
+        for route in &wrangler_routes {
+            if let Some(zone_id) = &route.zone_id {
+                routes_by_zone
+                    .entry(zone_id.clone())
+                    .or_default()
+                    .push(route);
+            }
+        }
+
+        // For each zone, compare the current routes with the wrangler routes
+        // and update, create, or delete routes as necessary
+        for (zone_id, zone_routes) in routes_by_zone {
+            let cf_routes = self.get_routes(&zone_id).await?;
+
+            let wrangler_patterns: HashSet<&String> =
+                zone_routes.iter().map(|r| &r.pattern).collect();
+            let cf_routes_map: HashMap<&String, &CloudflareRoute> =
+                cf_routes.iter().map(|r| (&r.pattern, r)).collect();
+
+            // Update or create routes from wrangler_routes
+            for wrangler_route in zone_routes {
+                if let Some(cf_route) = cf_routes_map.get(&wrangler_route.pattern) {
+                    // Route exists, check if the pattern needs updating
+                    if cf_route.pattern != wrangler_route.pattern {
+                        self.update_route(&zone_id, &cf_route.id, &wrangler_route.pattern)
+                            .await?;
+                    }
+                } else {
+                    // Route doesn't exist, create it
+                    self.create_route(&zone_id, &wrangler_route.pattern).await?;
+                }
+            }
+
+            // Finally, delete a route if it exists in Cloudflare but not in wrangler_routes
+            for cf_route in &cf_routes {
+                if !wrangler_patterns.contains(&cf_route.pattern)
+                    && cf_route.script.as_ref() == Some(&self.worker_name)
+                {
+                    self.delete_route(&zone_id, &cf_route.id).await?;
+                }
+            }
+        }
+
+        debug!("Routes synced successfully!");
+        Ok(())
+    }
+
+    async fn get_routes(&self, zone_id: &str) -> Result<Vec<CloudflareRoute>> {
+        debug!("Getting routes for zone: {}", zone_id);
+        let path = format!("zones/{}/workers/routes", zone_id);
+        let url = Self::url_with_path(&path);
+
+        let response = self.client.get(url).send().await.into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette!(
+                "Failed to get routes for zone {}. Error: {:?}",
+                zone_id,
+                response.json::<serde_json::Value>().await
+            ));
+        }
+
+        let routes_response = response
+            .json::<CloudflareResponse<Vec<CloudflareRoute>>>()
+            .await
+            .into_diagnostic()?;
+
+        Ok(routes_response.result)
+    }
+
+    async fn create_route(&self, zone_id: &str, pattern: &str) -> Result<CloudflareRoute> {
+        debug!(
+            "Creating route with pattern: {} for zone: {}",
+            pattern, zone_id
+        );
+        let path = format!("zones/{}/workers/routes", zone_id);
+        let url = Self::url_with_path(&path);
+
+        let request = CreateCloudflareRouteRequest {
+            pattern: pattern.to_string(),
+            script: self.worker_name.clone(),
+        };
+
+        let response = self
+            .client
+            .post(url)
+            .json(&request)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette!(
+                "Failed to create route with pattern {}. Error: {:?}",
+                pattern,
+                response.json::<serde_json::Value>().await
+            ));
+        }
+
+        let route_response = response
+            .json::<CloudflareResponse<CloudflareRoute>>()
+            .await
+            .into_diagnostic()?;
+
+        debug!("Route created successfully with pattern: {}!", pattern);
+        Ok(route_response.result)
+    }
+
+    async fn update_route(
+        &self,
+        zone_id: &str,
+        route_id: &str,
+        pattern: &str,
+    ) -> Result<CloudflareRoute> {
+        debug!(
+            "Updating route {} with pattern: {} for zone: {}",
+            route_id, pattern, zone_id
+        );
+        let path = format!("zones/{}/workers/routes/{}", zone_id, route_id);
+        let url = Self::url_with_path(&path);
+
+        let request = UpdateCloudflareRouteRequest {
+            pattern: pattern.to_string(),
+            script: self.worker_name.clone(),
+        };
+
+        let response = self
+            .client
+            .put(url)
+            .json(&request)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette!(
+                "Failed to update route {}. Error: {:?}",
+                route_id,
+                response.json::<serde_json::Value>().await
+            ));
+        }
+
+        let route_response = response
+            .json::<CloudflareResponse<CloudflareRoute>>()
+            .await
+            .into_diagnostic()?;
+
+        debug!("Route {} updated successfully!", route_id);
+        Ok(route_response.result)
+    }
+
+    async fn delete_route(&self, zone_id: &str, route_id: &str) -> Result<()> {
+        debug!("Deleting route: {} for zone: {}", route_id, zone_id);
+        let path = format!("zones/{}/workers/routes/{}", zone_id, route_id);
+        let url = Self::url_with_path(&path);
+
+        let response = self.client.delete(url).send().await.into_diagnostic()?;
+
+        if !response.status().is_success() {
+            return Err(miette!(
+                "Failed to delete route {}. Error: {:?}",
+                route_id,
+                response.json::<serde_json::Value>().await
+            ));
+        }
+
+        debug!("Route {} deleted successfully!", route_id);
+        Ok(())
+    }
+
     fn base_url() -> &'static Url {
         URL.get_or_init(init_url)
     }
@@ -405,4 +583,5 @@ impl CloudflareClient {
 pub mod deployments;
 mod metrics;
 mod responses;
+mod routes;
 pub mod uploads;

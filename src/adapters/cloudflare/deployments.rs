@@ -75,6 +75,7 @@ pub enum Binding {
         certificate_id: String,
         name: String,
     },
+    // PlainText is used for Environment variables in the Wrangler file
     #[serde(rename = "plain_text")]
     PlainText { name: String, text: String },
     #[serde(rename = "pipelines")]

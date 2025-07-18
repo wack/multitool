@@ -53,8 +53,17 @@ impl Platform for CloudflareWorkerPlatform {
         // Convert our wrangler file to the Request format Cloudflare expects
         let request = UploadVersionRequest::from(self.wrangler.clone());
 
-        // 2. Finally, upload the files
+        // 2. Upload the files and any potentially new metadata from the Wrangler file
         let upload_version_request = self.client.upload_version(&file_manifest, &request).await?;
+
+        // 3. After the files have been uploaded, we need to update the routes, if there are any listed in the wrangler file
+        // NOTE: we do this after the upload since there are more things that could go wrong with the upload
+        // and we don't want to update the routes if the upload fails.
+        if self.wrangler.routes().is_some() {
+            self.client
+                .sync_routes(self.wrangler.routes().as_ref().unwrap().clone())
+                .await?;
+        }
 
         Ok((baseline_version_id, upload_version_request.id))
     }

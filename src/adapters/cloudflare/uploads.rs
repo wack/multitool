@@ -90,6 +90,16 @@ impl From<Wrangler> for UploadVersionRequest {
             }
         }
 
+        // Vars in the Wrangler file are Environment variables, but are called PlainText for bindings
+        if wrangler.vars().is_some() {
+            for (key, value) in wrangler.vars().as_ref().unwrap() {
+                bindings.push(Binding::PlainText {
+                    name: key.clone(),
+                    text: value.clone(),
+                });
+            }
+        }
+
         return Self {
             main_module: wrangler.main().to_string(),
             compatibility_date: wrangler.compatibility_date().clone(),
