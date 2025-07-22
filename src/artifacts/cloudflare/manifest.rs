@@ -9,7 +9,7 @@ use tracing::debug;
 use crate::manifest::manifest_filenames;
 
 #[derive(Getters, Clone, Debug)]
-pub(crate) struct CloudflareManifest {
+pub(crate) struct CloudflareFileManifest {
     files: Vec<PathBuf>,
     root: PathBuf,
 }
@@ -17,7 +17,7 @@ pub(crate) struct CloudflareManifest {
 // TODO: Load in the `excludes` section of the Wranger.toml file and respect those.
 // TODO: Determine if we should upload everything in `node_modules` or include
 //       that as part of the build step.
-impl CloudflareManifest {
+impl CloudflareFileManifest {
     /// Build a new Manifest using the given root directory.
     pub async fn new<P: AsRef<Path>>(root: P) -> Result<Self> {
         debug!("Building Cloudflare manifest");

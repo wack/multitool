@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use crate::{
     Shutdownable,
     adapters::{backend::PlatformConfig, cloudflare::CloudflareClient as Client},
-    artifacts::CloudflareManifest,
+    artifacts::CloudflareFileManifest,
+    fs::wrangler::Wrangler,
     subsystems::ShutdownResult,
 };
 
@@ -16,16 +17,16 @@ use tracing::info;
 #[derive(Getters)]
 pub struct CloudflareWorkerPlatform {
     client: Client,
-    artifact_path: PathBuf,
-    main_module: String,
+    project_dir: PathBuf,
+    wrangler: Wrangler,
 }
 
 impl CloudflareWorkerPlatform {
-    pub fn new(client: Client, artifact_path: PathBuf, main_module: String) -> Self {
+    pub fn new(client: Client, project_dir: PathBuf, wrangler: Wrangler) -> Self {
         Self {
             client,
-            artifact_path,
-            main_module,
+            project_dir,
+            wrangler,
         }
     }
 }
@@ -44,38 +45,24 @@ impl Platform for CloudflareWorkerPlatform {
         let baseline_version_id = self.client.get_current_version().await?;
 
         // 1. First, we create a manifest of the files to upload
-        let manifest = CloudflareManifest::new(&self.artifact_path).await?;
+        let file_manifest = CloudflareFileManifest::new(&self.project_dir).await?;
 
-        // Commented out until we verify if we need an upload session.
-        // let upload_session_response = self.client.create_assets_upload_session(&manifest).await?;
-
-        // let mut completion_jwt = upload_session_response.jwt.clone();
-
-        // debug!("jwt: {}", completion_jwt);
-        // debug!("buckets: {:?}", upload_session_response.buckets);
-
-        // let mut keep_assets = false;
-        // 2. Then, you upload your assets, but only if Cloudflare wants them
-        // by telling us which files to upload in buckets.
-        // if !upload_session_response.buckets.is_empty() {
-        //     for bucket in upload_session_response.buckets {
-        //         let upload_response = self
-        //             .client
-        //             .upload_assets(&upload_session_response.jwt, bucket, manifest.clone())
-        //             .await?;
-        //         completion_jwt = upload_response.jwt;
-        //     }
-        // } else {
-        //     keep_assets = true;
-        // }
-
-        // 2. Finally, upload the files
-        let upload_version_request = self
+        // 2. Upload the files and any potentially new metadata from the Wrangler file
+        let upload_version_response = self
             .client
-            .upload_version(&manifest, &self.main_module)
+            .upload_version(&file_manifest, self.wrangler.clone())
             .await?;
 
-        Ok((baseline_version_id, upload_version_request.id))
+        // 3. After the files have been uploaded, we need to update the routes, if there are any listed in the wrangler file
+        // NOTE: we do this after the upload since there are more things that could go wrong with the upload
+        // and we don't want to update the routes if the upload fails.
+        if self.wrangler.routes().is_some() {
+            self.client
+                .update_routes(self.wrangler.routes().as_ref().unwrap().clone())
+                .await?;
+        }
+
+        Ok((baseline_version_id, upload_version_response.id))
     }
 
     async fn yank_canary(&mut self) -> Result<()> {

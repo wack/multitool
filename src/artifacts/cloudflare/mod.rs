@@ -7,7 +7,7 @@ use miette::{IntoDiagnostic, Result};
 use tokio::{fs::File, io::BufReader};
 use tokio_util::io::ReaderStream;
 
-pub(crate) use manifest::CloudflareManifest;
+pub(crate) use manifest::CloudflareFileManifest;
 
 mod manifest;
 

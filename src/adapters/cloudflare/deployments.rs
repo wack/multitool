@@ -38,6 +38,111 @@ pub struct Deployment {
     pub versions: Vec<DeploymentVersion>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Binding {
+    Ai {
+        name: String,
+    },
+    AnalyticsEngine {
+        dataset: String,
+        name: String,
+    },
+    Assets {
+        name: String,
+    },
+    Browser {
+        name: String,
+    },
+    D1 {
+        id: String,
+        name: String,
+    },
+    DispatchNamespace {
+        name: String,
+        namespace: String,
+        outbound: Option<(Vec<String>, (String, String))>,
+    },
+    DurableObjectNamespace {
+        name: String,
+        class_name: Option<String>,
+        environment: Option<String>,
+        script_name: Option<String>,
+    },
+    Hyperdrive {
+        id: String,
+        name: String,
+    },
+    Json {
+        json: String,
+        name: String,
+    },
+    KvNamespace {
+        name: String,
+        namespace_id: String,
+    },
+    MtlsCertificate {
+        certificate_id: String,
+        name: String,
+    },
+    // PlainText is used for Environment variables in the Wrangler file
+    PlainText {
+        name: String,
+        text: String,
+    },
+    Pipelines {
+        name: String,
+        pipeline: String,
+    },
+    Queue {
+        name: String,
+        queue_name: String,
+    },
+    R2Bucket {
+        bucket_name: String,
+        name: String,
+    },
+    SecretText {
+        name: String,
+        text: String,
+    },
+    Service {
+        environment: String,
+        name: String,
+        service: String,
+    },
+    TailConsumer {
+        name: String,
+        service: String,
+    },
+    Vectorize {
+        index_name: String,
+        name: String,
+    },
+    VersionMetadata {
+        name: String,
+    },
+    SecretsStoreSecret {
+        name: String,
+        secret_name: String,
+        store_id: String,
+    },
+    SecretKey {
+        algorithm: String,
+        format: String,
+        name: String,
+        usages: Vec<String>,
+        key_base64: Option<String>,
+        key_jwk: Option<String>,
+    },
+    Workflow {
+        name: String,
+        workflow_name: String,
+        class_name: Option<String>,
+        script_name: Option<String>,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use crate::adapters::cloudflare::responses::CloudflareResponse;
