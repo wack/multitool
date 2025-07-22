@@ -495,7 +495,7 @@ artifact-path = "my_code.zip"
 application = "multitool"
 
 [config.cloudflare]
-artifact-path = "src"
+project-dir = "src"
 "#;
         let observed: Manifest = toml::from_str(RAW_MANIFEST).expect("manifest not parsable");
 
