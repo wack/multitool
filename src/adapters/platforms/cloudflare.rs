@@ -2,10 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     Shutdownable,
-    adapters::{
-        backend::PlatformConfig,
-        cloudflare::{CloudflareClient as Client, uploads::UploadVersionRequest},
-    },
+    adapters::{backend::PlatformConfig, cloudflare::CloudflareClient as Client},
     artifacts::CloudflareFileManifest,
     fs::wrangler::Wrangler,
     subsystems::ShutdownResult,
@@ -20,15 +17,15 @@ use tracing::info;
 #[derive(Getters)]
 pub struct CloudflareWorkerPlatform {
     client: Client,
-    artifact_path: PathBuf,
+    project_dir: PathBuf,
     wrangler: Wrangler,
 }
 
 impl CloudflareWorkerPlatform {
-    pub fn new(client: Client, artifact_path: PathBuf, wrangler: Wrangler) -> Self {
+    pub fn new(client: Client, project_dir: PathBuf, wrangler: Wrangler) -> Self {
         Self {
             client,
-            artifact_path,
+            project_dir,
             wrangler,
         }
     }
@@ -48,24 +45,24 @@ impl Platform for CloudflareWorkerPlatform {
         let baseline_version_id = self.client.get_current_version().await?;
 
         // 1. First, we create a manifest of the files to upload
-        let file_manifest = CloudflareFileManifest::new(&self.artifact_path).await?;
-
-        // Convert our wrangler file to the Request format Cloudflare expects
-        let request = UploadVersionRequest::from(self.wrangler.clone());
+        let file_manifest = CloudflareFileManifest::new(&self.project_dir).await?;
 
         // 2. Upload the files and any potentially new metadata from the Wrangler file
-        let upload_version_request = self.client.upload_version(&file_manifest, &request).await?;
+        let upload_version_response = self
+            .client
+            .upload_version(&file_manifest, self.wrangler.clone())
+            .await?;
 
         // 3. After the files have been uploaded, we need to update the routes, if there are any listed in the wrangler file
         // NOTE: we do this after the upload since there are more things that could go wrong with the upload
         // and we don't want to update the routes if the upload fails.
         if self.wrangler.routes().is_some() {
             self.client
-                .sync_routes(self.wrangler.routes().as_ref().unwrap().clone())
+                .update_routes(self.wrangler.routes().as_ref().unwrap().clone())
                 .await?;
         }
 
-        Ok((baseline_version_id, upload_version_request.id))
+        Ok((baseline_version_id, upload_version_response.id))
     }
 
     async fn yank_canary(&mut self) -> Result<()> {

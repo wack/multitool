@@ -17,7 +17,7 @@ use responses::CloudflareResponse;
 use routes::{CloudflareRoute, CreateCloudflareRouteRequest, UpdateCloudflareRouteRequest};
 
 use crate::artifacts::CloudflareFileManifest;
-use crate::fs::wrangler::Route;
+use crate::fs::wrangler::{Route, Wrangler};
 
 static URL: OnceLock<Url> = OnceLock::new();
 
@@ -168,7 +168,7 @@ impl CloudflareClient {
     pub async fn upload_version(
         &self,
         manifest: &CloudflareFileManifest,
-        request: &UploadVersionRequest,
+        wrangler: Wrangler,
     ) -> Result<UploadVersionResponse> {
         debug!("Uploading Worker version");
         let account_id = &self.account_id;
@@ -176,9 +176,12 @@ impl CloudflareClient {
         let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/versions");
         let url = Self::url_with_path(&path);
 
+        // Convert our wrangler file to the Request format Cloudflare expects
+        let upload_version_request = UploadVersionRequest::from(wrangler);
+
         let mut request = multipart::Form::new().text(
             "metadata",
-            serde_json::to_string(&request).into_diagnostic()?,
+            serde_json::to_string(&upload_version_request).into_diagnostic()?,
         );
 
         for file_path in manifest.files() {
@@ -391,21 +394,11 @@ impl CloudflareClient {
         Ok(count)
     }
 
-    // Syncs the routes from wrangler.toml with Cloudflare
-    pub async fn sync_routes(&self, wrangler_routes: Vec<Route>) -> Result<()> {
-        debug!("Syncing routes with Cloudflare");
+    // Updates the routes from wrangler.toml with Cloudflare
+    pub async fn update_routes(&self, wrangler_routes: Vec<Route>) -> Result<()> {
+        debug!("Updating routes in Cloudflare");
 
-        // Group routes by zone_id so we can process them in batches since
-        // each route could have a different zone_id
-        let mut routes_by_zone: HashMap<String, Vec<&Route>> = HashMap::new();
-        for route in &wrangler_routes {
-            if let Some(zone_id) = &route.zone_id {
-                routes_by_zone
-                    .entry(zone_id.clone())
-                    .or_default()
-                    .push(route);
-            }
-        }
+        let routes_by_zone = group_routes(&wrangler_routes);
 
         // For each zone, compare the current routes with the wrangler routes
         // and update, create, or delete routes as necessary
@@ -441,7 +434,7 @@ impl CloudflareClient {
             }
         }
 
-        debug!("Routes synced successfully!");
+        debug!("Routes updated successfully!");
         Ok(())
     }
 
@@ -580,8 +573,83 @@ impl CloudflareClient {
     }
 }
 
+/// Groups routes by zone_id so they can be processed in batches since
+/// each route could have a different zone_id
+fn group_routes(wrangler_routes: &[Route]) -> HashMap<String, Vec<&Route>> {
+    let mut routes_by_zone: HashMap<String, Vec<&Route>> = HashMap::new();
+    for route in wrangler_routes {
+        if let Some(zone_id) = &route.zone_id {
+            routes_by_zone
+                .entry(zone_id.clone())
+                .or_default()
+                .push(route);
+        }
+    }
+    routes_by_zone
+}
+
 pub mod deployments;
 mod metrics;
 mod responses;
 mod routes;
 pub mod uploads;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::wrangler::Route;
+
+    #[test]
+    fn test_group_routes_empty() {
+        let routes = vec![];
+        let result = group_routes(&routes);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_group_routes_single_zone() {
+        let routes = vec![
+            Route {
+                pattern: "example.com/*".to_string(),
+                zone_id: Some("zone1".to_string()),
+            },
+            Route {
+                pattern: "example.com/api/*".to_string(),
+                zone_id: Some("zone1".to_string()),
+            },
+        ];
+        let result = group_routes(&routes);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains_key("zone1"));
+        assert_eq!(result["zone1"].len(), 2);
+        assert_eq!(result["zone1"][0].pattern, "example.com/*");
+        assert_eq!(result["zone1"][1].pattern, "example.com/api/*");
+    }
+
+    #[test]
+    fn test_group_routes_multiple_zones() {
+        let routes = vec![
+            Route {
+                pattern: "example.com/*".to_string(),
+                zone_id: Some("zone1".to_string()),
+            },
+            Route {
+                pattern: "test.com/*".to_string(),
+                zone_id: Some("zone2".to_string()),
+            },
+            Route {
+                pattern: "example.com/api/*".to_string(),
+                zone_id: Some("zone1".to_string()),
+            },
+        ];
+        let result = group_routes(&routes);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("zone1"));
+        assert!(result.contains_key("zone2"));
+        assert_eq!(result["zone1"].len(), 2);
+        assert_eq!(result["zone2"].len(), 1);
+        assert_eq!(result["zone1"][0].pattern, "example.com/*");
+        assert_eq!(result["zone1"][1].pattern, "example.com/api/*");
+        assert_eq!(result["zone2"][0].pattern, "test.com/*");
+    }
+}

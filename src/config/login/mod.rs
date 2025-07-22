@@ -6,10 +6,10 @@ use crate::MULTITOOL_ORIGIN;
 #[derive(Args, Getters, Clone)]
 pub struct LoginSubcommand {
     /// The email of the account
-    #[clap(long)]
+    #[arg(short, long, env = "MULTI_EMAIL")]
     email: Option<String>,
     /// The password of the account
-    #[clap(long)]
+    #[arg(short, long, env = "MULTI_PASSWORD")]
     password: Option<String>,
 
     #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]

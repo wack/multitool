@@ -302,13 +302,22 @@ pub struct AwsLambdaConfig {
 }
 
 impl AwsLambdaConfig {
+    fn load_artifact_path(&self, args: &RunSubcommand) -> Result<PathBuf> {
+        if let Some(path) = args.aws_artifact_path() {
+            return Ok(path.to_path_buf());
+        }
+
+        return Ok(PathBuf::from(&self.artifact_path));
+    }
+
     async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
         let region: String = args
             .aws_region()
             .map(ToString::to_string)
             .unwrap_or_else(|| self.region.clone());
 
-        let artifact = LambdaZip::load(self.artifact_path.clone()).await?;
+        let artifact_path = self.load_artifact_path(args)?;
+        let artifact = LambdaZip::load(artifact_path).await?;
 
         let platform = LambdaPlatform::builder()
             .name(self.name.clone())
@@ -325,7 +334,7 @@ impl AwsLambdaConfig {
 #[serde(rename_all = "kebab-case")]
 pub struct CloudflareConfig {
     // NOTE: These fields can override values from the Wrangler file
-    artifact_path: Option<String>,
+    project_dir: Option<String>,
 
     /// We always get this value from the command line.
     #[serde(skip)]
@@ -352,12 +361,12 @@ impl CloudflareConfig {
         Ok(account_id)
     }
 
-    fn load_artifact_path(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<PathBuf> {
-        if let Some(path) = args.artifact_path() {
-            return Ok(path.as_ref().to_path_buf());
+    fn load_project_dir(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<PathBuf> {
+        if let Some(path) = args.cloudflare_project_dir() {
+            return Ok(path.to_path_buf());
         }
 
-        if let Some(path) = &self.artifact_path {
+        if let Some(path) = &self.project_dir {
             return Ok(PathBuf::from(path));
         }
 
@@ -400,12 +409,12 @@ impl CloudflareConfig {
         // First, let's check and make sure we have an API token.
         let api_token = self.load_api_token(args)?;
         let account_id = self.load_account_id(args, &wrangler)?;
-        let artifact_path = self.load_artifact_path(&fs, args)?;
+        let project_dir = self.load_project_dir(&fs, args)?;
         let client = CloudflareClient::new(account_id, wrangler.name().clone(), &api_token);
 
         Ok(Box::new(CloudflareWorkerPlatform::new(
             client,
-            artifact_path,
+            project_dir,
             wrangler,
         )))
     }
@@ -501,14 +510,14 @@ artifact-path = "src"
                 .clone()
                 .expect("Cloudflare config should be present"),
             CloudflareConfig {
-                artifact_path: Some(_),
+                project_dir: Some(_),
                 api_token: None,
             }
         );
 
         // Check if values were set correctly
         if let Some(cloudflare) = observed.config.cloudflare {
-            assert_eq!(cloudflare.artifact_path, Some("src".to_string()));
+            assert_eq!(cloudflare.project_dir, Some("src".to_string()));
         } else {
             panic!("Expected CloudflareConfig variant");
         }
