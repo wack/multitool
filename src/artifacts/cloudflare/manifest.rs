@@ -11,7 +11,6 @@ use crate::manifest::manifest_filenames;
 #[derive(Getters, Clone, Debug)]
 pub(crate) struct CloudflareFileManifest {
     files: Vec<PathBuf>,
-    root: PathBuf,
 }
 
 // TODO: Load in the `excludes` section of the Wranger.toml file and respect those.
@@ -36,6 +35,7 @@ impl CloudflareFileManifest {
         let manifest_filenames = manifest_filenames();
 
         // Build the file tree walker.
+        // let walker = walk_builder(directory.clone());
         let walker = WalkBuilder::new(directory.clone())
             .standard_filters(false)
             .build();
@@ -65,9 +65,6 @@ impl CloudflareFileManifest {
             "Finished building Cloudflare manifest with {} files",
             files.len()
         );
-        Ok(Self {
-            files,
-            root: directory,
-        })
+        Ok(Self { files })
     }
 }
