@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use derive_getters::Getters;
-use ignore::WalkBuilder;
+use ignore::{
+    Walk, WalkBuilder,
+    types::{Types, TypesBuilder},
+};
 use miette::{IntoDiagnostic as _, Result, miette};
 
 use tracing::debug;
@@ -11,10 +14,9 @@ use crate::manifest::manifest_filenames;
 #[derive(Getters, Clone, Debug)]
 pub(crate) struct CloudflareFileManifest {
     files: Vec<PathBuf>,
-    root: PathBuf,
 }
 
-// TODO: Load in the `excludes` section of the Wranger.toml file and respect those.
+// TODO: Load in the `excludes` section of the Wranger file and respect those.
 // TODO: Determine if we should upload everything in `node_modules` or include
 //       that as part of the build step.
 impl CloudflareFileManifest {
@@ -36,9 +38,7 @@ impl CloudflareFileManifest {
         let manifest_filenames = manifest_filenames();
 
         // Build the file tree walker.
-        let walker = WalkBuilder::new(directory.clone())
-            .standard_filters(false)
-            .build();
+        let walker = walk_builder(directory.clone());
 
         for entry in walker {
             debug!("Processing entry: {:?}", entry.clone().unwrap().path());
@@ -58,6 +58,18 @@ impl CloudflareFileManifest {
                 }
             }
 
+            // If the path has node_modules in it, remove it from the path.
+            if let Some(node_modules) = file_path.parent().and_then(|p| p.file_name()) {
+                if node_modules == "node_modules" {
+                    if let Some(parent) = file_path.parent() {
+                        let new_path = parent.join(file_path.file_name().unwrap());
+                        debug!("Removing node_modules from path: {:?}", new_path);
+                        files.push(new_path);
+                    }
+                    continue;
+                }
+            }
+
             files.push(file_path);
         }
 
@@ -65,9 +77,25 @@ impl CloudflareFileManifest {
             "Finished building Cloudflare manifest with {} files",
             files.len()
         );
-        Ok(Self {
-            files,
-            root: directory,
-        })
+        Ok(Self { files })
     }
+}
+
+/// Build a file loader that only loads js and ts files.
+fn types_matches() -> Types {
+    let mut builder = TypesBuilder::new();
+    builder.add_defaults();
+    builder.select("ts").select("js");
+    builder.build().unwrap()
+}
+
+/// Builder the Walker that walks the file tree looking for files.
+/// It obeys the type filters we created.
+fn walk_builder(dir: PathBuf) -> Walk {
+    let types = types_matches();
+    WalkBuilder::new(dir)
+        .standard_filters(true)
+        .parents(false)
+        .types(types)
+        .build()
 }

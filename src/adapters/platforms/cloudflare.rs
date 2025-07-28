@@ -44,16 +44,16 @@ impl Platform for CloudflareWorkerPlatform {
         info!("Deploying Worker!");
         let baseline_version_id = self.client.get_current_version().await?;
 
-        // 1. First, we create a manifest of the files to upload
+        // First, we process create a manifest of the files to upload
         let file_manifest = CloudflareFileManifest::new(&self.project_dir).await?;
 
-        // 2. Upload the files and any potentially new metadata from the Wrangler file
+        // Next, upload the files and any potentially new metadata from the Wrangler file
         let upload_version_response = self
             .client
             .upload_version(&file_manifest, self.wrangler.clone())
             .await?;
 
-        // 3. After the files have been uploaded, we need to update the routes, if there are any listed in the wrangler file
+        // Finally, after the files have been uploaded, we need to update the routes, if there are any listed in the wrangler file
         // NOTE: we do this after the upload since there are more things that could go wrong with the upload
         // and we don't want to update the routes if the upload fails.
         if self.wrangler.routes().is_some() {

@@ -4,6 +4,8 @@ use crate::fs::{FileSystem, SessionFile, application_manifest};
 use crate::manifest::Manifest;
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 use crate::{ControllerSubsystem, adapters::BackendClient, config::RunSubcommand};
+use aws_smithy_runtime_api::client::orchestrator::Metadata;
+use aws_smithy_types::error::metadata;
 use miette::{Context, Diagnostic, Result, miette};
 use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
@@ -156,9 +158,16 @@ impl Run {
 
             let monitor = self.load_monitor(&self.manifest, &ingress).await?;
             // Create a new rollout.
-            let metadata = self
-                .create_rollout(workspace.id, application.id, &platform, &ingress, &monitor)
-                .await?;
+            // TODO: UNCOMMENT THIS
+            // let metadata = self
+            //     .create_rollout(workspace.id, application.id, &platform, &ingress, &monitor)
+            //     .await?;
+
+            let metadata = RolloutMetadata::builder()
+                .workspace_id(1)
+                .application_id(1)
+                .rollout_id(1)
+                .build();
 
             // Build the ControllerSubsystem using the boxed objects.
             debug!("Building controller...");

@@ -5,8 +5,18 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::multipart::Part;
 use reqwest::{Client, multipart};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::OnceLock;
-use tokio::fs::read;
+use swc_common::comments::SingleThreadedComments;
+use swc_common::errors::EmitterWriter;
+use swc_common::{GLOBALS, Mark, SourceMap, errors::Handler, sync::Lrc};
+use swc_ecma_codegen::to_code_default;
+use swc_ecma_parser::{Lexer, Parser, StringInput, Syntax, TsSyntax};
+use swc_ecma_transforms_base::{fixer::fixer, hygiene::hygiene, resolver};
+use swc_ecma_transforms_module::path::NodeImportResolver;
+use swc_ecma_transforms_module::rewriter::import_rewriter;
+use swc_ecma_transforms_typescript::strip;
+
 use tracing::{debug, error};
 use uploads::{UploadVersionRequest, UploadVersionResponse};
 use url::Url;
@@ -185,21 +195,23 @@ impl CloudflareClient {
         );
 
         for file_path in manifest.files() {
-            let file_bytes = read(file_path).await.into_diagnostic()?;
+            // Process JavaScript/TypeScript files through SWC transformation
+            let file_bytes = process_file(file_path)?;
+
             let mut file_part = Part::bytes(file_bytes);
 
             // Ensure we keep the whole file path (with the root stripped) as the name, not just the individual file name
             let file_path_str = file_path
-                .strip_prefix(&manifest.root())
-                .expect("Must be able to strip prefix")
                 .to_str()
-                .unwrap()
+                .expect("Must be able to get the file path")
                 .to_string();
             file_part = file_part.file_name(file_path_str.clone());
             file_part = file_part.mime_str("application/javascript+module").unwrap();
-            request = request.part(file_path_str, file_part);
+            request = request.part(file_path_str.clone(), file_part);
+            debug!("Added file to upload request: {}", file_path_str);
         }
 
+        debug!("Making upload files request");
         let response = self
             .client
             .post(url)
@@ -586,6 +598,113 @@ fn group_routes(wrangler_routes: &[Route]) -> HashMap<String, Vec<&Route>> {
         }
     }
     routes_by_zone
+}
+
+/// Lexer are scoped by this lifetime because the string they're
+/// lexing has to live at least as long as the lexer. This is to
+/// allow the lexer to borrow the contents of the file without
+/// having to copy them.
+fn build_lexer<'a>(input: StringInput<'a>, file_path: &Path) -> Lexer<'a> {
+    let syntax = determine_syntax(file_path);
+    Lexer::new(syntax, Default::default(), input, None)
+}
+
+/// Determines the appropriate syntax parser based on file extension
+fn determine_syntax(file_path: &Path) -> Syntax {
+    match file_path.extension().and_then(|ext| ext.to_str()) {
+        Some("ts") | Some("tsx") | Some("mts") | Some("cts") => {
+            Syntax::Typescript(TsSyntax::default())
+        }
+        Some("js") | Some("jsx") | Some("mjs") | Some("cjs") => Syntax::Es(Default::default()),
+        _ => {
+            // Default to JavaScript for unknown extensions or files in node_modules
+            if file_path.to_string_lossy().contains("node_modules") {
+                Syntax::Es(Default::default())
+            } else {
+                // For project files, default to TypeScript
+                Syntax::Typescript(TsSyntax::default())
+            }
+        }
+    }
+}
+
+/// Processes JavaScript and TypeScript files by lexing, parsing, and transforming them.
+/// This function loads the source code, parses it into an AST, applies transformations
+/// (removes TypeScript types, fixes hygiene, adds parentheses), and returns the transformed code as bytes.
+fn process_file(file: &Path) -> Result<Vec<u8>> {
+    debug!("Processing file: {:?}", file);
+    // Lrc is just SWC's wrapper around Rust's standard Rc/Arc type.
+    // They swap between the two based on whether you enable parallel compilation or not.
+    let cm: Lrc<SourceMap> = Default::default();
+    let handler = Handler::with_emitter(
+        true,
+        false,
+        Box::new(EmitterWriter::new(
+            Box::new(std::io::stderr()),
+            Some(cm.clone()),
+            false,
+            true,
+        )),
+    );
+
+    // Load the source code as a "file" from disk.
+    let source_file = cm
+        .load_file(file)
+        .expect("File must exist and be readable.");
+    // Read it into a type that can be lexed/parsed. Basically
+    // an in-memory buffer of bytes.
+    let source_input = StringInput::from(&*source_file);
+    // Builder a lexer and a parser for the file.
+    let lexer = build_lexer(source_input, file);
+    let mut parser = Parser::new_from(lexer);
+
+    // Dump any errors.
+    for e in parser.take_errors() {
+        e.into_diagnostic(&handler).emit();
+    }
+
+    // Parse the source code into a module.
+    let module = parser
+        .parse_program()
+        .map_err(|e| e.into_diagnostic(&handler).emit())
+        .expect("failed to parse module.");
+
+    let comments = SingleThreadedComments::default();
+
+    // Finally, transform the source code.
+    // We have to enter this bizarre "globals" context to save
+    // span information about this file. This is just some weirdness
+    // in the SWC API from what I can tell. I'm sure there's a more
+    // hygenic way to do this, but this is what was in the example.
+    let globals = Default::default();
+    let transformed_code = GLOBALS.set(&globals, || {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        let res = resolver(unresolved_mark, top_level_mark, true);
+        let res2 = resolver(unresolved_mark, top_level_mark, true);
+
+        // Conduct identifier scope analysis
+        let module = module.apply(res);
+
+        let module = module.apply(import_rewriter(
+            "node_modules",
+            NodeImportResolver::with_config(res2, None),
+        ));
+
+        // Remove typescript types
+        let module = module.apply(strip(unresolved_mark, top_level_mark));
+
+        // Fix up any identifiers with the same name, but different contexts
+        let module = module.apply(hygiene());
+
+        // Ensure that we have enough parenthesis.
+        let program = module.apply(fixer(Some(&comments)));
+
+        to_code_default(cm.clone(), Some(&comments), &program)
+    });
+
+    Ok(transformed_code.into_bytes())
 }
 
 pub mod deployments;
