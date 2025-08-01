@@ -188,12 +188,10 @@ impl CloudflareClient {
             let file_bytes = read(file_path).await.into_diagnostic()?;
             let mut file_part = Part::bytes(file_bytes);
 
-            // Ensure we keep the whole file path (with the root stripped) as the name, not just the individual file name
+            // Ensure we keep the whole file path as the name, not just the individual file name
             let file_path_str = file_path
-                .strip_prefix(&manifest.root())
-                .expect("Must be able to strip prefix")
                 .to_str()
-                .unwrap()
+                .expect("Must be able to get the file path")
                 .to_string();
             file_part = file_part.file_name(file_path_str.clone());
             file_part = file_part.mime_str("application/javascript+module").unwrap();
