@@ -163,22 +163,11 @@ impl CloudflareClient {
     //     Ok(upload_response.result)
     // }
 
-    // Corresponds to:
-    // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/create/
-    pub async fn upload_version(
-        &self,
+    /// Helper function to build multipart form with files from the manifest
+    async fn build_multipart_file_request(
         manifest: &CloudflareFileManifest,
-        wrangler: Wrangler,
-    ) -> Result<UploadVersionResponse> {
-        debug!("Uploading Worker version");
-        let account_id = &self.account_id;
-        let worker_name = &self.worker_name;
-        let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/versions");
-        let url = Self::url_with_path(&path);
-
-        // Convert our wrangler file to the Request format Cloudflare expects
-        let upload_version_request = UploadVersionRequest::from(wrangler);
-
+        upload_version_request: UploadVersionRequest,
+    ) -> Result<multipart::Form> {
         let mut request = multipart::Form::new().text(
             "metadata",
             serde_json::to_string(&upload_version_request).into_diagnostic()?,
@@ -197,6 +186,27 @@ impl CloudflareClient {
             file_part = file_part.mime_str("application/javascript+module").unwrap();
             request = request.part(file_path_str, file_part);
         }
+
+        Ok(request)
+    }
+
+    // Corresponds to:
+    // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/create/
+    pub async fn upload_version(
+        &self,
+        manifest: &CloudflareFileManifest,
+        wrangler: Wrangler,
+    ) -> Result<UploadVersionResponse> {
+        debug!("Uploading Worker version");
+        let account_id = &self.account_id;
+        let worker_name = &self.worker_name;
+        let path = format!("accounts/{account_id}/workers/scripts/{worker_name}/versions");
+        let url = Self::url_with_path(&path);
+
+        // Convert our wrangler file to the Request format Cloudflare expects
+        let upload_version_request = UploadVersionRequest::from(wrangler);
+
+        let request = Self::build_multipart_file_request(manifest, upload_version_request).await?;
 
         let response = self
             .client
@@ -596,6 +606,7 @@ pub mod uploads;
 mod tests {
     use super::*;
     use crate::fs::wrangler::Route;
+    use tokio::{fs::File, io::AsyncWriteExt};
 
     #[test]
     fn test_group_routes_empty() {
@@ -649,5 +660,310 @@ mod tests {
         assert_eq!(result["zone1"][0].pattern, "example.com/*");
         assert_eq!(result["zone1"][1].pattern, "example.com/api/*");
         assert_eq!(result["zone2"][0].pattern, "test.com/*");
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_file_request_empty_manifest() {
+        let temp_dir = std::env::temp_dir().join("test_multipart_empty");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create an empty directory - this should result in an error when creating the manifest
+        let manifest_result = CloudflareFileManifest::new(&temp_dir).await;
+        assert!(
+            manifest_result.is_err(),
+            "Expected error for empty directory, but got success"
+        );
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_file_request_single_file() {
+        let temp_dir = std::env::temp_dir().join("test_multipart_single");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create a test file
+        let test_file_path = temp_dir.join("index.js");
+        let mut file = File::create(&test_file_path)
+            .await
+            .expect("Failed to create test file");
+        file.write_all(b"export default { async fetch() { return new Response('Hello'); } };")
+            .await
+            .expect("Failed to write test content");
+
+        let manifest = CloudflareFileManifest::new(&temp_dir)
+            .await
+            .expect("Failed to create manifest");
+
+        let upload_request = UploadVersionRequest::builder()
+            .main_module("index.js".to_string())
+            .compatibility_date("2023-01-01".to_string())
+            .build();
+
+        let result =
+            CloudflareClient::build_multipart_file_request(&manifest, upload_request).await;
+        assert!(result.is_ok());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_file_request_multiple_files() {
+        let temp_dir = std::env::temp_dir().join("test_multipart_multiple");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create multiple test files
+        let files = vec![
+            (
+                "index.js",
+                b"export default { async fetch() { return new Response('Hello'); } };" as &[u8],
+            ),
+            (
+                "utils.js",
+                b"export function helper() { return 'utility'; }",
+            ),
+            ("config.json", b"{\"key\": \"value\"}"),
+        ];
+
+        for (filename, content) in files {
+            let file_path = temp_dir.join(filename);
+            let mut file = File::create(&file_path)
+                .await
+                .expect("Failed to create test file");
+            file.write_all(content)
+                .await
+                .expect("Failed to write test content");
+        }
+
+        let manifest = CloudflareFileManifest::new(&temp_dir)
+            .await
+            .expect("Failed to create manifest");
+
+        let upload_request = UploadVersionRequest::builder()
+            .main_module("index.js".to_string())
+            .compatibility_date("2023-01-01".to_string())
+            .compatibility_flags(vec!["nodejs_compat".to_string()])
+            .build();
+
+        let result =
+            CloudflareClient::build_multipart_file_request(&manifest, upload_request).await;
+        assert!(result.is_ok());
+
+        // Verify that all files are included
+        assert_eq!(manifest.files().len(), 3);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_file_request_nonexistent_file() {
+        let temp_dir = std::env::temp_dir().join("test_multipart_nonexistent");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create a test file first, then create manifest, then delete the file to simulate nonexistent file scenario
+        let test_file_path = temp_dir.join("temp.js");
+        let mut file = File::create(&test_file_path)
+            .await
+            .expect("Failed to create test file");
+        file.write_all(b"// temporary file")
+            .await
+            .expect("Failed to write test content");
+
+        let manifest = CloudflareFileManifest::new(&temp_dir)
+            .await
+            .expect("Failed to create manifest");
+
+        // Now delete the file to simulate a nonexistent file scenario
+        std::fs::remove_file(&test_file_path).expect("Failed to remove test file");
+
+        let upload_request = UploadVersionRequest::builder()
+            .main_module("index.js".to_string())
+            .build();
+
+        let result =
+            CloudflareClient::build_multipart_file_request(&manifest, upload_request).await;
+        assert!(result.is_err(), "Expected error for nonexistent file");
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_file_request_with_nested_directories() {
+        let temp_dir = std::env::temp_dir().join("test_multipart_nested");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create nested directory structure
+        let nested_dir = temp_dir.join("src").join("components");
+        let _ = std::fs::create_dir_all(&nested_dir);
+
+        let files = vec![
+            (temp_dir.join("index.js"), b"// main entry point" as &[u8]),
+            (nested_dir.join("component.js"), b"// nested component"),
+        ];
+
+        for (file_path, content) in files {
+            let mut file = File::create(&file_path)
+                .await
+                .expect("Failed to create test file");
+            file.write_all(content)
+                .await
+                .expect("Failed to write test content");
+        }
+
+        let manifest = CloudflareFileManifest::new(&temp_dir)
+            .await
+            .expect("Failed to create manifest");
+
+        let upload_request = UploadVersionRequest::builder()
+            .main_module("index.js".to_string())
+            .build();
+
+        let result =
+            CloudflareClient::build_multipart_file_request(&manifest, upload_request).await;
+        assert!(result.is_ok());
+
+        // Verify that both files are included (main and nested)
+        assert_eq!(manifest.files().len(), 2);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_file_request_metadata_serialization() {
+        let temp_dir = std::env::temp_dir().join("test_multipart_metadata");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create a simple test file
+        let test_file_path = temp_dir.join("worker.js");
+        let mut file = File::create(&test_file_path)
+            .await
+            .expect("Failed to create test file");
+        file.write_all(b"export default { async fetch() { return new Response('Test'); } };")
+            .await
+            .expect("Failed to write test content");
+
+        let manifest = CloudflareFileManifest::new(&temp_dir)
+            .await
+            .expect("Failed to create manifest");
+
+        // Test with a complex upload request to ensure metadata serialization works
+        let upload_request = UploadVersionRequest::builder()
+            .main_module("worker.js".to_string())
+            .compatibility_date("2023-05-15".to_string())
+            .compatibility_flags(vec![
+                "nodejs_compat".to_string(),
+                "experimental".to_string(),
+            ])
+            .bindings(vec![
+                // Can't easily construct bindings here without more setup,
+                // but this tests the structure
+            ])
+            .build();
+
+        let result =
+            CloudflareClient::build_multipart_file_request(&manifest, upload_request).await;
+        assert!(result.is_ok());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_file_request_path_with_special_chars() {
+        let temp_dir = std::env::temp_dir().join("test_multipart_special_chars");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create files with names that contain special characters (within filesystem limits)
+        let files = vec![
+            ("file-with-dashes.js", b"// file with dashes" as &[u8]),
+            ("file_with_underscores.js", b"// file with underscores"),
+            ("file.with.dots.js", b"// file with dots"),
+        ];
+
+        for (filename, content) in files {
+            let file_path = temp_dir.join(filename);
+            let mut file = File::create(&file_path)
+                .await
+                .expect("Failed to create test file");
+            file.write_all(content)
+                .await
+                .expect("Failed to write test content");
+        }
+
+        let manifest = CloudflareFileManifest::new(&temp_dir)
+            .await
+            .expect("Failed to create manifest");
+
+        let upload_request = UploadVersionRequest::builder()
+            .main_module("file-with-dashes.js".to_string())
+            .build();
+
+        let result =
+            CloudflareClient::build_multipart_file_request(&manifest, upload_request).await;
+        assert!(result.is_ok());
+
+        // Verify that all 3 files are included
+        assert_eq!(manifest.files().len(), 3);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cloudflare_manifest_empty_directory_error() {
+        let temp_dir = std::env::temp_dir().join("test_empty_manifest_error");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Try to create a manifest from an empty directory - should fail
+        let result = CloudflareFileManifest::new(&temp_dir).await;
+        assert!(result.is_err(), "Expected error for empty directory");
+
+        let error_message = format!("{}", result.unwrap_err());
+        assert!(
+            error_message.contains("No files found"),
+            "Error message should mention no files found"
+        );
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cloudflare_manifest_excludes_manifest_files() {
+        let temp_dir = std::env::temp_dir().join("test_manifest_excludes");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Create both regular files and manifest files
+        let files = vec![
+            ("index.js", b"// worker code" as &[u8]),
+            ("utils.js", b"// utility functions" as &[u8]),
+            ("MultiTool.toml", b"# manifest file" as &[u8]),
+            ("wrangler.toml", b"# wrangler config" as &[u8]),
+        ];
+
+        for (filename, content) in files {
+            let file_path = temp_dir.join(filename);
+            let mut file = File::create(&file_path)
+                .await
+                .expect("Failed to create test file");
+            file.write_all(content)
+                .await
+                .expect("Failed to write test content");
+        }
+
+        let manifest = CloudflareFileManifest::new(&temp_dir)
+            .await
+            .expect("Failed to create manifest");
+
+        // Should exclude MultiTool manfiest file
+        assert_eq!(manifest.files().len(), 3);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

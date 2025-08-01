@@ -6,12 +6,11 @@ use miette::{IntoDiagnostic as _, Result, miette};
 
 use tracing::debug;
 
-use crate::manifest::manifest_filenames;
+use crate::fs::manifest::manifest_filenames;
 
 #[derive(Getters, Clone, Debug)]
 pub(crate) struct CloudflareFileManifest {
     files: Vec<PathBuf>,
-    root: PathBuf,
 }
 
 // TODO: Load in the `excludes` section of the Wranger.toml file and respect those.
@@ -65,9 +64,15 @@ impl CloudflareFileManifest {
             "Finished building Cloudflare manifest with {} files",
             files.len()
         );
-        Ok(Self {
-            files,
-            root: directory,
-        })
+
+        // A manifest with no files should be an error
+        if files.is_empty() {
+            return Err(miette!(format!(
+                "No files found in directory `{}` to upload",
+                directory.display()
+            )));
+        }
+
+        Ok(Self { files })
     }
 }
