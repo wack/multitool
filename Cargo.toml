@@ -72,11 +72,18 @@ swc_ecma_codegen = "16.0.0"
 swc_ecma_parser = "22.0.0"
 swc_ecma_transforms_base = "23.0.0"
 swc_ecma_transforms_typescript = "25.0.0"
-swc_ecma_transforms_module = "24.0.0"
+swc_bundler = "27.0.0"
+swc_atoms = "7.0.0"
 use = "0.0.1-pre.0"
 ignore.workspace = true
 base64.workspace = true
 tokio-util.workspace = true
+swc_ecma_ast = "14.0.0"
+swc_ecma_loader = { version = "14.0.0", features = ["node"] }
+anyhow = "1.0.98"
+swc_ecma_visit = "14.0.0"
+swc_core = { version = "34.0.3", features = ["__ecma", "__ecma_loader"] }
+rustc-hash = "2.1.1"
 
 
 [workspace.dependencies]

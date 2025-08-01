@@ -58,18 +58,6 @@ impl CloudflareFileManifest {
                 }
             }
 
-            // If the path has node_modules in it, remove it from the path.
-            if let Some(node_modules) = file_path.parent().and_then(|p| p.file_name()) {
-                if node_modules == "node_modules" {
-                    if let Some(parent) = file_path.parent() {
-                        let new_path = parent.join(file_path.file_name().unwrap());
-                        debug!("Removing node_modules from path: {:?}", new_path);
-                        files.push(new_path);
-                    }
-                    continue;
-                }
-            }
-
             files.push(file_path);
         }
 

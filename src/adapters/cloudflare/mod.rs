@@ -1,22 +1,22 @@
+use anyhow::{Context, Error, anyhow};
 use chrono::DateTime;
 use derive_getters::Getters;
 use miette::{IntoDiagnostic, Result, miette};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::multipart::Part;
 use reqwest::{Client, multipart};
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path;
 use std::sync::OnceLock;
-use swc_common::comments::SingleThreadedComments;
-use swc_common::errors::EmitterWriter;
-use swc_common::{GLOBALS, Mark, SourceMap, errors::Handler, sync::Lrc};
-use swc_ecma_codegen::to_code_default;
-use swc_ecma_parser::{Lexer, Parser, StringInput, Syntax, TsSyntax};
-use swc_ecma_transforms_base::{fixer::fixer, hygiene::hygiene, resolver};
-use swc_ecma_transforms_module::path::NodeImportResolver;
-use swc_ecma_transforms_module::rewriter::import_rewriter;
-use swc_ecma_transforms_typescript::strip;
-
+use swc_bundler::{Bundler, Config, Hook, Load, ModuleData, ModuleRecord};
+use swc_common::{FileName, FilePathMapping, GLOBALS, Globals, SourceMap, Span, sync::Lrc};
+use swc_core::ecma::loader::resolvers::node::NodeModulesResolver;
+use swc_ecma_ast::{EsVersion, KeyValueProp};
+use swc_ecma_codegen::{Emitter, text_writer::JsWriter};
+use swc_ecma_loader::TargetEnv;
+use swc_ecma_parser::parse_file_as_module;
+use swc_ecma_parser::{Syntax, TsSyntax};
 use tracing::{debug, error};
 use uploads::{UploadVersionRequest, UploadVersionResponse};
 use url::Url;
@@ -187,29 +187,21 @@ impl CloudflareClient {
         let url = Self::url_with_path(&path);
 
         // Convert our wrangler file to the Request format Cloudflare expects
-        let upload_version_request = UploadVersionRequest::from(wrangler);
+        let bundled_file = bundle_files(manifest, &wrangler)?;
+        let upload_version_request = UploadVersionRequest::from(wrangler.clone());
 
         let mut request = multipart::Form::new().text(
             "metadata",
             serde_json::to_string(&upload_version_request).into_diagnostic()?,
         );
 
-        for file_path in manifest.files() {
-            // Process JavaScript/TypeScript files through SWC transformation
-            let file_bytes = process_file(file_path)?;
-
-            let mut file_part = Part::bytes(file_bytes);
-
-            // Ensure we keep the whole file path (with the root stripped) as the name, not just the individual file name
-            let file_path_str = file_path
-                .to_str()
-                .expect("Must be able to get the file path")
-                .to_string();
-            file_part = file_part.file_name(file_path_str.clone());
-            file_part = file_part.mime_str("application/javascript+module").unwrap();
-            request = request.part(file_path_str.clone(), file_part);
-            debug!("Added file to upload request: {}", file_path_str);
-        }
+        // Add the bundled file to the upload request
+        let main_file_name = wrangler.main().to_string();
+        let mut file_part = Part::bytes(bundled_file);
+        file_part = file_part.file_name(main_file_name.clone());
+        file_part = file_part.mime_str("application/javascript+module").unwrap();
+        request = request.part(main_file_name.clone(), file_part);
+        debug!("Added bundled file to upload request: {}", main_file_name);
 
         debug!("Making upload files request");
         let response = self
@@ -600,113 +592,214 @@ fn group_routes(wrangler_routes: &[Route]) -> HashMap<String, Vec<&Route>> {
     routes_by_zone
 }
 
-/// Lexer are scoped by this lifetime because the string they're
-/// lexing has to live at least as long as the lexer. This is to
-/// allow the lexer to borrow the contents of the file without
-/// having to copy them.
-fn build_lexer<'a>(input: StringInput<'a>, file_path: &Path) -> Lexer<'a> {
-    let syntax = determine_syntax(file_path);
-    Lexer::new(syntax, Default::default(), input, None)
-}
+// / Determines the appropriate syntax parser based on file extension
+fn determine_syntax_for_file(file: &FileName) -> Syntax {
+    let path_str = match file {
+        FileName::Real(path) => path.to_string_lossy(),
+        FileName::Custom(name) => std::borrow::Cow::Borrowed(name.as_str()),
+        _ => return Syntax::Es(Default::default()), // Default fallback
+    };
 
-/// Determines the appropriate syntax parser based on file extension
-fn determine_syntax(file_path: &Path) -> Syntax {
-    match file_path.extension().and_then(|ext| ext.to_str()) {
-        Some("ts") | Some("tsx") | Some("mts") | Some("cts") => {
-            Syntax::Typescript(TsSyntax::default())
-        }
-        Some("js") | Some("jsx") | Some("mjs") | Some("cjs") => Syntax::Es(Default::default()),
-        _ => {
-            // Default to JavaScript for unknown extensions or files in node_modules
-            if file_path.to_string_lossy().contains("node_modules") {
-                Syntax::Es(Default::default())
-            } else {
-                // For project files, default to TypeScript
-                Syntax::Typescript(TsSyntax::default())
+    // Check extension
+    if let Some(ext_start) = path_str.rfind('.') {
+        let ext = &path_str[ext_start + 1..];
+        match ext {
+            "ts" | "tsx" | "mts" | "cts" => Syntax::Typescript(TsSyntax::default()),
+            "js" | "jsx" | "mjs" | "cjs" => Syntax::Es(Default::default()),
+            _ => {
+                // For unknown extensions, check if it's in node_modules (use JS) or project files (use TS)
+                if path_str.contains("node_modules") {
+                    Syntax::Es(Default::default())
+                } else {
+                    Syntax::Typescript(TsSyntax::default())
+                }
             }
         }
+    } else {
+        // No extension - default based on location
+        if path_str.contains("node_modules") {
+            Syntax::Es(Default::default())
+        } else {
+            Syntax::Typescript(TsSyntax::default())
+        }
     }
 }
 
-/// Processes JavaScript and TypeScript files by lexing, parsing, and transforming them.
-/// This function loads the source code, parses it into an AST, applies transformations
-/// (removes TypeScript types, fixes hygiene, adds parentheses), and returns the transformed code as bytes.
-fn process_file(file: &Path) -> Result<Vec<u8>> {
-    debug!("Processing file: {:?}", file);
-    // Lrc is just SWC's wrapper around Rust's standard Rc/Arc type.
-    // They swap between the two based on whether you enable parallel compilation or not.
-    let cm: Lrc<SourceMap> = Default::default();
-    let handler = Handler::with_emitter(
-        true,
-        false,
-        Box::new(EmitterWriter::new(
-            Box::new(std::io::stderr()),
-            Some(cm.clone()),
-            false,
-            true,
-        )),
+fn bundle_files(manifest: &CloudflareFileManifest, wrangler: &Wrangler) -> Result<Vec<u8>> {
+    let globals = Globals::new();
+    let cm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
+
+    // Build external modules list using SWC's official Node.js built-ins
+    let external_modules = build_external_modules_list();
+
+    GLOBALS.set(&globals, || {
+        let mut bundler = Bundler::new(
+            &globals,
+            cm.clone(),
+            FileSystemLoader { cm: cm.clone() },
+            NodeModulesResolver::new(TargetEnv::Node, FxHashMap::default(), false),
+            Config {
+                require: true,
+                external_modules,
+                module: swc_bundler::ModuleType::Es,
+                ..Default::default()
+            },
+            Box::new(Noop),
+        );
+
+        // Find entry points from the manifest files
+        let mut entries = HashMap::default();
+
+        // Use the main module specified in the Wrangler configuration
+        let main_module = wrangler.main();
+        let mut entry_found = false;
+
+        for file_path in manifest.files() {
+            let relative_path = file_path.to_str().unwrap_or("");
+
+            // Check if this file matches the main module from wrangler
+            if relative_path.ends_with(main_module) || relative_path == main_module {
+                entries.insert("main".to_string(), FileName::Real(file_path.clone()));
+                entry_found = true;
+                break;
+            }
+        }
+
+        // If the specified main module is not found, return an error
+        if !entry_found {
+            return Err(miette!(
+                "Main module '{}' specified in wrangler configuration not found in manifest files",
+                main_module
+            ));
+        }
+
+        let mut bundles = bundler
+            .bundle(entries)
+            .map_err(|e| miette!("Failed to bundle files: {:?}", e))?;
+
+        if bundles.is_empty() {
+            return Err(miette!("No bundles were generated"));
+        }
+
+        let bundle = bundles.pop().unwrap();
+
+        // Create an in-memory buffer to capture the emitted code
+        let mut output_buffer = Vec::new();
+        let mut emitter = Emitter {
+            cfg: swc_ecma_codegen::Config::default(),
+            cm: cm.clone(),
+            comments: None,
+            wr: Box::new(JsWriter::new(cm, "\n", &mut output_buffer, None)),
+        };
+
+        emitter
+            .emit_module(&bundle.module)
+            .map_err(|e| miette!("Failed to emit bundled module: {:?}", e))?;
+
+        // TODO: REMOVE BEFORE PRODUCTION
+        std::fs::write("bundle.js", &output_buffer)
+            .map_err(|e| miette!("Failed to write debug bundle file: {:?}", e))?;
+        debug!("Bundled file saved to bundle.js for debugging");
+
+        Ok(output_buffer)
+    })
+}
+
+/// A robust filesystem-based loader inspired by SWC's official examples
+/// This handles both real files and custom files with better error handling
+struct FileSystemLoader {
+    cm: Lrc<SourceMap>,
+}
+
+impl Load for FileSystemLoader {
+    fn load(&self, file: &FileName) -> Result<ModuleData, Error> {
+        debug!("Loading file: {}", file);
+
+        let fm = match file {
+            FileName::Real(path) => self
+                .cm
+                .load_file(path)
+                .with_context(|| format!("Failed to load file: {}", path.display()))?,
+            FileName::Custom(name) => {
+                debug!("Loading custom file: {}", name);
+
+                // Handle Node.js built-in modules (should be marked as external)
+                if name.starts_with("node:") || is_node_builtin(name) {
+                    return Err(anyhow!(
+                        "Node.js built-in module should be external: {}",
+                        name
+                    ));
+                }
+
+                // Try to resolve the custom name as a file path
+                let path_buf = path::PathBuf::from(name);
+                if path_buf.exists() {
+                    self.cm
+                        .load_file(&path_buf)
+                        .with_context(|| format!("Failed to load custom file: {}", name))?
+                } else {
+                    return Err(anyhow!("Custom file not found: {}", name));
+                }
+            }
+            _ => {
+                return Err(anyhow!("Unsupported file name type: {:?}", file));
+            }
+        };
+
+        // Determine the appropriate syntax parser based on file extension
+        let syntax = determine_syntax_for_file(file);
+
+        // Parse the module with better error handling
+        let module = parse_file_as_module(&fm, syntax, EsVersion::Es2020, None, &mut Vec::new())
+            .map_err(|err| anyhow!("Failed to parse module {}: {:?}", file, err))?;
+
+        Ok(ModuleData {
+            fm,
+            module,
+            helpers: Default::default(),
+        })
+    }
+}
+
+/// Check if a module name is a Node.js built-in
+fn is_node_builtin(name: &str) -> bool {
+    // Use swc_ecma_loader's NODE_BUILTINS constant for comprehensive list
+    swc_ecma_loader::NODE_BUILTINS.contains(&name)
+}
+
+/// Build a comprehensive list of external modules for the bundler
+/// This includes Node.js built-ins and other modules that should remain external
+fn build_external_modules_list() -> Vec<swc_atoms::Atom> {
+    let mut external_modules = Vec::new();
+
+    // Add all Node.js built-in modules from SWC's official list
+    for &builtin in swc_ecma_loader::NODE_BUILTINS {
+        // Add the module name as-is (legacy format)
+        external_modules.push(swc_atoms::Atom::from(builtin));
+
+        // Add the module with node: prefix (modern format)
+        external_modules.push(swc_atoms::Atom::from(format!("node:{}", builtin).as_str()));
+    }
+
+    // Remove duplicates and sort for consistency
+    external_modules.sort();
+    external_modules.dedup();
+
+    debug!(
+        "Built external modules list with {} entries",
+        external_modules.len()
     );
 
-    // Load the source code as a "file" from disk.
-    let source_file = cm
-        .load_file(file)
-        .expect("File must exist and be readable.");
-    // Read it into a type that can be lexed/parsed. Basically
-    // an in-memory buffer of bytes.
-    let source_input = StringInput::from(&*source_file);
-    // Builder a lexer and a parser for the file.
-    let lexer = build_lexer(source_input, file);
-    let mut parser = Parser::new_from(lexer);
-
-    // Dump any errors.
-    for e in parser.take_errors() {
-        e.into_diagnostic(&handler).emit();
-    }
-
-    // Parse the source code into a module.
-    let module = parser
-        .parse_program()
-        .map_err(|e| e.into_diagnostic(&handler).emit())
-        .expect("failed to parse module.");
-
-    let comments = SingleThreadedComments::default();
-
-    // Finally, transform the source code.
-    // We have to enter this bizarre "globals" context to save
-    // span information about this file. This is just some weirdness
-    // in the SWC API from what I can tell. I'm sure there's a more
-    // hygenic way to do this, but this is what was in the example.
-    let globals = Default::default();
-    let transformed_code = GLOBALS.set(&globals, || {
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-
-        let res = resolver(unresolved_mark, top_level_mark, true);
-        let res2 = resolver(unresolved_mark, top_level_mark, true);
-
-        // Conduct identifier scope analysis
-        let module = module.apply(res);
-
-        let module = module.apply(import_rewriter(
-            "node_modules",
-            NodeImportResolver::with_config(res2, None),
-        ));
-
-        // Remove typescript types
-        let module = module.apply(strip(unresolved_mark, top_level_mark));
-
-        // Fix up any identifiers with the same name, but different contexts
-        let module = module.apply(hygiene());
-
-        // Ensure that we have enough parenthesis.
-        let program = module.apply(fixer(Some(&comments)));
-
-        to_code_default(cm.clone(), Some(&comments), &program)
-    });
-
-    Ok(transformed_code.into_bytes())
+    external_modules
 }
 
+struct Noop;
+
+impl Hook for Noop {
+    fn get_import_meta_props(&self, _: Span, _: &ModuleRecord) -> Result<Vec<KeyValueProp>, Error> {
+        unimplemented!()
+    }
+}
 pub mod deployments;
 mod metrics;
 mod responses;
@@ -717,6 +810,71 @@ pub mod uploads;
 mod tests {
     use super::*;
     use crate::fs::wrangler::Route;
+    use swc_common::FileName;
+
+    #[test]
+    fn test_determine_syntax_typescript_files() {
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.ts".into())),
+            Syntax::Typescript(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.tsx".into())),
+            Syntax::Typescript(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.mts".into())),
+            Syntax::Typescript(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.cts".into())),
+            Syntax::Typescript(_)
+        ));
+    }
+
+    #[test]
+    fn test_determine_syntax_javascript_files() {
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.js".into())),
+            Syntax::Es(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.jsx".into())),
+            Syntax::Es(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.mjs".into())),
+            Syntax::Es(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.cjs".into())),
+            Syntax::Es(_)
+        ));
+    }
+
+    #[test]
+    fn test_determine_syntax_node_modules_defaults_to_js() {
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("node_modules/package/index.unknown".into())),
+            Syntax::Es(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("./node_modules/package/file.xyz".into())),
+            Syntax::Es(_)
+        ));
+    }
+
+    #[test]
+    fn test_determine_syntax_unknown_extension_defaults_to_ts() {
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("file.unknown".into())),
+            Syntax::Typescript(_)
+        ));
+        assert!(matches!(
+            determine_syntax_for_file(&FileName::Real("src/components/App.vue".into())),
+            Syntax::Typescript(_)
+        ));
+    }
 
     #[test]
     fn test_group_routes_empty() {
@@ -770,5 +928,130 @@ mod tests {
         assert_eq!(result["zone1"][0].pattern, "example.com/*");
         assert_eq!(result["zone1"][1].pattern, "example.com/api/*");
         assert_eq!(result["zone2"][0].pattern, "test.com/*");
+    }
+
+    #[test]
+    fn test_parse_module_specifier_scoped_package() {
+        // Test parsing logic for scoped packages (this would be part of PathResolver)
+        let module_specifier = "@babel/core";
+        let (package_name, subpath) = if module_specifier.starts_with('@') {
+            let parts: Vec<&str> = module_specifier.splitn(3, '/').collect();
+            if parts.len() >= 2 {
+                let package_name = format!("{}/{}", parts[0], parts[1]);
+                let subpath = if parts.len() > 2 {
+                    Some(parts[2])
+                } else {
+                    None
+                };
+                (package_name, subpath)
+            } else {
+                (module_specifier.to_string(), None)
+            }
+        } else {
+            let parts: Vec<&str> = module_specifier.splitn(2, '/').collect();
+            let package_name = parts[0].to_string();
+            let subpath = if parts.len() > 1 {
+                Some(parts[1])
+            } else {
+                None
+            };
+            (package_name, subpath)
+        };
+
+        assert_eq!(package_name, "@babel/core");
+        assert_eq!(subpath, None);
+    }
+
+    #[test]
+    fn test_parse_module_specifier_scoped_package_with_subpath() {
+        let module_specifier = "@babel/core/lib/config";
+        let (package_name, subpath) = if module_specifier.starts_with('@') {
+            let parts: Vec<&str> = module_specifier.splitn(3, '/').collect();
+            if parts.len() >= 2 {
+                let package_name = format!("{}/{}", parts[0], parts[1]);
+                let subpath = if parts.len() > 2 {
+                    Some(parts[2])
+                } else {
+                    None
+                };
+                (package_name, subpath)
+            } else {
+                (module_specifier.to_string(), None)
+            }
+        } else {
+            let parts: Vec<&str> = module_specifier.splitn(2, '/').collect();
+            let package_name = parts[0].to_string();
+            let subpath = if parts.len() > 1 {
+                Some(parts[1])
+            } else {
+                None
+            };
+            (package_name, subpath)
+        };
+
+        assert_eq!(package_name, "@babel/core");
+        assert_eq!(subpath, Some("lib/config"));
+    }
+
+    #[test]
+    fn test_parse_module_specifier_regular_package() {
+        let module_specifier = "lodash";
+        let (package_name, subpath) = if module_specifier.starts_with('@') {
+            let parts: Vec<&str> = module_specifier.splitn(3, '/').collect();
+            if parts.len() >= 2 {
+                let package_name = format!("{}/{}", parts[0], parts[1]);
+                let subpath = if parts.len() > 2 {
+                    Some(parts[2])
+                } else {
+                    None
+                };
+                (package_name, subpath)
+            } else {
+                (module_specifier.to_string(), None)
+            }
+        } else {
+            let parts: Vec<&str> = module_specifier.splitn(2, '/').collect();
+            let package_name = parts[0].to_string();
+            let subpath = if parts.len() > 1 {
+                Some(parts[1])
+            } else {
+                None
+            };
+            (package_name, subpath)
+        };
+
+        assert_eq!(package_name, "lodash");
+        assert_eq!(subpath, None);
+    }
+
+    #[test]
+    fn test_parse_module_specifier_regular_package_with_subpath() {
+        let module_specifier = "lodash/fp/get";
+        let (package_name, subpath) = if module_specifier.starts_with('@') {
+            let parts: Vec<&str> = module_specifier.splitn(3, '/').collect();
+            if parts.len() >= 2 {
+                let package_name = format!("{}/{}", parts[0], parts[1]);
+                let subpath = if parts.len() > 2 {
+                    Some(parts[2])
+                } else {
+                    None
+                };
+                (package_name, subpath)
+            } else {
+                (module_specifier.to_string(), None)
+            }
+        } else {
+            let parts: Vec<&str> = module_specifier.splitn(2, '/').collect();
+            let package_name = parts[0].to_string();
+            let subpath = if parts.len() > 1 {
+                Some(parts[1])
+            } else {
+                None
+            };
+            (package_name, subpath)
+        };
+
+        assert_eq!(package_name, "lodash");
+        assert_eq!(subpath, Some("fp/get"));
     }
 }
