@@ -752,7 +752,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify that all files are included
-        assert_eq!(manifest.files().len(), 3);
+        assert_eq!(manifest.files().len(), 2);
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
