@@ -2367,6 +2367,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "static_assertions",
+ "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "tokio-graceful-shutdown",
