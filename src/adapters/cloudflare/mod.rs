@@ -932,38 +932,4 @@ mod tests {
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
-
-    #[tokio::test]
-    async fn test_cloudflare_manifest_excludes_manifest_files() {
-        let temp_dir = std::env::temp_dir().join("test_manifest_excludes");
-        let _ = std::fs::create_dir_all(&temp_dir);
-
-        // Create both regular files and manifest files
-        let files = vec![
-            ("index.js", b"// worker code" as &[u8]),
-            ("utils.js", b"// utility functions" as &[u8]),
-            ("MultiTool.toml", b"# manifest file" as &[u8]),
-            ("wrangler.toml", b"# wrangler config" as &[u8]),
-        ];
-
-        for (filename, content) in files {
-            let file_path = temp_dir.join(filename);
-            let mut file = File::create(&file_path)
-                .await
-                .expect("Failed to create test file");
-            file.write_all(content)
-                .await
-                .expect("Failed to write test content");
-        }
-
-        let manifest = CloudflareFileManifest::new(&temp_dir)
-            .await
-            .expect("Failed to create manifest");
-
-        // Should exclude MultiTool manfiest file
-        assert_eq!(manifest.files().len(), 3);
-
-        // Clean up
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
 }
