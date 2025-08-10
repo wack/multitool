@@ -11,7 +11,7 @@ use crate::{
 use super::Ingress;
 use async_trait::async_trait;
 use derive_getters::Getters;
-use miette::Result;
+use miette::{Result, bail};
 use tracing::{debug, info};
 
 #[derive(Getters)]
@@ -72,6 +72,7 @@ impl Ingress for CloudflareWorkerIngress {
 
     async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
         info!("Setting Cloudflare canary traffic to {percent}.");
+        // bail!("BAIL");
         let control_version = DeploymentVersion::builder()
             .percentage((100 - percent.clone().as_i32()) as u64)
             .version_id(self.control_version_id.clone().unwrap())

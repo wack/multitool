@@ -11,7 +11,7 @@ use tokio::{
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
 use tokio_stream::{Stream, StreamExt as _, wrappers::IntervalStream};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     MonitorSubsystem,
@@ -157,13 +157,19 @@ impl IntoSubsystem<Report> for MonitorController<StatusCode> {
         loop {
             select! {
                 _ = subsys.on_shutdown_requested() => {
+                    trace!("MonitorController received shutdown request.");
                     // If we've received the shutdown signal,
                     // we don't have anything to do except ensure
                     // our children have shutdown, guaranteeing
                     // the monitor is shut down.
                     // NB: We can't implement the shutdown trait because
                     // self has been partially moved.
+                    subsys.request_local_shutdown();
+                    trace!("MonitorController requested local shutdown complete.");
+
+                    trace!("MonitorController waiting for children to shutdown.");
                     subsys.wait_for_children().await;
+                    trace!("MonitorController children shutdown complete.");
                     return Ok(());
                 }
                 baseline_version_id = self.baseline_receiver.recv() => {

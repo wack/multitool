@@ -79,30 +79,77 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
             .build();
 
         // • Start the ingress subsystem.
-        subsys.start(SubsystemBuilder::new(
-            INGRESS_SUBSYSTEM_NAME,
-            ingress_subsystem.into_subsystem(),
-        ));
+        let ingress_subsys = subsys.start(
+            SubsystemBuilder::new(INGRESS_SUBSYSTEM_NAME, ingress_subsystem.into_subsystem())
+                .detached(),
+        );
 
         // • Start the platform subsystem.
-        subsys.start(SubsystemBuilder::new(
-            PLATFORM_SUBSYSTEM_NAME,
-            platform_subsystem.into_subsystem(),
-        ));
+        let platform_subsys = subsys.start(
+            SubsystemBuilder::new(PLATFORM_SUBSYSTEM_NAME, platform_subsystem.into_subsystem())
+                .detached(),
+        );
 
         // • Start the MonitorController subsytem.
+        // The MonitorController and Monitor don't need to be
+        // detached because they can be shutdown in tandem.
+        // We need them to drop their channels to signal to
+        // the other subsystems why the shutdown has occurred.
         subsys.start(SubsystemBuilder::new(
             MONITOR_CONTROLLER_SUBSYSTEM_NAME,
             monitor_controller.into_subsystem(),
         ));
 
         // • Start the relay subsystem.
-        subsys.start(SubsystemBuilder::new(
-            RELAY_SUBSYSTEM_NAME,
-            relay_subsystem.into_subsystem(),
-        ));
+        let relay_subsys = subsys.start(
+            SubsystemBuilder::new(RELAY_SUBSYSTEM_NAME, relay_subsystem.into_subsystem())
+                .detached(),
+        );
 
+        trace!("Controller waiting for shutdown request...");
+        subsys.on_shutdown_requested().await;
+        subsys.initiate_shutdown();
+        trace!("Controller shutdown requested!");
+        // Waiting for children will block until the Monitor and
+        // MonitorController are shut down.
+        trace!("Contoller waiting for children to shutdown");
         subsys.wait_for_children().await;
+        trace!("Controller children shutdown");
+        // Next, we wait for the relay, because we need to abandon
+        // any state locks that we've taken before we can roll back
+        // the ingress or yank the platform.
+        trace!("Controller waiting for relay to shutdown");
+        relay_subsys.initiate_shutdown();
+        trace!("Controller waiting for relay to shutdown complete");
+        trace!("Controller waiting for relay to join");
+        relay_subsys.join().await?;
+        trace!("Relay joined");
+
+        trace!("Relay shutdown!");
+
+        trace!("Controller waiting for ingress to shutdown");
+        ingress_subsys.initiate_shutdown();
+        trace!("Controller waiting for ingress to shutdown complete");
+        trace!("Controller waiting for ingress to join");
+        ingress_subsys.join().await?;
+        trace!("Ingress joined");
+
+        trace!("Ingress shutdown!");
+
+        trace!("Controller waiting for platform to shutdown");
+        platform_subsys.initiate_shutdown();
+        trace!("Controller waiting for platform to shutdown complete");
+        trace!("Controller waiting for platform to join");
+        platform_subsys.join().await?;
+        trace!("Platform joined");
+
+        trace!("Platform shutdown!");
+
+        // TODO: Tell the backend to mark the rollout as
+        // cancelled (if it isn't already marked as completed).
+        trace!("TODO: API CALL TO CANCEL ROLLOUT");
+
+        trace!("Controller shutdown complete!");
         Ok(())
     }
 }

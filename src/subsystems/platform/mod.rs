@@ -8,7 +8,7 @@ use tokio::{
     sync::mpsc::{self, Receiver, channel},
 };
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::adapters::BoxedPlatform;
 
@@ -97,6 +97,13 @@ impl IntoSubsystem<Report> for PlatformSubsystem {
             select! {
                 // Shutdown comes first so it has high priority.
                 _ = subsys.on_shutdown_requested() => {
+                    trace!("PlatformSubsystem received shutdown request.");
+                    subsys.request_local_shutdown();
+                    trace!("PlatformSubsystem requested local shutdown complete.");
+
+                    trace!("PlatformSubsystem waiting for children to shutdown.");
+                    subsys.wait_for_children().await;
+                    trace!("PlatformSubsystem children shutdown complete.");
                     return self.shutdown().await;
                 }
                 // Shutdown signal from one of the handles. Since this thread has exclusive
