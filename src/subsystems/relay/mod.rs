@@ -3,7 +3,7 @@ use bon::bon;
 use miette::{Report, Result, miette};
 use multitool_sdk::models::RolloutStateData;
 use multitool_sdk::models::RolloutStateType::{
-    DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
+    CancelCanary, DeployCanary, PromoteCanary, RollbackCanary, SetCanaryTraffic,
 };
 use tokio::sync::mpsc::Sender;
 use tokio::time::Duration;
@@ -185,6 +185,9 @@ impl IntoSubsystem<Report> for RelaySubsystem<StatusCode> {
                                 // If the canary is rolled back, we can safely just shut down the CLI
                                 subsys.request_shutdown();
                             },
+                            CancelCanary => {
+                                todo!("Cancel Canary not implemented yet in CLI");
+                            }
                         }
                     } else {
                         // The stream has been closed, so we should shutdown.

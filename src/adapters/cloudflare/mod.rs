@@ -12,7 +12,7 @@ use uploads::{UploadVersionRequest, UploadVersionResponse};
 use url::Url;
 
 use deployments::{CreateDeploymentRequest, DeploymentResponse};
-use metrics::MetricsResponse;
+use metrics::{CloudflareErrorLog, ErrorLogsResponse, MetricsResponse};
 use responses::CloudflareResponse;
 use routes::{CloudflareRoute, CreateCloudflareRouteRequest, UpdateCloudflareRouteRequest};
 
@@ -33,6 +33,8 @@ pub struct CloudflareClient {
     account_id: String,
     /// The name of the Cloudflare worker
     worker_name: String,
+    /// The API token used for authentication
+    api_token: String,
 }
 
 impl CloudflareClient {
@@ -51,6 +53,7 @@ impl CloudflareClient {
 
         Self {
             client,
+            api_token: token.to_string(),
             account_id,
             worker_name,
         }
@@ -567,6 +570,87 @@ impl CloudflareClient {
 
         debug!("Route {} deleted successfully!", route_id);
         Ok(())
+    }
+
+    /// Collects the logs produced by Cloudflare worker invocations that result in errors
+    /// Only collects 5xx errrors for now.
+    /// Returns grouped error logs maintaining the original invocation structure.
+    pub async fn collect_errors(
+        &self,
+        cf_worker_name: String,
+        from_time: DateTime<chrono::Utc>,
+        to_time: DateTime<chrono::Utc>,
+    ) -> Result<Vec<CloudflareErrorLog>> {
+        let account_id = &self.account_id;
+        let path = format!("accounts/{account_id}/workers/observability/telemetry/query");
+        let url = Self::url_with_path(&path);
+
+        // Convert DateTime to Unix Millisecond timestamps
+        let from_timestamp = from_time.timestamp_millis() as u64;
+        let to_timestamp = to_time.timestamp_millis() as u64;
+
+        let query_body = serde_json::json!({
+            "view": "invocations",
+            "queryId": "workers-logs-invocations",
+            "parameters": {
+                "datasets": [],
+                "filters": [
+                    {
+                        "key": "$metadata.service",
+                        "operation": "eq",
+                        "type": "string",
+                        "value": cf_worker_name
+                    },
+                    {
+                        "key": "$workers.event.response.status",
+                        "operation": "gte",
+                        "type": "number",
+                        "value": 500
+                    },
+                    {
+                        "key": "$workers.event.response.status",
+                        "operation": "lte",
+                        "type": "number",
+                        "value": 599
+                    }
+                ],
+                "calculations": [],
+                "groupBys": [],
+                "havings": []
+            },
+            "timeframe": {
+                "to": to_timestamp,
+                "from": from_timestamp
+            }
+        });
+
+        let response = self
+            .client
+            .post(url)
+            .json(&query_body)
+            .send()
+            .await
+            .into_diagnostic()?;
+
+        // If there's an error, just return empty results
+        if !response.status().is_success() {
+            error!(
+                "Failed to query Cloudflare error logs for worker: {}, error: {:?}",
+                cf_worker_name,
+                response.json::<serde_json::Value>().await
+            );
+            return Ok(Vec::new());
+        }
+
+        let error_logs_response = response
+            .json::<CloudflareResponse<ErrorLogsResponse>>()
+            .await
+            .into_diagnostic()?;
+
+        // Convert the enourmous CF response into our error log groups
+        let error_log_groups = error_logs_response.result.into();
+
+        Ok(error_log_groups)
     }
 
     fn base_url() -> &'static Url {

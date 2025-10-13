@@ -8,7 +8,7 @@ use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::Ht
 use bon::Builder;
 use chrono::DateTime;
 use miette::{IntoDiagnostic, Result, bail};
-use multitool_sdk::models::Rollout;
+use multitool_sdk::models::{CreateErrorRequest, Rollout};
 use multitool_sdk::{
     apis::{Api, ApiClient, configuration::Configuration},
     models::{
@@ -348,6 +348,30 @@ impl BackendClient {
         Ok(())
     }
 
+    /// Upload errors to the backend.
+    pub(crate) async fn upload_errors(
+        &self,
+        meta: &RolloutMetadata,
+        url_path: String,
+        status_code: i32,
+        logs: Vec<String>,
+    ) -> Result<()> {
+        trace!("Uploading error logs to backend");
+        let workspace_id = *meta.workspace_id();
+        let application_id = *meta.application_id();
+        let rollout_id = *meta.rollout_id();
+
+        let request = CreateErrorRequest::new(logs, status_code, url_path);
+
+        self.client
+            .errors_api()
+            .log_error(workspace_id, application_id, rollout_id, request)
+            .await
+            .into_diagnostic()?;
+
+        Ok(())
+    }
+
     /// Return information about the workspace given its name.
     pub(crate) async fn create_workspace<T: AsRef<str>>(
         &self,
@@ -583,6 +607,7 @@ pub enum MonitorConfig {
         dimensions: Vec<CloudWatchDimensions>,
     },
     CloudflareWorkersObservability {
+        api_token: String,
         account_id: String,
         worker_name: String,
     },

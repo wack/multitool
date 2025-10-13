@@ -47,6 +47,7 @@ impl Monitor for CloudflareMonitor {
 
     fn get_config(&self) -> MonitorConfig {
         MonitorConfig::CloudflareWorkersObservability {
+            api_token: self.client.api_token().clone(),
             account_id: self.client.account_id().clone(),
             worker_name: self.client.worker_name().clone(),
         }

@@ -10,7 +10,7 @@ pub struct RunSubcommand {
     workspace: Option<String>,
     #[arg(short, long, env = "MULTI_APPLICATION")]
     application: Option<String>,
-    #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]
+    #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN), env = "ORIGIN")]
     origin: Option<String>,
 
     ///Cloudflare config
