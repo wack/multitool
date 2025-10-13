@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
