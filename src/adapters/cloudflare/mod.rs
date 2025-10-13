@@ -12,7 +12,7 @@ use uploads::{UploadVersionRequest, UploadVersionResponse};
 use url::Url;
 
 use deployments::{CreateDeploymentRequest, DeploymentResponse};
-use metrics::{CloudflareErrorLog, ErrorLogsResponse, ErrorSource, MetricsResponse};
+use metrics::{CloudflareErrorLog, ErrorLogsResponse, MetricsResponse};
 use responses::CloudflareResponse;
 use routes::{CloudflareRoute, CreateCloudflareRouteRequest, UpdateCloudflareRouteRequest};
 
@@ -580,7 +580,7 @@ impl CloudflareClient {
         cf_worker_name: String,
         from_time: DateTime<chrono::Utc>,
         to_time: DateTime<chrono::Utc>,
-    ) -> Result<Vec<Vec<CloudflareErrorLog>>> {
+    ) -> Result<Vec<CloudflareErrorLog>> {
         let account_id = &self.account_id;
         let path = format!("accounts/{account_id}/workers/observability/telemetry/query");
         let url = Self::url_with_path(&path);
@@ -647,31 +647,8 @@ impl CloudflareClient {
             .await
             .into_diagnostic()?;
 
-        let mut error_log_groups = Vec::new();
-
-        // Turn invocations into CloudflareErrorLogs, maintaining grouping
-        for invocation_group in error_logs_response.result.invocations {
-            let mut error_logs_in_group = Vec::new();
-
-            for invocation in invocation_group {
-                let error_log = CloudflareErrorLog {
-                    url: invocation.workers.event.request.url,
-                    method: invocation.workers.event.request.method,
-                    path: invocation.workers.event.request.path,
-                    response: invocation.workers.event.response,
-                    source: ErrorSource {
-                        message: invocation.source.message,
-                        exception: invocation.source.exception,
-                    },
-                };
-                error_logs_in_group.push(error_log);
-            }
-
-            // Only add non-empty groups
-            if !error_logs_in_group.is_empty() {
-                error_log_groups.push(error_logs_in_group);
-            }
-        }
+        // Convert the enourmous CF response into our error log groups
+        let error_log_groups = error_logs_response.result.into();
 
         Ok(error_log_groups)
     }

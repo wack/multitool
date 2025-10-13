@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use miette::Diagnostic;
 
 pub use controller::{CONTROLLER_SUBSYSTEM_NAME, ControllerSubsystem};
-#[cfg(feature = "errorlogs")]
 pub use error_logs::{ERROR_LOGS_SUBSYSTEM_NAME, ErrorLogsController};
 pub use ingress::{INGRESS_SUBSYSTEM_NAME, IngressSubsystem};
 
@@ -11,7 +10,6 @@ pub use platform::{PLATFORM_SUBSYSTEM_NAME, PlatformSubsystem};
 pub use relay::{RELAY_SUBSYSTEM_NAME, RelaySubsystem};
 
 mod controller;
-#[cfg(feature = "errorlogs")]
 mod error_logs;
 mod handle;
 mod ingress;

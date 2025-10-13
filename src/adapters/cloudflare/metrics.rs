@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
@@ -21,13 +23,15 @@ pub struct Aggregate {
 #[derive(Deserialize, Debug)]
 pub struct ErrorLogsResponse {
     #[serde(default)]
-    pub invocations: Vec<Vec<InvocationData>>,
+    pub invocations: HashMap<String, Vec<InvocationData>>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct InvocationData {
     #[serde(rename = "$workers")]
     pub workers: WorkersData,
+    #[serde(rename = "$metadata")]
+    pub metadata: MetadataData,
     pub source: SourceData,
 }
 
@@ -39,7 +43,8 @@ pub struct WorkersData {
 #[derive(Deserialize, Debug)]
 pub struct EventData {
     pub request: RequestData,
-    pub response: ResponseData,
+    #[serde(default)]
+    pub response: Option<ResponseData>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -51,34 +56,64 @@ pub struct RequestData {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ResponseData {
-    pub status: u16,
+    pub status: i32,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct MetadataData {
+    #[serde(rename = "type")]
+    pub event_type: String,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct SourceData {
-    #[serde(default)]
-    pub message: Option<String>,
-    #[serde(default)]
-    pub exception: Option<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct CloudflareErrorLog {
-    pub url: String,
     pub method: String,
     pub path: String,
-    pub response: ResponseData,
-    pub source: ErrorSource,
+    pub status_code: i32,
+    pub logs: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ErrorSource {
-    pub message: Option<String>,
-    pub exception: Option<String>,
+impl Into<Vec<CloudflareErrorLog>> for ErrorLogsResponse {
+    fn into(self) -> Vec<CloudflareErrorLog> {
+        let mut error_logs = Vec::new();
+
+        for (_request_id, invocations) in self.invocations {
+            // The cf-worker-event entry contains the request/response details
+            let event_entry = invocations
+                .iter()
+                .find(|inv| inv.metadata.event_type == "cf-worker-event");
+
+            if let Some(event) = event_entry {
+                let request = &event.workers.event.request;
+                let method = request.method.clone();
+                let path = request.path.clone();
+
+                // Extract log line from each invocation event and combine
+                if let Some(response) = &event.workers.event.response {
+                    let mut logs: Vec<String> = invocations
+                        .iter()
+                        .map(|inv| inv.source.message.clone())
+                        .collect();
+
+                    logs.reverse(); // Reverse to maintain chronological order
+
+                    let error_log = CloudflareErrorLog {
+                        method,
+                        path,
+                        status_code: response.status,
+                        logs,
+                    };
+
+                    error_logs.push(error_log);
+                }
+            }
+        }
+
+        error_logs
+    }
 }
-
-/// Represents a group of error logs from a single invocation
-pub type CloudflareErrorLogGroup = Vec<CloudflareErrorLog>;
-
-/// The complete structure maintaining invocation grouping: Vec<Vec<CloudflareErrorLog>>
-pub type CloudflareErrorLogGroups = Vec<CloudflareErrorLogGroup>;

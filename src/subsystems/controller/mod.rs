@@ -2,13 +2,12 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 
 use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
 use crate::{IngressSubsystem, PlatformSubsystem};
 
-#[cfg(feature = "errorlogs")]
 use crate::subsystems::{ERROR_LOGS_SUBSYSTEM_NAME, ErrorLogsController};
 use monitor::{MONITOR_CONTROLLER_SUBSYSTEM_NAME, MonitorController};
 
@@ -66,7 +65,6 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
 
         // Extract monitor config before moving the monitor so we can use it
         // in the ErrorLogsController.
-        #[cfg(feature = "errorlogs")]
         let monitor_config = self.monitor.get_config();
 
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
@@ -76,14 +74,21 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
         let canary_sender = monitor_controller.get_canary_sender();
 
         let relay_subsystem = RelaySubsystem::builder()
-            .backend(self.backend)
+            .backend(self.backend.clone())
             .observations(observation_stream)
             .platform(platform_handle)
             .ingress(ingress_handle)
-            .meta(self.meta)
+            .meta(self.meta.clone())
             .baseline_sender(baseline_sender)
             .canary_sender(canary_sender)
             .build();
+
+        let error_logs_controller = ErrorLogsController::builder()
+            .metadata(self.meta)
+            .monitor(monitor_config)
+            .backend(self.backend)
+            .build()
+            .map_err(|e| miette::miette!("Failed to create ErrorLogsController: {}", e))?;
 
         // • Start the ingress subsystem.
         subsys.start(SubsystemBuilder::new(
@@ -109,23 +114,10 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
             relay_subsystem.into_subsystem(),
         ));
 
-        #[cfg(feature = "errorlogs")]
-        {
-            match ErrorLogsController::builder()
-                .monitor(monitor_config)
-                .build()
-            {
-                Ok(error_logs_controller) => {
-                    subsys.start(SubsystemBuilder::new(
-                        ERROR_LOGS_SUBSYSTEM_NAME,
-                        error_logs_controller.into_subsystem(),
-                    ));
-                }
-                Err(err) => {
-                    error!("Could not start error logs subsystem: {}", err);
-                }
-            }
-        }
+        subsys.start(SubsystemBuilder::new(
+            ERROR_LOGS_SUBSYSTEM_NAME,
+            error_logs_controller.into_subsystem(),
+        ));
 
         subsys.wait_for_children().await;
         Ok(())
