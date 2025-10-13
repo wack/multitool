@@ -12,6 +12,6 @@ pub struct LoginSubcommand {
     #[arg(short, long, env = "MULTI_PASSWORD")]
     password: Option<String>,
 
-    #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN))]
+    #[arg(long, short = 'o', env = "MULTI_ORIGIN", default_value = Some(MULTITOOL_ORIGIN))]
     origin: Option<String>,
 }
