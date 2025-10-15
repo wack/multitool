@@ -1,4 +1,4 @@
-<img align="center" width="1200" alt="gh-multi-banner-2" src="https://github.com/user-attachments/assets/43ec8b3f-9443-4b64-a737-906b82fd80f4" />
+<img align="center" width="1200" alt="multitool-banner" src="https://github.com/user-attachments/assets/1463d3b1-ed84-4c8a-8374-abe0b53286b0" />
 
 <h1 align="center">MultiTool</h1>
 <p align="center"><b>Agentic deployments help teams catch production bugs before they impact users. Move fast without breaking things.</b></p>
