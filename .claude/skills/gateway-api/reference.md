@@ -2,11 +2,23 @@
 
 *This document will contain the complete reference documentation for the Kubernetes Gateway API specification, including all API types, conformance requirements, and implementation details.*
 
-## API Types
+## API Types and Core Resources
 
-### Core Resources
+The Gateway API has the following core API resource types:
 
-#### Gateway
+* Gateway
+* GatewayClass
+* GRPCRoute
+* HTTPRoute
+* Policy types:
+  - BackendTLSPolicy
+  - BackendTrafficPolicy
+* ReferenceGrant
+
+Next, we will list each of the core resource types and describe them
+in detail. Each resource type will receive its own section.
+
+### Gateway
 
 A `Gateway` is 1:1 with the lifecycle of the configuration of infrastructure.
 When a user creates a `Gateway`, some load balancing infrastructure is
@@ -26,7 +38,7 @@ The `Gateway` spec defines the following:
 If the desired configuration specified in Gateway spec cannot be achieved, the
 Gateway will be in an error state with details provided by status conditions.
 
-##### Deployment models
+#### Deployment models
 
 Depending on the `GatewayClass`, the creation of a `Gateway` could do any of
 the following actions:
@@ -40,7 +52,7 @@ the following actions:
 
 The API does not specify which one of these actions will be taken.
 
-##### Gateway Status
+#### Gateway Status
 
 `GatewayStatus` is used to surface the status of a `Gateway` relative to the
 desired state represented in `spec`. `GatewayStatus` consists of the following:
@@ -54,13 +66,7 @@ Both `Conditions` and `Listeners.conditions` follow the conditions pattern used
 elsewhere in Kubernetes. This is a list that includes a type of condition, the
 status of the condition and the last time this condition changed.
 
-#### GatewayClass
-
-??? success "Standard Channel since v0.5.0"
-
-    The `GatewayClass` resource is GA and has been part of the Standard Channel since
-    `v0.5.0`. For more information on release channels, refer to our [versioning
-    guide](../concepts/versioning.md).
+### GatewayClass
 
 [GatewayClass][gatewayclass] is cluster-scoped resource defined by the
 infrastructure provider. This resource represents a class of Gateways that can
@@ -100,7 +106,7 @@ The user of the classes will not need to know *how* `internet` and `private` are
 implemented. Instead, the user will only need to understand the resulting
 properties of the class that the `Gateway` was created with.
 
-##### GatewayClass parameters
+#### GatewayClass parameters
 
 Providers of the `Gateway` API may need to pass parameters to their controller
 as part of the class definition. This is done using the
@@ -130,7 +136,7 @@ spec:
 Using a Custom Resource for `GatewayClass.spec.parametersRef` is encouraged
 but implementations may resort to using a ConfigMap if needed.
 
-##### GatewayClass status
+#### GatewayClass status
 
 `GatewayClasses` MUST be validated by the provider to ensure that the configured
 parameters are valid. The validity of the class will be signaled to the user via
@@ -175,7 +181,7 @@ status:
     Message: "foobar" is an FooBar.
 ```
 
-##### GatewayClass controller selection
+#### GatewayClass controller selection
 
 The `GatewayClass.spec.controller` field determines the controller implementation
 responsible for managing the `GatewayClass`. The format of the field is opaque
@@ -200,18 +206,12 @@ example.net/gateway      // Use the default version
 [gatewayclass]: ../reference/spec.md#gateway.networking.k8s.io/v1.GatewayClass
 [ingress-class-api]: https://kubernetes.io/docs/concepts/services-networking/ingress/#ingress-class
 
-#### HTTPRoute
-
-??? success "Standard Channel since v0.5.0"
-
-    The `HTTPRoute` resource is GA and has been part of the Standard Channel since
-    `v0.5.0`. For more information on release channels, refer to our [versioning
-    guide](../concepts/versioning.md).
+### HTTPRoute
 
 [HTTPRoute][httproute] is a Gateway API type for specifying routing behavior
 of HTTP requests from a Gateway listener to an API object, i.e. Service.
 
-##### Spec
+#### Spec
 
 The specification of an HTTPRoute consists of:
 
@@ -227,7 +227,7 @@ The specification of an HTTPRoute consists of:
 The following illustrates an HTTPRoute that sends all traffic to one Service:
 ![httproute-basic-example](../images/httproute-basic-example.svg)
 
-###### Attaching to Gateways
+#### Attaching to Gateways
 
 Each Route includes a way to reference the parent resources it wants to attach
 to. In most cases, that's going to be Gateways, but there is some flexibility
@@ -306,7 +306,7 @@ the flexibility to switch ports on the Gateway without also updating the Routes.
 The approach should only be used when a Route should apply to a specific port
 number as opposed to listeners whose ports may be changed.
 
-###### Hostnames
+#### Hostnames
 
 Hostnames define a list of hostnames to match against the Host header of the
 HTTP request. When a match occurs, the HTTPRoute is selected to perform request
@@ -333,13 +333,13 @@ spec:
   - my.example.com
 ```
 
-###### Rules
+#### Rules
 
 Rules define semantics for matching an HTTP request based on conditions,
 optionally executing additional processing steps, and optionally forwarding
 the request to an API object.
 
-####### Matches
+##### Matches
 
 Matches define conditions used for matching an HTTP request. Each match is
 independent, i.e. this rule will be matched if any single match is satisfied.
@@ -371,19 +371,13 @@ following conditions:
 If no matches are specified, the default is a prefix path match on "/",
 which has the effect of matching every HTTP request.
 
-####### Filters (optional)
+##### Filters (optional)
 
 Filters define processing steps that must be completed during the request or
 response lifecycle. Filters act as an extension point to express additional
 processing that may be performed in Gateway implementations. Some examples
 include request or response modification, implementing authentication
 strategies, rate-limiting, and traffic shaping.
-
-The following example adds header "my-header: foo" to HTTP requests with Host
-header "my.filter.com".
-```yaml
-{% include 'standard/http-filter.yaml' %}
-```
 
 API conformance is defined based on the filter type. The effects of ordering
 multiple behaviors is currently unspecified. This may change in the future
@@ -406,7 +400,7 @@ filters are specified and cause the `Accepted` condition to be set to status
 `False`, implementations may use the `IncompatibleFilters` reason to specify
 this configuration error.
 
-####### BackendRefs (optional)
+##### BackendRefs (optional)
 
 BackendRefs defines API objects where matching requests should be sent. If
 unspecified, the rule performs no forwarding. If unspecified and no filters
@@ -437,13 +431,7 @@ Service:
 Reference the [backendRef][backendRef] API documentation for additional details
 on `weight` and other fields.
 
-####### Timeouts (optional)
-
-??? example "Experimental Channel since v1.0.0"
-
-    HTTPRoute timeouts have been part of the Experimental Channel since `v1.0.0`.
-    For more information on release channels, refer to our
-    [versioning guide](../concepts/versioning.md).
+##### Timeouts (optional)
 
 HTTPRoute Rules include a `Timeouts` field. If unspecified, timeout behavior is implementation-specific.
 
@@ -459,19 +447,9 @@ Timeouts are optional, and their fields are of type [Duration](../geps/gep-2257/
 
 The following example uses the `request` field which will cause a timeout if a client request is taking longer than 10 seconds to complete. The example also defines a 2s `backendRequest` which specifies a timeout for an individual request from the gateway to a backend service `timeout-svc`:
 
-```yaml
-{% include 'experimental/http-route-timeouts/timeout-example.yaml' %}
-```
-
 Reference the [timeouts][timeouts] API documentation for additional details.
 
-####### Name (optional)
-
-??? example "Experimental Channel since v1.2.0"
-
-    This concept has been part of the Experimental Channel since `v1.2.0`.
-    For more information on release channels, refer to our
-    [versioning guide](../concepts/versioning.md).
+##### Name (optional)
 
 HTTPRoute Rules include an optional `name` field. The applications for the name of a route rule are implementation-specific. It can be used to reference individual route rules by name from other resources, such as in the `sectionName` field of metaresources ([GEP-2648](../geps/gep-2648/index.md#section-names)), in the status stanzas of resources related to the route object, to identify internal configuration objects generated by the implementation from HTTPRoute Rule, etc.
 
@@ -479,32 +457,22 @@ If specified, the value of the name field must comply with the [`SectionName`](h
 
 The following example specifies the `name` field to identify HTTPRoute Rules used to split traffic between a _read-only_ backend service and a _write-only_ one:
 
-```yaml
-{% include 'experimental/http-route-rule-name.yaml' %}
-```
-
-####### Backend Protocol
-
-??? example "Experimental Channel since v1.0.0"
-
-    This concept has been part of the Experimental Channel since `v1.0.0`.
-    For more information on release channels, refer to our
-    [versioning guide](../concepts/versioning.md).
+##### Backend Protocol
 
 Some implementations may require the [backendRef][backendRef] to be labeled
 explicitly in order to route traffic using a certain protocol. For Kubernetes
 Service backends this can be done by specifying the [`appProtocol`][appProtocol]
 field.
 
-##### Status
+#### Status
 
 Status defines the observed state of HTTPRoute.
 
-###### RouteStatus
+#### RouteStatus
 
 RouteStatus defines the observed state that is required across all route types.
 
-####### Parents
+##### Parents
 
 Parents define a list of the Gateways (or other parent resources) that are
 associated with the HTTPRoute, and the status of the HTTPRoute with respect to
@@ -515,6 +483,7 @@ appropriate when the route is modified.
 
 The following example indicates HTTPRoute "http-example" has been accepted by
 Gateway "gw-example" in namespace "gw-example-ns":
+
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -531,7 +500,8 @@ status:
       status: "True"
 ```
 
-##### Merging
+#### Merging
+
 Multiple HTTPRoutes can be attached to a single Gateway resource. Importantly,
 only one Route rule may match each request. For more information on how conflict
 resolution applies to merging, refer to the [API specification][httprouterule].
@@ -548,18 +518,12 @@ resolution applies to merging, refer to the [API specification][httprouterule].
 [appProtocol]: https://kubernetes.io/docs/concepts/services-networking/service/#application-protocol
 [sectionName]: ../reference/spec.md#gateway.networking.k8s.io/v1.SectionName
 
-#### GRPCRoute
-
-??? success "Standard Channel since v1.1.0"
-
-    The `GRPCRoute` resource is GA and has been part of the Standard Channel since
-    `v1.1.0`. For more information on release channels, refer to our [versioning
-    guide](../concepts/versioning.md).
+### GRPCRoute
 
 [GRPCRoute][grpcroute] is a Gateway API type for specifying routing behavior
 of gRPC requests from a Gateway listener to an API object, i.e. Service.
 
-##### Background
+#### Background
 
 While it is possible to route gRPC with `HTTPRoutes` or via custom, out-of-tree
 CRDs, in the long run, this leads to a fragmented ecosystem.
@@ -576,7 +540,7 @@ Given gRPC's importance in the application-layer networking space and to
 the Kubernetes project in particular, the determination was made not to allow
 the ecosystem to fragment unnecessarily.
 
-###### Encapsulated Network Protocols
+#### Encapsulated Network Protocols
 
 In general, when it is possible to route an encapsulated protocol at a lower
 level, it is acceptable to introduce a route resource at the higher layer when
@@ -588,7 +552,7 @@ the following criteria are met:
 
 gRPC meets all of these criteria, so the decision was made to include `GRPCRoute`in Gateway API.
 
-###### Cross Serving
+#### Cross Serving
 
 Implementations that support GRPCRoute must enforce uniqueness of
 hostnames between `GRPCRoute`s and `HTTPRoute`s. If a route (A) of type `HTTPRoute` or
@@ -605,7 +569,7 @@ the only differentiator being URI, the user should use `HTTPRoute` resources for
 both gRPC and HTTP. This will come at the cost of the improved UX of the
 `GRPCRoute` resource.
 
-##### Spec
+#### Spec
 
 The specification of a GRPCRoute consists of:
 
@@ -622,7 +586,7 @@ The specification of a GRPCRoute consists of:
 The following illustrates a GRPCRoute that sends all traffic to one Service:
 ![grpcroute-basic-example](../images/grpcroute-basic-example.png)
 
-###### Attaching to Gateways
+#### Attaching to Gateways
 
 Each Route includes a way to reference the parent resources it wants to attach
 to. In most cases, that's going to be Gateways, but there is some flexibility
@@ -643,7 +607,7 @@ spec:
 Note that the target Gateway needs to allow GRPCRoutes from the route's
 namespace to be attached for the attachment to be successful.
 
-###### Hostnames
+#### Hostnames
 
 Hostnames define a list of hostnames to match against the Host header of the
 gRPC request. When a match occurs, the GRPCRoute is selected to perform request
@@ -670,13 +634,13 @@ spec:
   - my.example.com
 ```
 
-###### Rules
+#### Rules
 
 Rules define semantics for matching an gRPC requests based on conditions,
 optionally executing additional processing steps, and optionally forwarding
 the request to an API object.
 
-####### Matches
+##### Matches
 
 Matches define conditions used for matching an gRPC requests. Each match is
 independent, i.e. this rule will be matched if any single match is satisfied.
@@ -707,7 +671,7 @@ following conditions:
 
 If no matches are specified, the default is to match every gRPC request.
 
-####### Filters (optional)
+##### Filters (optional)
 
 Filters define processing steps that must be completed during the request or
 response lifecycle. Filters act as an extension point to express additional
@@ -717,11 +681,7 @@ strategies, rate-limiting, and traffic shaping.
 
 The following example adds header "my-header: foo" to gRPC requests with Host
 header "my.filter.com". Note that GRPCRoute uses HTTPRoute filters for features
-with functionality identical to HTTPRoute, such as this.
-
-```yaml
-{% include 'standard/grpc-filter.yaml' %}
-```
+with functionality identical to HTTPRoute.
 
 API conformance is defined based on the filter type. The effects of ordering
 multiple behaviors are currently unspecified. This may change in the future
@@ -741,7 +701,7 @@ filters are specified and cause the `Accepted` condition to be set to status
 `False`, implementations may use the `IncompatibleFilters` reason to specify
 this configuration error.
 
-####### BackendRefs (optional)
+##### BackendRefs (optional)
 
 BackendRefs defines the API objects to which matching requests should be sent. If
 unspecified, the rule performs no forwarding. If unspecified and no filters
@@ -753,7 +713,7 @@ The following example forwards gRPC requests for the method `User.Login` to serv
 header `magic: foo` to service "my-service2" on port `50051`:
 
 ```yaml
-{% include 'standard/basic-grpc.yaml' %}
+Example Omitted from documentation.
 ```
 
 The following example uses the `weight` field to forward 90% of gRPC requests to
@@ -761,33 +721,27 @@ The following example uses the `weight` field to forward 90% of gRPC requests to
 Service:
 
 ```yaml
-{% include 'standard/traffic-splitting/grpc-traffic-split-2.yaml' %}
+Example Omitted from documentation.
 ```
 
 Reference the [backendRef][backendRef] API documentation for additional details
 on `weight` and other fields.
 
-####### Name (optional)
-
-??? example "Experimental Channel since v1.2.0"
-
-    This concept has been part of the Experimental Channel since `v1.2.0`.
-    For more information on release channels, refer to our
-    [versioning guide](../concepts/versioning.md).
+##### Name (optional)
 
 GRPCRoute Rules include an optional `name` field. The applications for the name of a route rule are implementation-specific. It can be used to reference individual route rules by name from other resources, such as in the `sectionName` field of metaresources ([GEP-2648](../geps/gep-2648/index.md#section-names)), in the status stanzas of resources related to the route object, to identify internal configuration objects generated by the implementation from GRPCRoute Rule, etc.
 
 If specified, the value of the name field must comply with the [`SectionName`](https://github.com/kubernetes-sigs/gateway-api/blob/v1.0.0/apis/v1/shared_types.go#L607-L624) type.
 
-##### Status
+#### Status
 
 Status defines the observed state of the GRPCRoute.
 
-###### RouteStatus
+#### RouteStatus
 
 RouteStatus defines the observed state that is required across all route types.
 
-####### Parents
+##### Parents
 
 Parents define a list of the Gateways (or other parent resources) that are
 associated with the GRPCRoute, and the status of the GRPCRoute with respect to
@@ -796,7 +750,7 @@ parentRefs, the controller that manages the Gateway should add an entry to this
 list when the controller first sees the route and should update the entry as
 appropriate when the route is modified.
 
-##### Examples
+#### Examples
 
 The following example indicates GRPCRoute "grpc-example" has been accepted by
 Gateway "gw-example" in namespace "gw-example-ns":
@@ -817,7 +771,8 @@ status:
       status: "True"
 ```
 
-##### Merging
+#### Merging
+
 Multiple GRPCRoutes can be attached to a single Gateway resource. Importantly,
 only one Route rule may match each request. For more information on how conflict
 resolution applies to merging, refer to the [API specification][grpcrouterule].
@@ -832,26 +787,7 @@ resolution applies to merging, refer to the [API specification][grpcrouterule].
 [parentRef]: ../reference/spec.md#gateway.networking.k8s.io/v1.ParentRef
 [name]: ../reference/spec.md#gateway.networking.k8s.io/v1.SectionName
 
-#### TCPRoute
-*[To be populated with complete TCPRoute API specification]*
-
-#### TLSRoute
-*[To be populated with complete TLSRoute API specification]*
-
-#### UDPRoute
-*[To be populated with complete UDPRoute API specification]*
-
-#### ReferenceGrant
-
-??? success "Standard Channel since v0.6.0"
-
-    The `ReferenceGrant` resource is Beta and part of the
-    Standard Channel since `v0.6.0`. For more information on release
-    channels, refer to our [versioning guide](../concepts/versioning.md).
-
-!!! note
-    This resource was originally named "ReferencePolicy". It was renamed
-    to "ReferenceGrant" to avoid any confusion with policy attachment.
+### ReferenceGrant
 
 A ReferenceGrant can be used to enable cross namespace references within
 Gateway API. In particular, Routes may forward traffic to backends in other
@@ -869,7 +805,8 @@ If an object is referred to from outside its namespace, the object's owner must
 create a ReferenceGrant resource to explicitly allow that reference. Without a
 ReferenceGrant, a cross namespace reference is invalid.
 
-##### Structure
+#### Structure
+
 Fundamentally a ReferenceGrant is made up of two lists, a list of resources
 references may come from, and a list of resources that may be referenced.
 
@@ -881,7 +818,8 @@ referenced by items described in the `from` list. The namespace is not necessary
 in the `to` list because a ReferenceGrant can only be used to allow references
 to resources in the same namespace as the ReferenceGrant.
 
-##### Example
+#### Example
+
 The following example shows how a HTTPRoute in namespace `foo` can reference a
 Service in namespace `bar`. In this example a ReferenceGrant in the `bar`
 namespace explicitly allows references to Services from HTTPRoutes in the `foo`
@@ -916,7 +854,8 @@ spec:
     kind: Service
 ```
 
-##### API design decisions
+#### API design decisions
+
 While the API is simplistic in nature, it comes with a few notable decisions:
 
 1. Each ReferenceGrant only supports a single From and To section. Additional
@@ -936,7 +875,8 @@ Please see the [API
 Specification](../reference/spec.md#gateway.networking.k8s.io/v1alpha2.ReferenceGrant)
 for more details on how specific ReferenceGrant fields are interpreted.
 
-##### Implementation Guidelines
+#### Implementation Guidelines
+
 This API relies on runtime verification. Implementations MUST watch for changes
 to these resources and recalculate the validity of cross-namespace references
 after each change or deletion.
@@ -949,7 +889,8 @@ resource that doesn't exist, any status conditions or warning messages need to
 focus on the fact that a ReferenceGrant does not exist to allow this reference.
 No hints should be provided about whether or not the referenced resource exists.
 
-##### Exceptions
+#### Exceptions
+
 Cross namespace Route -> Gateway binding follows a slightly different pattern
 where the handshake mechanism is built into the Gateway resource. For more
 information on that approach, refer to the relevant [Security Model
@@ -976,7 +917,8 @@ attacks. ReferenceGrant provides a safeguard for that. Exceptions MUST only be
 made by implementations that are absolutely certain that other equally effective
 safeguards are in place.
 
-##### Conformance Level
+#### Conformance Level
+
 ReferenceGrant support is a "CORE" conformance level requirement for
 cross-namespace references that originate from the following objects:
 
@@ -994,7 +936,7 @@ in the Exceptions section above.
 Other "ImplementationSpecific" objects and references MUST also use this flow
 for cross-namespace references, except as noted in the Exceptions section above.
 
-##### Potential Future API Group Change
+#### Potential Future API Group Change
 
 ReferenceGrant is starting to gain interest outside of Gateway API and SIG
 Network use cases. It is possible that this resource may move to a more neutral

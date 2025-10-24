@@ -91,6 +91,7 @@ tempfile = "3.8"
 
 [features]
 proxy = ["dep:pingora"]
+gateway = []
 errorlogs = []
 
 # The profile that 'dist' will build with

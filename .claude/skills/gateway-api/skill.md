@@ -1,4 +1,12 @@
+---
+name: Gateway API Reference
+description: Provide a technical reference for the Kubernetes Gateway API, including a list of terminology and requirements for an API Gateway to satisfy in order to be conformant.
+---
+
 # Kubernetes Gateway API Reference
+
+This skill provides a technical reference for the Kubernetes Gateway API, which is the formal list of API requirements that an API Gateway must satisfy
+to integrate with Kubernetes.
 
 ## Description
 
