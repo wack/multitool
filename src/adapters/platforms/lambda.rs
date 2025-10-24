@@ -132,8 +132,9 @@ impl Platform for LambdaPlatform {
         Ok(())
     }
 
+    // No promotion step needed for Lambda platform
     async fn promote_rollout(&mut self) -> Result<()> {
-        todo!("I don't think Lambdas promote until we support Lambda Aliases.")
+        Ok(())
     }
 }
 

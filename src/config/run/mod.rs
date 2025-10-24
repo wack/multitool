@@ -12,6 +12,9 @@ pub struct RunSubcommand {
     application: Option<String>,
     #[arg(long, short = 'o', default_value = Some(MULTITOOL_ORIGIN), env = "MULTI_ORIGIN")]
     origin: Option<String>,
+    /// Skip canary analysis and immediately deploy at 100% traffic
+    #[arg(long, env = "MULTI_FORCE", default_value_t = false)]
+    force: bool,
 
     ///Cloudflare config
     /// The Cloudflare account ID to use when deploying to Workers.
@@ -99,6 +102,10 @@ impl RunSubcommand {
 
     pub fn origin(&self) -> Option<&str> {
         self.origin.as_deref()
+    }
+
+    pub fn force(&self) -> bool {
+        self.force
     }
 
     /// Merge the values from this manifest file into this struct.
