@@ -11,8 +11,6 @@ mod init;
 mod login;
 mod logout;
 mod run;
-mod run_canary_mode;
-mod run_force_mode;
 mod version;
 
 #[cfg(feature = "proxy")]

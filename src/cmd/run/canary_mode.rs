@@ -8,28 +8,46 @@ use crate::ControllerSubsystem;
 use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
 
-use crate::cmd::run::{DEFAULT_SHUTDOWN_TIMEOUT, DeploymentMode};
+use super::{DEFAULT_SHUTDOWN_TIMEOUT, DeploymentMode};
 
 /// Canary deployment mode - runs the full canary analysis subsystems
-pub struct CanaryMode;
+pub struct CanaryMode {
+    backend: BackendClient,
+    monitor: BoxedMonitor,
+    ingress: BoxedIngress,
+    platform: BoxedPlatform,
+    meta: RolloutMetadata,
+}
 
-#[async_trait]
-impl DeploymentMode for CanaryMode {
-    async fn handle(
+impl CanaryMode {
+    pub fn new(
         backend: BackendClient,
         monitor: BoxedMonitor,
         ingress: BoxedIngress,
         platform: BoxedPlatform,
         meta: RolloutMetadata,
-    ) -> Result<()> {
+    ) -> Self {
+        Self {
+            backend,
+            monitor,
+            ingress,
+            platform,
+            meta,
+        }
+    }
+}
+
+#[async_trait]
+impl DeploymentMode for CanaryMode {
+    async fn dispatch(self: Box<Self>) -> Result<()> {
         // Build the ControllerSubsystem using the boxed objects.
         debug!("Building controller...");
         let controller = ControllerSubsystem::builder()
-            .backend(backend)
-            .monitor(monitor)
-            .ingress(ingress)
-            .platform(platform)
-            .meta(meta)
+            .backend(self.backend)
+            .monitor(self.monitor)
+            .ingress(self.ingress)
+            .platform(self.platform)
+            .meta(self.meta)
             .build();
 
         info!("Starting the rollout...");

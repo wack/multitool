@@ -14,8 +14,11 @@ use tracing::{debug, error, info};
 
 use crate::Terminal;
 
-use super::run_canary_mode::CanaryMode;
-use super::run_force_mode::ForceMode;
+mod canary_mode;
+mod force_mode;
+
+pub use canary_mode::CanaryMode;
+pub use force_mode::ForceMode;
 
 /// The amount of time, in miliseconds, each subsystem has
 /// to gracefully shutdown before being forcably shutdown.
@@ -24,13 +27,7 @@ pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 /// Trait defining different deployment modes for the MultiTool CLI
 #[async_trait]
 pub(super) trait DeploymentMode {
-    async fn handle(
-        backend: BackendClient,
-        monitor: BoxedMonitor,
-        ingress: BoxedIngress,
-        platform: BoxedPlatform,
-        meta: RolloutMetadata,
-    ) -> Result<()>;
+    async fn dispatch(self: Box<Self>) -> Result<()>;
 }
 
 /// Deploy the Lambda function as a canary and monitor it.
@@ -175,12 +172,20 @@ impl Run {
                 .await?;
 
             // Dispatch to the appropriate deployment mode based on the force flag
-            if self.args.force() {
+            let mode: Box<dyn DeploymentMode> = if self.args.force() {
                 info!("Force mode enabled - bypassing canary analysis");
-                ForceMode::handle(self.backend, monitor, ingress, platform, metadata).await
+                Box::new(ForceMode::new(self.backend, ingress, platform, metadata))
             } else {
-                CanaryMode::handle(self.backend, monitor, ingress, platform, metadata).await
-            }
+                Box::new(CanaryMode::new(
+                    self.backend,
+                    monitor,
+                    ingress,
+                    platform,
+                    metadata,
+                ))
+            };
+
+            mode.dispatch().await
         })
     }
 

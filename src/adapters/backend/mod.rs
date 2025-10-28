@@ -151,31 +151,6 @@ impl BackendClient {
         Ok(locked_state)
     }
 
-    /// Lock a state synchronously without requiring a channel sender
-    pub(crate) async fn lock_state_sync(
-        &self,
-        meta: &RolloutMetadata,
-        state: &RolloutState,
-    ) -> Result<RolloutState> {
-        trace!("Locking state {}...", state.state_type);
-        self.client
-            .rollout_states_api()
-            .update_rollout_state(
-                *meta.workspace_id(),
-                *meta.application_id(),
-                *meta.rollout_id(),
-                state.id,
-                UpdateRolloutStateRequest {
-                    status: Some(Some(RolloutStateStatus::InProgress)),
-                },
-            )
-            .await
-            .into_diagnostic()?;
-
-        trace!("State locked successfully");
-        Ok(state.clone())
-    }
-
     pub(crate) async fn refresh_lock(
         &self,
         meta: &RolloutMetadata,
@@ -257,31 +232,6 @@ impl BackendClient {
                 *meta.application_id(),
                 *meta.rollout_id(),
                 locked_state.state().id,
-                UpdateRolloutStateRequest {
-                    status: Some(Some(RolloutStateStatus::Done)),
-                },
-            )
-            .await
-            .into_diagnostic()?;
-
-        trace!("State successfully marked as complete");
-        Ok(())
-    }
-
-    /// Mark a state as completed synchronously using just the state
-    pub(crate) async fn mark_state_completed_sync(
-        &self,
-        meta: &RolloutMetadata,
-        state: &RolloutState,
-    ) -> Result<()> {
-        trace!("Marking state {} as completed...", state.state_type);
-        self.client
-            .rollout_states_api()
-            .update_rollout_state(
-                *meta.workspace_id(),
-                *meta.application_id(),
-                *meta.rollout_id(),
-                state.id,
                 UpdateRolloutStateRequest {
                     status: Some(Some(RolloutStateStatus::Done)),
                 },
