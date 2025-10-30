@@ -1,23 +1,34 @@
+use crate::adapters::BackendClient;
 use crate::adapters::backend::{ApplicationId, CreateRolloutParams, WorkspaceId};
 use crate::adapters::{BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
+use crate::config::RunSubcommand;
 use crate::fs::{FileSystem, SessionFile, application_manifest};
 use crate::manifest::Manifest;
-use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
-use crate::{ControllerSubsystem, adapters::BackendClient, config::RunSubcommand};
+use async_trait::async_trait;
 use miette::{Context, Diagnostic, Result, miette};
 use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
 use tokio::join;
 use tokio::runtime::Runtime;
-use tokio::time::Duration;
-use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
 use tracing::{debug, error, info};
 
 use crate::Terminal;
 
+mod canary_mode;
+mod force_mode;
+
+pub use canary_mode::CanaryMode;
+pub use force_mode::ForceMode;
+
 /// The amount of time, in miliseconds, each subsystem has
 /// to gracefully shutdown before being forcably shutdown.
-const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
+pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
+
+/// Trait defining different deployment modes for the MultiTool CLI
+#[async_trait]
+pub(super) trait DeploymentMode {
+    async fn dispatch(self: Box<Self>) -> Result<()>;
+}
 
 /// Deploy the Lambda function as a canary and monitor it.
 pub struct Run {
@@ -160,30 +171,21 @@ impl Run {
                 .create_rollout(workspace.id, application.id, &platform, &ingress, &monitor)
                 .await?;
 
-            // Build the ControllerSubsystem using the boxed objects.
-            debug!("Building controller...");
-            let controller = ControllerSubsystem::builder()
-                .backend(self.backend)
-                .monitor(monitor)
-                .ingress(ingress)
-                .platform(platform)
-                .meta(metadata)
-                .build();
+            // Dispatch to the appropriate deployment mode based on the force flag
+            let mode: Box<dyn DeploymentMode> = if self.args.force() {
+                info!("Force mode enabled - bypassing canary analysis");
+                Box::new(ForceMode::new(self.backend, ingress, platform, metadata))
+            } else {
+                Box::new(CanaryMode::new(
+                    self.backend,
+                    monitor,
+                    ingress,
+                    platform,
+                    metadata,
+                ))
+            };
 
-            info!("Starting the rollout...");
-
-            // Let's capture the shutdown signal from the OS.
-            Toplevel::new(|s| async move {
-                // • Start the action listener subsystem.
-                s.start(SubsystemBuilder::new(
-                    CONTROLLER_SUBSYSTEM_NAME,
-                    controller.into_subsystem(),
-                ));
-            })
-            .catch_signals()
-            .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
-            .await
-            .map_err(Into::into)
+            mode.dispatch().await
         })
     }
 
@@ -202,6 +204,7 @@ impl Run {
             .platform(platform)
             .ingress(ingress)
             .monitor(monitor)
+            .force(self.args.force())
             .build();
 
         let rollout = self.backend.new_rollout(params).await?;

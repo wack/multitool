@@ -8,13 +8,13 @@ use crate::{fs::Session, metrics::ResponseStatusCode, utils::circuit_breaker::Ht
 use bon::Builder;
 use chrono::DateTime;
 use miette::{IntoDiagnostic, Result, bail};
-use multitool_sdk::models::{CreateErrorRequest, Rollout};
+use multitool_sdk::models::{CreateErrorRequest, Rollout, RolloutStatus};
 use multitool_sdk::{
     apis::{Api, ApiClient, configuration::Configuration},
     models::{
         ApplicationDetails, ApplicationGroup, CreateResponseCodeMetricsRequest, LoginRequest,
         LoginSuccess, RolloutState, RolloutStateStatus, StatusCodeMetrics,
-        UpdateRolloutStateRequest, WorkspaceSummary,
+        UpdateRolloutStateRequest, UpdateRolloutStatusRequest, WorkspaceSummary,
     },
 };
 
@@ -252,9 +252,16 @@ impl BackendClient {
             .platform(params.platform.get_config())
             .build();
 
-        let request = RolloutRequest::builder()
-            .config(RolloutConfig::WebService(config))
-            .build();
+        let request = if params.force {
+            RolloutRequest::builder()
+                .config(RolloutConfig::WebService(config))
+                .force(true)
+                .build()
+        } else {
+            RolloutRequest::builder()
+                .config(RolloutConfig::WebService(config))
+                .build()
+        };
 
         let request_json = serde_json::to_value(&request).into_diagnostic()?;
 
@@ -271,6 +278,31 @@ impl BackendClient {
 
         trace!("Rollout created successfully");
         Ok(*response.rollout)
+    }
+
+    /// Update the status of a rollout
+    pub(crate) async fn update_rollout(
+        &self,
+        meta: &RolloutMetadata,
+        status: RolloutStatus,
+    ) -> Result<()> {
+        trace!("Updating rollout status to {:?}...", status);
+
+        let request = UpdateRolloutStatusRequest { status };
+
+        self.client
+            .rollouts_api()
+            .update_rollout_status(
+                *meta.workspace_id(),
+                *meta.application_id(),
+                *meta.rollout_id(),
+                request,
+            )
+            .await
+            .into_diagnostic()?;
+
+        trace!("Rollout status updated successfully");
+        Ok(())
     }
 
     /// This fuction logs the user into the backend by exchanging these credentials
@@ -559,6 +591,8 @@ mod tests {
 #[serde(rename_all = "snake_case")]
 pub struct RolloutRequest {
     config: RolloutConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    force: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -633,4 +667,6 @@ pub struct CreateRolloutParams<'a> {
     pub platform: &'a BoxedPlatform,
     pub ingress: &'a BoxedIngress,
     pub monitor: &'a BoxedMonitor,
+    #[builder(default = false)]
+    pub force: bool,
 }
