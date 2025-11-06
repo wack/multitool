@@ -12,7 +12,7 @@ use std::{
 pub(crate) use file::File;
 pub(crate) use manifest::application_manifest;
 pub(crate) use session::{Session, SessionFile, UserCreds};
-pub(crate) use wrangler::{JsonWranglerFile, TomlWranglerFile};
+pub(crate) use wrangler::{JsonWranglerFile, JsoncWranglerFile, TomlWranglerFile};
 
 use manifest::{JsonManifest, Manifest, TomlManifest};
 use wrangler::Wrangler;
@@ -77,15 +77,17 @@ impl FileSystem {
         Ok(manifest_box)
     }
 
-    /// Load the wrangler configuration file, looking for both TOML and JSON formats
+    /// Load the wrangler configuration file, looking for TOML, JSON, and JSONC formats
     pub fn wrangler_config(&self) -> Result<Wrangler, WranglerMissing> {
-        // Attempt to load a TOML wrangler file. Fallback to JSON.
+        // Attempt to load a TOML wrangler file. Fallback to JSON, then JSONC.
         let toml_wrangler = self.load_file(TomlWranglerFile);
         let json_wrangler = self.load_file(JsonWranglerFile);
-        let wrangler_config = match (toml_wrangler, json_wrangler) {
-            (Ok(wrangler), _) => wrangler,
-            (Err(_), Ok(wrangler)) => wrangler,
-            (Err(_), Err(_)) => return Err(WranglerMissing),
+        let jsonc_wrangler = self.load_file(JsoncWranglerFile);
+        let wrangler_config = match (toml_wrangler, json_wrangler, jsonc_wrangler) {
+            (Ok(wrangler), _, _) => wrangler,
+            (Err(_), Ok(wrangler), _) => wrangler,
+            (Err(_), Err(_), Ok(wrangler)) => wrangler,
+            (Err(_), Err(_), Err(_)) => return Err(WranglerMissing),
         };
         Ok(wrangler_config)
     }
@@ -119,6 +121,7 @@ impl FileSystem {
         match F::EXTENSION {
             "toml" => self.read_toml_file(file),
             "json" => self.read_json_file(file),
+            "jsonc" => self.read_jsonc_file(file),
             _ => Err(miette!(
                 "Extension unknown! Internal error. Please file this error as a bug."
             )),
@@ -150,6 +153,18 @@ impl FileSystem {
         Ok(document)
     }
 
+    /// Open the file and deserialize it with serde (JSONC with comments support).
+    fn read_jsonc_file<F: File>(&self, file: F) -> Result<F::Data> {
+        // • Get the path to the file.
+        let path = file.path(self)?;
+        // • Open it as a byte stream, then deserialize those bytes.
+        let mut buffer = String::new();
+        let mut file = std::fs::File::open(path).into_diagnostic()?;
+        file.read_to_string(&mut buffer).into_diagnostic()?;
+        let document = serde_json5::from_str(&buffer).into_diagnostic()?;
+        Ok(document)
+    }
+
     /// Store the file, using its canonical path.
     pub(crate) fn save_file<F: File>(&self, file: &F, blob: &F::Data) -> Result<()> {
         // • Get the path to the file.
@@ -159,6 +174,7 @@ impl FileSystem {
         let marshalled = match F::EXTENSION {
             "toml" => toml::to_string_pretty(blob).into_diagnostic()?,
             "json" => serde_json::to_string_pretty(blob).into_diagnostic()?,
+            "jsonc" => serde_json5::to_string(blob).into_diagnostic()?,
             _ => {
                 return Err(miette!(
                     "Extension unknown! Internal error. Please file this error as a bug."
