@@ -94,7 +94,7 @@ pub struct Wrangler {
 }
 
 const WRANGLER_PREFIX: &str = "wrangler";
-const WRANGLER_EXTENSIONS: [&str; 2] = ["toml", "json"];
+const WRANGLER_EXTENSIONS: [&str; 3] = ["toml", "json", "jsonc"];
 
 /// A TOML formatted wrangler file
 pub struct TomlWranglerFile;
@@ -114,6 +114,16 @@ impl StaticFile for JsonWranglerFile {
     const DIR: DirectoryType = DirectoryType::ApplicationRoot;
     const NAME: &'static str = WRANGLER_PREFIX;
     const EXTENSION: &'static str = WRANGLER_EXTENSIONS[1];
+}
+
+/// A JSONC formatted wrangler file
+pub struct JsoncWranglerFile;
+
+impl StaticFile for JsoncWranglerFile {
+    type Data = Wrangler;
+    const DIR: DirectoryType = DirectoryType::ApplicationRoot;
+    const NAME: &'static str = WRANGLER_PREFIX;
+    const EXTENSION: &'static str = WRANGLER_EXTENSIONS[2];
 }
 
 #[cfg(test)]
@@ -187,5 +197,68 @@ mod tests {
         let toml_str = toml::to_string_pretty(&wrangler).expect("Failed to serialize to TOML");
         let _deserialized: Wrangler =
             toml::from_str(&toml_str).expect("Failed to deserialize from TOML");
+    }
+
+    #[test]
+    fn test_wrangler_serde_jsonc() {
+        const RAW_JSONC: &str = r#"/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "multitool-quickstart",
+    "account_id": "986dc7f2976d17c6205288a7a946ef6a",
+    "main": "src/index.js",
+    "compatibility_date": "2025-11-06",
+    "observability": {
+        "enabled": true
+    }
+    /**
+     * Smart Placement
+     * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+     */
+    // "placement": { "mode": "smart" }
+    /**
+     * Bindings
+     * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
+     * databases, object storage, AI inference, real-time communication and more.
+     * https://developers.cloudflare.com/workers/runtime-apis/bindings/
+     */
+    /**
+     * Environment Variables
+     * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+     */
+    // "vars": { "MY_VARIABLE": "production_value" }
+    /**
+     * Note: Use secrets to store sensitive data.
+     * https://developers.cloudflare.com/workers/configuration/secrets/
+     */
+    /**
+     * Static Assets
+     * https://developers.cloudflare.com/workers/static-assets/binding/
+     */
+    // "assets": { "directory": "./public/", "binding": "ASSETS" }
+    /**
+     * Service Bindings (communicate between multiple Workers)
+     * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
+     */
+    // "services": [{ "binding": "MY_SERVICE", "service": "my-service" }]
+}"#;
+
+        let observed: Wrangler = serde_json5::from_str(RAW_JSONC).expect("Failed to parse JSONC");
+
+        assert_eq!(observed.name, "multitool-quickstart");
+        assert_eq!(
+            observed.account_id,
+            Some("986dc7f2976d17c6205288a7a946ef6a".to_string())
+        );
+        assert_eq!(observed.main, "src/index.js");
+        assert_eq!(observed.compatibility_date, Some("2025-11-06".to_string()));
+        assert!(observed.observability.is_some());
+        if let Some(observability) = observed.observability {
+            assert!(observability.enabled);
+            assert_eq!(observability.head_sampling_rate, None);
+        }
     }
 }
