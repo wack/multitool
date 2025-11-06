@@ -26,7 +26,7 @@ You will:
 
 - [ ] <a href="https://developers.cloudflare.com/workers/wrangler/install-and-update/" target="_blank">Cloudflare Wrangler CLI installed</a>
 
-  - [ ] Create an <a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank">Cloudflare API Token</a> with Workers Observability - read and Workers Scripts - edit permissions.
+  - [ ] Create an <a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank">Cloudflare API Token</a> with `Workers Observability - read` and `Workers Scripts - edit` permissions.
 
   - [ ] Run `npx wrangler login` and follow the prompts to login to Cloudflare
 
@@ -36,51 +36,26 @@ You will:
 
 ## 🏗️ Step 1: Create the Worker
 
-Create a new "Hello World" Cloudflare Worker
+Create a new "Hello World" Cloudflare Worker using [C3](https://developers.cloudflare.com/pages/get-started/c3/) and [our template](https://github.com/wack/multitool-cloudflare-quickstart)
 
 ```bash
-npm create cloudflare@latest -- multitool-quickstart --type hello-world --lang js --no-git -y
+npm create cloudflare@latest -- multitool-quickstart --template git@github.com:wack/multitool-cloudflare-quickstart.git --no-git
 ```
 
-## 📦 Step 2: Create and package the Worker code
-
-This tutorial simulates two versions of a Worker:
+This template contains two versions of a Worker:
 
 - A “healthy” version that always returns a `200` HTTP status code
 - A “buggy” version that randomly fails with a `400` HTTP status code 50% of the time
 
-We'll overwrite the `index.js` file and add a new file for the buggy version:
+## ⚙️ Step 2: Update variables
 
-### Create the healthy version
+You'll need to update some variables before we can deploy the worker:
 
-This version always returns a `200` HTTP status code response.
+In `wrangler.jsonc` update `MY_CLOUDFLARE_ACCOUNT_ID` to your cloudflare account number
 
-```bash
-cat << EOF > multitool-quickstart/src/index.js
-export default {
-	async fetch(request, env, ctx) {
-		return new Response('Hello World!', { status: 200 });
-	},
-};
-EOF
-```
+📝 **Note:** To get your Cloudflare Account ID, [follow the instructions here](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/).
 
-### Create the buggy version
-
-This version introduces a simulated bug by returning a `400` HTTP status code 50% of the time.
-
-```bash
-cat << EOF > multitool-quickstart/src/index_errors.js
-export default {
-	async fetch(request, env, ctx) {
-		const rand = Math.random();
-		return new Response(rand < 0.5 ? 'Bad Request' : 'Hello World!', { status: rand < 0.5 ? 400 : 200 });
-	},
-};
-EOF
-```
-
-## ⚙️ Step 3: Deploy the worker
+## ⬆️ Step 3: Deploy the worker
 
 Now that we added the updated code to our worker, let's deploy it.
 
@@ -123,40 +98,40 @@ Now that the Worker is deployed and accessible via its URL, create the applicati
 From the MultiTool app:
 
 1. Create a workspace
-2. Create an application named `quickstart`
+2. Create an application
 
-After the application is set up, login to the MultiTool CLI if needed:
+After the application is set up, login to the MultiTool CLI, if needed:
 
 ```bash
 multi login
 ```
 
-## ⚙️ Step 6: Add your configuration file
+## ⚙️ Step 6: Update your configuration file
 
-Now that we have our workspace and app set up in the MultiTool app, we need to create a manfiest file called `MultiTool.toml` so the MultiTool CLI knows how to deploy your application.
+Now that we have our workspace and app set up in the MultiTool app, we need to update the manfiest file called `MultiTool.toml` so the MultiTool CLI knows how to deploy your application.
 
-If you used the sample values throughout this tutorial, you can use this file, but make sure to replace MY_WORKSPACE_NAME, and MY_CLOUDFLARE_ACCOUNT_ID with the correct values:
-
-📝 **Note:** To get your Cloudflare Account ID, [follow the instructions here](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/).
+If you used the sample values throughout this tutorial, you can use this file, but make sure to replace MY_WORKSPACE_NAME and MY_APPLICATION_NAME:
 
 ```bash
-cat << EOF > MultiTool.toml
 workspace = "MY_WORKSPACE_NAME"
-application = "quickstart"
+application = "MY_APPLICATION_NAME"
 
 [config.cloudflare]
 worker-name = "multitool-quickstart"
-account-id = "MY_CLOUDFLARE_ACCOUNT_ID"
-main-module = "index.ts"
-artifact-path = "src/"
-EOF
+project-dir = "src/"
 ```
 
 ## 🚀 Step 7: Roll out healthy code and simulate stable traffic
 
-📝 **Note:** Exiting the terminal before a CLI operation finishes can leave your rollout in a stuck state due to a known bug. Please wait for the operation to complete before closing the terminal. If you've already run into this issue, contact support@wack.run and we’ll help resolve it. A fix is on the way.
+📝 **Note:** Exiting the terminal before a CLI operation finishes can leave your rollout in a stuck state for a few minutes. Please wait for the operation to complete before closing the terminal. If you've already run into this issue, contact support@wack.run and we’ll help resolve it.
 
-Start the rollout using `index.ts` as the `main-module` value in your `MultiTool.toml` file:
+Ensure `index.ts` is set as the `main` value in your `wrangler.jsonc` file:
+
+```json
+"main": "src/index_errors.js",
+```
+
+Then start the rollout by running MultiTool:
 
 ```bash
 multi run --cloudflare-api-token $MY_CLOUDFLARE_TOKEN
@@ -188,7 +163,13 @@ As traffic hits the new version, MultiTool will evaluate its behavior and promot
 
 To test a broken rollout, use the `index_errors.ts` file.
 
-Start the rollout using `index_errors.ts` as the `main-module` value in your `MultiTool.toml` file:
+Update the `main` value in your `wrangler.jsonc` file:
+
+```json
+"main": "src/index_errors.js",
+```
+
+Then re-run MultiTool
 
 ```bash
 multi run --cloudflare-api-token $MY_CLOUDFLARE_TOKEN
