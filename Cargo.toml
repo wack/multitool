@@ -1,6 +1,6 @@
 [package]
 name = "multitool"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 default-run = "multi"
 repository = "https://github.com/wack/multitool"
@@ -10,7 +10,6 @@ homepage = "https://multitool.run/"
 [[bin]]
 name = "multi"
 path = "src/bin/main.rs"
-edition = "2024"
 
 [workspace]
 members = ["crates/multi-core"]
@@ -18,7 +17,7 @@ members = ["crates/multi-core"]
 [workspace.package]
 authors = ["The MultiTool Team"]
 edition = "2024"
-version = "0.1.1"
+version = "0.1.2"
 
 [dependencies]
 async-stream.workspace = true
@@ -59,12 +58,12 @@ toml = { version = "0.8.8", features = ["preserve_order"] }
 multi-core = { path = "crates/multi-core" }
 tracing = { version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.19", features = [
-    "json",
-    "local-time",
-    "time",
-    "chrono",
-    "fmt",
-    "env-filter",
+  "json",
+  "local-time",
+  "time",
+  "chrono",
+  "fmt",
+  "env-filter",
 ] }
 url = "2.5.4"
 uuid = { version = "1.9", features = ["serde", "v4"] }
