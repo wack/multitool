@@ -1,6 +1,6 @@
 [package]
 name = "multitool"
-version = "0.3.5"
+version = "0.3.6-beta"
 edition = "2024"
 default-run = "multi"
 repository = "https://github.com/wack/multitool"
@@ -58,12 +58,12 @@ toml = { version = "0.8.8", features = ["preserve_order"] }
 multi-core = { path = "crates/multi-core" }
 tracing = { version = "0.1.41", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.19", features = [
-  "json",
-  "local-time",
-  "time",
-  "chrono",
-  "fmt",
-  "env-filter",
+    "json",
+    "local-time",
+    "time",
+    "chrono",
+    "fmt",
+    "env-filter",
 ] }
 url = "2.5.4"
 uuid = { version = "1.9", features = ["serde", "v4"] }
