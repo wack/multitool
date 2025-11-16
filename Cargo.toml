@@ -1,6 +1,6 @@
 [package]
 name = "multitool"
-version = "0.3.6"
+version = "0.3.6-beta"
 edition = "2024"
 default-run = "multi"
 repository = "https://github.com/wack/multitool"

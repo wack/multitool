@@ -2313,7 +2313,7 @@ dependencies = [
 
 [[package]]
 name = "multitool"
-version = "0.3.6"
+version = "0.3.6-beta"
 dependencies = [
  "async-stream",
  "async-trait",
