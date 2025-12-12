@@ -129,9 +129,11 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
-      - name: "Install OpenSSL"
+      - name: "Install OpenSSL and MUSL build dependencies"
         if: "${{ startsWith(matrix.runner, 'ubuntu') }}"
-        run: "sudo apt-get install -yq openssl libssl-dev"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -yq openssl libssl-dev musl-tools perl make
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
