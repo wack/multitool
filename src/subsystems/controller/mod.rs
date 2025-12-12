@@ -63,8 +63,6 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
         let platform_subsystem = PlatformSubsystem::new(self.platform);
         let platform_handle = platform_subsystem.handle();
 
-        let monitor_config = self.monitor.get_config();
-
         let mut monitor_controller = MonitorController::builder().monitor(self.monitor).build();
         let observation_stream = monitor_controller.stream()?;
 
@@ -81,12 +79,13 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
             .canary_sender(canary_sender)
             .build();
 
-        let error_logs_controller = ErrorLogsController::builder()
-            .metadata(self.meta)
-            .monitor(monitor_config)
-            .backend(self.backend)
-            .build()
-            .map_err(|e| miette::miette!("Failed to create ErrorLogsController: {}", e))?;
+        // TODO: Commenting this out for now while we explore shutdown issues
+        // let error_logs_controller = ErrorLogsController::builder()
+        //     .metadata(self.meta)
+        //     .monitor(monitor_config)
+        //     .backend(self.backend)
+        //     .build()
+        //     .map_err(|e| miette::miette!("Failed to create ErrorLogsController: {}", e))?;
 
         // • Start the ingress subsystem.
         subsys.start(SubsystemBuilder::new(
@@ -112,10 +111,11 @@ impl IntoSubsystem<Report> for ControllerSubsystem {
             relay_subsystem.into_subsystem(),
         ));
 
-        subsys.start(SubsystemBuilder::new(
-            ERROR_LOGS_SUBSYSTEM_NAME,
-            error_logs_controller.into_subsystem(),
-        ));
+        // TODO: Commenting this out for now while we explore shutdown issues
+        // subsys.start(SubsystemBuilder::new(
+        //     ERROR_LOGS_SUBSYSTEM_NAME,
+        //     error_logs_controller.into_subsystem(),
+        // ));
 
         subsys.wait_for_children().await;
         Ok(())
