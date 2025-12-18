@@ -5,8 +5,12 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
 mod cloudflare;
+#[cfg(feature = "vercel")]
+mod vercel;
 
 pub(crate) use cloudflare::CloudflareFileManifest;
+#[cfg(feature = "vercel")]
+pub(crate) use vercel::VercelFileManifest;
 
 pub struct LambdaZip(Vec<u8>);
 

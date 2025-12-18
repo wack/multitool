@@ -49,6 +49,17 @@ pub struct RunSubcommand {
     /// The path to the artifact to upload to AWS.
     #[arg(long, env = "AWS_ARTIFACT_PATH")]
     aws_artifact_path: Option<PathBuf>,
+
+    /// Vercel Config
+    /// The API token to use for Vercel API requests.
+    #[arg(long, env = "VERCEL_API_TOKEN")]
+    vercel_api_token: Option<String>,
+    /// The Vercel team ID (optional)
+    #[arg(long, env = "VERCEL_TEAM_ID")]
+    vercel_team_id: Option<String>,
+    /// The path to the Vercel project directory.
+    #[arg(long, env = "VERCEL_PROJECT_DIR")]
+    vercel_project_dir: Option<PathBuf>,
 }
 
 impl RunSubcommand {
@@ -90,6 +101,18 @@ impl RunSubcommand {
 
     pub fn aws_artifact_path(&self) -> Option<&Path> {
         self.aws_artifact_path.as_deref()
+    }
+
+    pub fn vercel_api_token(&self) -> Option<&str> {
+        self.vercel_api_token.as_deref()
+    }
+
+    pub fn vercel_team_id(&self) -> Option<&str> {
+        self.vercel_team_id.as_deref()
+    }
+
+    pub fn vercel_project_dir(&self) -> Option<&Path> {
+        self.vercel_project_dir.as_deref()
     }
 
     pub fn workspace(&self) -> Option<&str> {

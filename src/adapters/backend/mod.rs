@@ -625,6 +625,11 @@ pub enum IngressConfig {
         account_id: String,
         worker_name: String,
     },
+    #[cfg(feature = "vercel")]
+    Vercel {
+        project_name: String,
+        team_id: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -645,6 +650,12 @@ pub enum MonitorConfig {
         account_id: String,
         worker_name: String,
     },
+    #[cfg(feature = "vercel")]
+    Vercel {
+        api_token: String,
+        project_name: String,
+        team_id: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -657,6 +668,11 @@ pub enum PlatformConfig {
     CloudflareWorker {
         account_id: String,
         worker_name: String,
+    },
+    #[cfg(feature = "vercel")]
+    Vercel {
+        project_name: String,
+        team_id: Option<String>,
     },
 }
 
