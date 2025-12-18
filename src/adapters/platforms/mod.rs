@@ -7,6 +7,8 @@ pub type BoxedPlatform = Box<dyn Platform + Send + Sync>;
 
 pub(crate) use cloudflare::CloudflareWorkerPlatform;
 pub(crate) use lambda::LambdaPlatform;
+#[cfg(feature = "vercel")]
+pub(crate) use vercel::VercelPlatform;
 
 use super::backend::PlatformConfig;
 
@@ -36,6 +38,8 @@ impl Shutdownable for MockPlatform {
 
 mod cloudflare;
 mod lambda;
+#[cfg(feature = "vercel")]
+mod vercel;
 
 #[cfg(test)]
 mod tests {

@@ -13,6 +13,8 @@ pub type StatusCode = CategoricalObservation<5, ResponseStatusCode>;
 
 pub use cloudflare::CloudflareMonitor;
 pub use cloudwatch::CloudWatch;
+#[cfg(feature = "vercel")]
+pub use vercel::VercelMonitor;
 
 use super::backend::MonitorConfig;
 
@@ -60,3 +62,5 @@ pub trait Monitor: Shutdownable {
 
 mod cloudflare;
 mod cloudwatch;
+#[cfg(feature = "vercel")]
+mod vercel;

@@ -15,6 +15,8 @@ use crate::{
     config::RunSubcommand,
     fs::{FileSystem, wrangler::Wrangler},
 };
+#[cfg(feature = "vercel")]
+use crate::adapters::{VercelClient, VercelIngress, VercelMonitor, VercelPlatform};
 use miette::Result;
 
 /// The application manifest only needs to be loaded once, so we
@@ -156,6 +158,8 @@ impl ConfigSection {
 pub enum MonitorConfig {
     AwsCloudwatch(AwsCloudwatch),
     CloudflareObservability(CloudflareConfig),
+    #[cfg(feature = "vercel")]
+    Vercel(VercelConfig),
 }
 
 impl MonitorConfig {
@@ -171,6 +175,8 @@ impl MonitorConfig {
             MonitorConfig::CloudflareObservability(cloudflare_observability) => {
                 cloudflare_observability.load_monitor(args)
             }
+            #[cfg(feature = "vercel")]
+            MonitorConfig::Vercel(vercel) => vercel.load_monitor(args),
         }
     }
 }
@@ -242,6 +248,8 @@ impl AwsCloudwatch {
 pub enum IngressConfig {
     AwsApiGateway(AwsApiGatewayConfig),
     CloudflareWorkers(CloudflareConfig),
+    #[cfg(feature = "vercel")]
+    Vercel(VercelConfig),
 }
 
 impl IngressConfig {
@@ -249,6 +257,8 @@ impl IngressConfig {
         match self {
             IngressConfig::AwsApiGateway(config) => config.load_ingress(args).await,
             IngressConfig::CloudflareWorkers(config) => config.load_ingress(args),
+            #[cfg(feature = "vercel")]
+            IngressConfig::Vercel(config) => config.load_ingress(args),
         }
     }
 }
@@ -282,6 +292,8 @@ impl AwsApiGatewayConfig {
 pub enum PlatformConfig {
     AwsLambda(AwsLambdaConfig),
     CloudflareWorkers(CloudflareConfig),
+    #[cfg(feature = "vercel")]
+    Vercel(VercelConfig),
 }
 
 impl PlatformConfig {
@@ -289,6 +301,8 @@ impl PlatformConfig {
         match self {
             PlatformConfig::AwsLambda(config) => config.load_platform(args).await,
             PlatformConfig::CloudflareWorkers(config) => config.load_platform(args),
+            #[cfg(feature = "vercel")]
+            PlatformConfig::Vercel(config) => config.load_platform(args),
         }
     }
 }
@@ -416,6 +430,87 @@ impl CloudflareConfig {
             client,
             project_dir,
             wrangler,
+        )))
+    }
+}
+
+#[cfg(feature = "vercel")]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct VercelConfig {
+    project_name: String,
+    project_dir: Option<String>,
+    team_id: Option<String>,
+
+    /// We always get this value from the command line.
+    #[serde(skip)]
+    api_token: Option<String>,
+}
+
+#[cfg(feature = "vercel")]
+impl VercelConfig {
+    fn load_api_token(&self, args: &RunSubcommand) -> Result<String> {
+        args
+            .vercel_api_token()
+            .map(ToString::to_string)
+            .or_else(|| std::env::var("VERCEL_API_TOKEN").ok())
+            .ok_or_else(|| miette!("No Vercel API token was provided. Either set the environment variable VERCEL_API_TOKEN, or provide it as the --vercel-api-token CLI flag."))
+    }
+
+    fn load_team_id(&self, args: &RunSubcommand) -> Option<String> {
+        args.vercel_team_id()
+            .map(ToString::to_string)
+            .or_else(|| self.team_id.clone())
+            .or_else(|| std::env::var("VERCEL_TEAM_ID").ok())
+    }
+
+    fn load_project_dir(&self, fs: &FileSystem, args: &RunSubcommand) -> Result<PathBuf> {
+        if let Some(path) = args.vercel_project_dir() {
+            return Ok(path.to_path_buf());
+        }
+
+        if let Some(path) = &self.project_dir {
+            return Ok(PathBuf::from(path));
+        }
+
+        // Finally, default to current working directory
+        let current_dir = match fs.application_dir() {
+            Err(err) => Err(err),
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => std::env::current_dir()
+                .map_err(|e| miette!("Failed to get current directory: {}", e)),
+        }?;
+
+        Ok(current_dir)
+    }
+
+    fn load_ingress(&self, args: &RunSubcommand) -> Result<BoxedIngress> {
+        let api_token = self.load_api_token(args)?;
+        let team_id = self.load_team_id(args);
+        let client = VercelClient::new(api_token, self.project_name.clone(), team_id);
+
+        Ok(Box::new(VercelIngress::new(client)))
+    }
+
+    fn load_monitor(&self, args: &RunSubcommand) -> Result<BoxedMonitor> {
+        let api_token = self.load_api_token(args)?;
+        let team_id = self.load_team_id(args);
+        let client = VercelClient::new(api_token, self.project_name.clone(), team_id);
+
+        Ok(Box::new(VercelMonitor::new(client)))
+    }
+
+    fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {
+        let fs = FileSystem::new()?;
+        let api_token = self.load_api_token(args)?;
+        let team_id = self.load_team_id(args);
+        let project_dir = self.load_project_dir(&fs, args)?;
+        let client = VercelClient::new(api_token.clone(), self.project_name.clone(), team_id);
+
+        Ok(Box::new(VercelPlatform::new(
+            client,
+            project_dir,
+            self.project_name.clone(),
         )))
     }
 }

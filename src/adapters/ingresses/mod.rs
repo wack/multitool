@@ -9,6 +9,8 @@ pub type BoxedIngress = Box<dyn Ingress + Send + Sync>;
 
 pub(crate) use apig::AwsApiGateway;
 pub(crate) use cloudflare::CloudflareWorkerIngress;
+#[cfg(feature = "vercel")]
+pub(crate) use vercel::VercelIngress;
 
 use super::backend::IngressConfig;
 
@@ -47,6 +49,8 @@ pub trait Ingress: Shutdownable {
 
 mod apig;
 mod cloudflare;
+#[cfg(feature = "vercel")]
+mod vercel;
 
 #[cfg(test)]
 mod tests {
