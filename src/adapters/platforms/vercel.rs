@@ -2,11 +2,7 @@
 // TODO: This module will not be dead code once we allow the Vercel
 // platform to be constructed.
 
-use crate::{
-    Shutdownable,
-    adapters::{backend::PlatformConfig},
-    subsystems::ShutdownResult,
-};
+use crate::{Shutdownable, adapters::backend::PlatformConfig, subsystems::ShutdownResult};
 
 use super::Platform;
 use async_trait::async_trait;
@@ -25,9 +21,7 @@ pub struct Vercel {
 
 impl Vercel {
     pub fn new(client: VercelClient) -> Self {
-        Self {
-            client,
-        }
+        Self { client }
     }
 }
 

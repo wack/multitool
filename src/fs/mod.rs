@@ -227,7 +227,6 @@ pub struct ManifestMissing;
 #[error("Wrangler JSON or TOML file required for Cloudflare Workers")]
 pub struct WranglerMissing;
 
-
 /// A shorthand for referring to one of the $XDG directories.
 /// As we need additional directories, we'll add them to the enum.
 pub enum DirectoryType {
