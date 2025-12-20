@@ -11,6 +11,9 @@ pub(crate) use manifest::CloudflareFileManifest;
 
 mod manifest;
 
+// this is probably dead because we bundle the upload,
+// which we won't do in the future.
+#[allow(dead_code)]
 pub async fn read_file_as_b64<P: AsRef<Path>>(filepath: P, sink: &mut impl Write) -> Result<()> {
     let path = filepath.as_ref();
     let mut encoder = EncoderWriter::new(sink, &STANDARD);

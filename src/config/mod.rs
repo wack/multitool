@@ -1,7 +1,6 @@
 pub use cli::Cli;
 pub use init::InitSubcommand;
 pub use login::LoginSubcommand;
-pub use proxy::ProxySubcommand;
 pub use run::RunSubcommand;
 
 mod cli;

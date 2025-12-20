@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+// We may eventually remove this module, since I think it has been
+// superseded by code on the backend, but I'm not totally sure.
+
 use std::num::NonZeroUsize;
 
 use crate::stats::{Categorical, histogram::Histogram};

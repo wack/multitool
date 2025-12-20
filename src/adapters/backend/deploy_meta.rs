@@ -16,7 +16,7 @@ pub(crate) type RolloutId = u64;
 /// rollout. This struct is mostly used in conjuction with a `BackendClient`
 /// to hold the context for the current rollout.
 #[derive(Builder, Getters, Clone)]
-pub(crate) struct RolloutMetadata {
+pub struct RolloutMetadata {
     workspace_id: WorkspaceId,
     application_id: ApplicationId,
     rollout_id: RolloutId,

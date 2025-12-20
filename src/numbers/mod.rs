@@ -3,7 +3,10 @@ use std::fmt;
 
 pub(crate) use errors::OutOfRangeError;
 
+// TODO: why is this type unused?
+#[allow(dead_code)]
 pub type CpuUsage = FixedPrecisionNumber<2>;
+
 pub use whole_number::WholeNumber;
 pub use whole_percent::WholePercent;
 

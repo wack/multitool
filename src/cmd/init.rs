@@ -53,7 +53,7 @@ impl Init {
             // the toml and toml_edit crates to preserve comments
             // in the TOML files we read.
             // https://docs.rs/toml_edit/latest/toml_edit/
-            if let Ok(_) = fs.application_manifest() {
+            if fs.application_manifest().is_ok() {
                 info!(
                     "It looks like you already have an initialized application manifest. Exiting."
                 );
@@ -268,6 +268,7 @@ impl InitStateMachine for PromptWorkspace {
 struct PromptApplication {
     manifest: Arc<Mutex<Manifest>>,
     terminal: Arc<Terminal>,
+    #[allow(dead_code)] // TODO: why is this field unused?
     fs: FileSystem,
     workspace_id: u32,
     backend: BackendClient,
@@ -318,7 +319,7 @@ impl InitStateMachine for PromptApplication {
             // Create the application
             // Since we have a todo! in the create_application method,
             // this code will not actually run until that's implemented
-            let application = match self
+            let _application = match self
                 .backend
                 .create_application(self.workspace_id, application_name.clone())
                 .await

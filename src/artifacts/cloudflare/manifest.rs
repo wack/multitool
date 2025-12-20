@@ -45,17 +45,17 @@ impl CloudflareFileManifest {
             let file_entry = entry.into_diagnostic()?;
 
             // Ignore directories, we only want files.
-            if file_entry.file_type().map_or(false, |ft| ft.is_dir()) {
+            if file_entry.file_type().is_some_and(|ft| ft.is_dir()) {
                 continue;
             }
 
             let file_path = file_entry.path().to_path_buf();
 
             // Skip files with names that match manifest filenames
-            if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
-                if manifest_filenames.contains(&filename.to_string()) {
-                    continue;
-                }
+            if let Some(filename) = file_path.file_name().and_then(|n| n.to_str())
+                && manifest_filenames.contains(&filename.to_string())
+            {
+                continue;
             }
 
             files.push(file_path);

@@ -1,4 +1,4 @@
-use clap::{Parser, command};
+use clap::Parser;
 use derive_getters::Getters;
 use tracing::level_filters::LevelFilter;
 

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use miette::Diagnostic;
 
 pub use controller::{CONTROLLER_SUBSYSTEM_NAME, ControllerSubsystem};
-pub use error_logs::{ERROR_LOGS_SUBSYSTEM_NAME, ErrorLogsController};
+// pub use error_logs::{ERROR_LOGS_SUBSYSTEM_NAME, ErrorLogsController};
 pub use ingress::{INGRESS_SUBSYSTEM_NAME, IngressSubsystem};
 
 pub use monitor::{MONITOR_SUBSYSTEM_NAME, MonitorSubsystem};

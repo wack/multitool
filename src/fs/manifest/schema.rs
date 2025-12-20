@@ -3,7 +3,6 @@ use std::{path::PathBuf, sync::OnceLock};
 use miette::{Diagnostic, miette};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::error;
 
 use crate::{
     adapters::{
@@ -307,7 +306,7 @@ impl AwsLambdaConfig {
             return Ok(path.to_path_buf());
         }
 
-        return Ok(PathBuf::from(&self.artifact_path));
+        Ok(PathBuf::from(&self.artifact_path))
     }
 
     async fn load_platform(&self, args: &RunSubcommand) -> Result<BoxedPlatform> {

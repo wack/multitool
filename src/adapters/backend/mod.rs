@@ -23,7 +23,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
 
-pub(crate) use deploy_meta::*;
+pub use deploy_meta::*;
 use tracing::trace;
 
 /// Write the CLI's version to a
@@ -84,7 +84,7 @@ impl BackendClient {
 
     pub fn is_authenicated(&self) -> Result<()> {
         if self.session.clone().is_some_and(Session::is_not_expired) {
-            return Ok(());
+            Ok(())
         } else {
             bail!("Please login before running this command.");
         }
@@ -343,9 +343,9 @@ impl BackendClient {
             };
             let metrics = StatusCodeMetrics {
                 app_group: group,
-                status_2xx_count: item.get_count(&ResponseStatusCode::_2XX) as u32,
-                status_4xx_count: item.get_count(&ResponseStatusCode::_4XX) as u32,
-                status_5xx_count: item.get_count(&ResponseStatusCode::_5XX) as u32,
+                status_2xx_count: item.get_count(&ResponseStatusCode::_2XX),
+                status_4xx_count: item.get_count(&ResponseStatusCode::_4XX),
+                status_5xx_count: item.get_count(&ResponseStatusCode::_5XX),
                 created_at: item.created_at().to_rfc3339(),
             };
 
@@ -427,8 +427,8 @@ impl BackendClient {
 
     pub(crate) async fn create_application<T: AsRef<str>>(
         &self,
-        workspace_id: WorkspaceId,
-        name: T,
+        _workspace_id: WorkspaceId,
+        _name: T,
     ) -> Result<ApplicationDetails> {
         self.is_authenicated()?;
 
@@ -454,7 +454,7 @@ impl BackendClient {
 
         if workspaces.len() > 1 {
             bail!("More than one workspace with the given name found.");
-        } else if workspaces.len() < 1 {
+        } else if workspaces.is_empty() {
             bail!("No workspace with the given name exists for this account");
         } else {
             // TODO: We can simplify this code with .ok_or()
@@ -488,7 +488,7 @@ impl BackendClient {
 
         let application = if applications.len() > 1 {
             bail!("More than one application with the given name found.");
-        } else if applications.len() < 1 {
+        } else if applications.is_empty() {
             bail!("No application with the given name exists for this account");
         } else {
             // TODO: We can simplify this code with .ok_or()
@@ -535,8 +535,8 @@ impl BackendConfig {
         // • Convert the Option<T> to a String.
         let origin = origin.map(|val| val.as_ref().to_owned());
         // • Set up the default configuration values.
-        let jwt = session.and_then(|session| match session {
-            Session::User(creds) => Some(creds.jwt),
+        let jwt = session.map(|session| match session {
+            Session::User(creds) => creds.jwt,
         });
         let conf = Configuration {
             base_path: origin.unwrap_or(MULTITOOL_ORIGIN.to_string()),

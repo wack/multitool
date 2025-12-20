@@ -2,13 +2,12 @@ use async_trait::async_trait;
 use bon::bon;
 use miette::{Report, Result};
 use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, SubsystemHandle};
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 
 use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
 use crate::subsystems::PLATFORM_SUBSYSTEM_NAME;
 use crate::{IngressSubsystem, PlatformSubsystem};
 
-use crate::subsystems::{ERROR_LOGS_SUBSYSTEM_NAME, ErrorLogsController};
 use monitor::{MONITOR_CONTROLLER_SUBSYSTEM_NAME, MonitorController};
 
 use super::{INGRESS_SUBSYSTEM_NAME, RELAY_SUBSYSTEM_NAME, RelaySubsystem};
