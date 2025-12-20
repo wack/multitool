@@ -2,14 +2,12 @@ use bon::Builder;
 use derive_getters::Getters;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum DeploymentStrategy {
     #[serde(rename = "percentage")]
     #[default]
     Percentage,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder, Getters)]
 pub struct CreateDeploymentRequest {

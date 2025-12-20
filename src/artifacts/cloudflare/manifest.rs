@@ -53,9 +53,10 @@ impl CloudflareFileManifest {
 
             // Skip files with names that match manifest filenames
             if let Some(filename) = file_path.file_name().and_then(|n| n.to_str())
-                && manifest_filenames.contains(&filename.to_string()) {
-                    continue;
-                }
+                && manifest_filenames.contains(&filename.to_string())
+            {
+                continue;
+            }
 
             files.push(file_path);
         }

@@ -69,10 +69,11 @@ impl AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -108,10 +109,11 @@ impl AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -152,10 +154,11 @@ impl AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -209,10 +212,11 @@ impl Ingress for AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -245,10 +249,11 @@ impl Ingress for AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -277,10 +282,11 @@ impl Ingress for AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -320,10 +326,11 @@ impl Ingress for AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -374,10 +381,11 @@ impl Ingress for AwsApiGateway {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
                         service_err
-                                .err()
-                                .meta()
-                                .message()
-                                .unwrap_or("No error message found").to_string()
+                            .err()
+                            .meta()
+                            .message()
+                            .unwrap_or("No error message found")
+                            .to_string()
                     }
                     _ => format!("{:?}", err),
                 };
