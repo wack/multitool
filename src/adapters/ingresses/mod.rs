@@ -47,6 +47,7 @@ pub trait Ingress: Shutdownable {
 
 mod apig;
 mod cloudflare;
+mod vercel;
 
 #[cfg(test)]
 mod tests {
