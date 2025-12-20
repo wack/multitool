@@ -53,7 +53,7 @@ impl Init {
             // the toml and toml_edit crates to preserve comments
             // in the TOML files we read.
             // https://docs.rs/toml_edit/latest/toml_edit/
-            if let Ok(_) = fs.application_manifest() {
+            if fs.application_manifest().is_ok() {
                 info!(
                     "It looks like you already have an initialized application manifest. Exiting."
                 );

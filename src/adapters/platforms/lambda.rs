@@ -72,14 +72,11 @@ impl Platform for LambdaPlatform {
                 let error_message = match err {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
-                        format!(
-                            "{}",
-                            service_err
+                        service_err
                                 .err()
                                 .meta()
                                 .message()
-                                .unwrap_or("No error message found")
-                        )
+                                .unwrap_or("No error message found").to_string()
                     }
                     _ => format!("{:?}", err),
                 };
@@ -115,14 +112,11 @@ impl Platform for LambdaPlatform {
                 let error_message = match err {
                     SdkError::ServiceError(service_err) => {
                         // Extract the specific service error details
-                        format!(
-                            "{}",
-                            service_err
+                        service_err
                                 .err()
                                 .meta()
                                 .message()
-                                .unwrap_or("No error message found")
-                        )
+                                .unwrap_or("No error message found").to_string()
                     }
                     _ => format!("{:?}", err),
                 };

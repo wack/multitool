@@ -79,11 +79,11 @@ pub struct CloudflareErrorLog {
     pub logs: Vec<String>,
 }
 
-impl Into<Vec<CloudflareErrorLog>> for ErrorLogsResponse {
-    fn into(self) -> Vec<CloudflareErrorLog> {
+impl From<ErrorLogsResponse> for Vec<CloudflareErrorLog> {
+    fn from(val: ErrorLogsResponse) -> Self {
         let mut error_logs = Vec::new();
 
-        for (_request_id, invocations) in self.invocations {
+        for (_request_id, invocations) in val.invocations {
             // The cf-worker-event entry contains the request/response details
             let event_entry = invocations
                 .iter()

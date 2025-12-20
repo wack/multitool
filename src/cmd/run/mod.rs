@@ -10,7 +10,7 @@ use multitool_sdk::models::{ApplicationDetails, WorkspaceSummary};
 use thiserror::Error;
 use tokio::join;
 use tokio::runtime::Runtime;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::Terminal;
 
@@ -102,7 +102,7 @@ impl Run {
         let workspace_not_found =
             miette!("The workspace {name} does not exist within your account.");
         self.backend
-            .get_workspace_by_name(&name)
+            .get_workspace_by_name(name)
             .await
             .context(workspace_not_found)
     }
@@ -135,7 +135,7 @@ impl Run {
         let application_not_found =
             miette!("The application {name} does not exist within the workspace {workspace_name}.");
         self.backend
-            .get_application_by_name(workspace.id, &name)
+            .get_application_by_name(workspace.id, name)
             .await
             .context(application_not_found)
     }

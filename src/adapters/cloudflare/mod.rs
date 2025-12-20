@@ -397,9 +397,8 @@ impl CloudflareClient {
 
         let count = metrics_response
             .result
-            .calculations
-            .get(0)
-            .and_then(|c| c.aggregates.get(0).cloned())
+            .calculations.first()
+            .and_then(|c| c.aggregates.first().cloned())
             .map_or(0, |a| a.count);
 
         Ok(count)

@@ -60,7 +60,7 @@ where
 
     /// Reset all bins to zero.
     pub fn clear(&mut self) {
-        self.bins = Box::new([0; N]);
+        *self.bins = [0; N];
     }
 
     /// Reset the given bins to zero.

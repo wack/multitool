@@ -3,16 +3,13 @@ use derive_getters::Getters;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum DeploymentStrategy {
     #[serde(rename = "percentage")]
+    #[default]
     Percentage,
 }
 
-impl Default for DeploymentStrategy {
-    fn default() -> Self {
-        Self::Percentage
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Builder, Getters)]
 pub struct CreateDeploymentRequest {
