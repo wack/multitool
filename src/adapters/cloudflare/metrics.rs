@@ -49,6 +49,7 @@ pub struct EventData {
 
 #[derive(Deserialize, Debug)]
 pub struct RequestData {
+    #[allow(dead_code)] // TODO: Why is this dead?
     pub url: String,
     pub method: String,
     pub path: String,

@@ -227,12 +227,16 @@ pub struct ManifestMissing;
 #[error("Wrangler JSON or TOML file required for Cloudflare Workers")]
 pub struct WranglerMissing;
 
+
 /// A shorthand for referring to one of the $XDG directories.
 /// As we need additional directories, we'll add them to the enum.
 pub enum DirectoryType {
     /// The directory for non-essential project files
     Cache,
     /// Persistent data lives here between runs.
+    // We will probably need this later, like when we need to check
+    // version expiration dates without phoning home.
+    #[allow(dead_code)]
     Data,
     /// The application root directory is the dir that contains the manifest
     /// file relevant to the current operating context. It's usually

@@ -64,16 +64,19 @@ where
     }
 
     /// Reset the given bins to zero.
+    #[allow(dead_code)]
     fn clear_category(&mut self, cat: &C) {
         let index = cat.category();
         self.bins[index] = 0;
     }
 
+    #[allow(dead_code)]
     pub(super) fn set_count(&mut self, cat: &C, count: u32) {
         self.clear_category(cat);
         self.increment_by(cat, count);
     }
 
+    #[allow(dead_code)]
     pub(super) fn get_count_by_index(&self, i: usize) -> u32 {
         if i >= N {
             panic!(

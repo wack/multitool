@@ -23,7 +23,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
 
-pub(crate) use deploy_meta::*;
+pub use deploy_meta::*;
 use tracing::trace;
 
 /// Write the CLI's version to a
@@ -427,8 +427,8 @@ impl BackendClient {
 
     pub(crate) async fn create_application<T: AsRef<str>>(
         &self,
-        workspace_id: WorkspaceId,
-        name: T,
+        _workspace_id: WorkspaceId,
+        _name: T,
     ) -> Result<ApplicationDetails> {
         self.is_authenicated()?;
 

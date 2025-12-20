@@ -1,3 +1,9 @@
+#![allow(dead_code)]
+// This module temporarily allows dead code, because we initially
+// built it to demo the Agentic SRE functionality, which we are
+// not currently productionizing. We will remove this code if we
+// choose not to productionize, or make use of it if we do.
+
 use std::time::Duration;
 
 use crate::adapters::{BackendClient, RolloutMetadata};
@@ -14,8 +20,8 @@ use crate::adapters::{CloudflareClient, backend::MonitorConfig};
 /// The frequency with which we poll Cloudflare for error logs.
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(60);
 
-/// The name of the error logs subsystem.
-pub const ERROR_LOGS_SUBSYSTEM_NAME: &str = "errorlogs";
+// The name of the error logs subsystem.
+// pub const ERROR_LOGS_SUBSYSTEM_NAME: &str = "errorlogs";
 
 /// The ErrorLogsController is responsible for periodically fetching
 /// error logs from Cloudflare.

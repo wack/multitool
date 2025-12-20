@@ -3,6 +3,8 @@ use derive_getters::Getters;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// TODO: Check whether this type is actually needed.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Vars {
     #[serde(flatten)]

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{adapters::cloudflare::deployments::Binding, fs::wrangler::Wrangler};
 
+// this is probably dead because we bundle the upload,
+// which we won't do in the future. 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UploadSessionResponse {
     pub jwt: String,
@@ -11,6 +14,9 @@ pub struct UploadSessionResponse {
     pub buckets: Vec<Vec<String>>,
 }
 
+// this is probably dead because we bundle the upload,
+// which we won't do in the future. 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UploadAssetsResponse {
     pub jwt: String,

@@ -36,6 +36,7 @@ impl Shutdownable for MockPlatform {
 
 mod cloudflare;
 mod lambda;
+mod vercel;
 
 #[cfg(test)]
 mod tests {
