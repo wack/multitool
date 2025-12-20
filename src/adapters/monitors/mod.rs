@@ -60,3 +60,4 @@ pub trait Monitor: Shutdownable {
 
 mod cloudflare;
 mod cloudwatch;
+mod vercel;
