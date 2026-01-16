@@ -1,129 +1,209 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
-use mail::{IngressMail, PromoteParams, ReleaseParams, RollbackParams, TrafficParams};
-use miette::{Report, Result};
-use tokio::sync::mpsc::channel;
-use tokio::{select, sync::mpsc::Receiver};
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use kameo::actor::{ActorRef, Spawn};
+use kameo::error::SendError;
+use kameo::mailbox;
+use kameo::message::{Context, Message};
+use kameo::Actor;
+use miette::Result;
 use tracing::debug;
 
-use crate::adapters::BoxedIngress;
+use crate::adapters::backend::IngressConfig;
+use crate::adapters::{BoxedIngress, Ingress};
+use crate::subsystems::{ShutdownResult, Shutdownable};
+use crate::WholePercent;
 
-use mail::IngressHandle;
-
-use super::{ShutdownResult, Shutdownable};
-
-mod mail;
-
+#[allow(dead_code)]
 pub const INGRESS_SUBSYSTEM_NAME: &str = "ingress";
-/// If you're going to pick an arbitrary number, you could do worse
-/// than picking a power of two.
-const INGRESS_MAILBOX_SIZE: usize = 1 << 4;
 
+/// The IngressSubsystem handles synchronizing access to the
+/// `BoxedIngress` using Kameo's actor model.
+#[derive(Actor)]
 pub struct IngressSubsystem {
     ingress: BoxedIngress,
-    handle: IngressHandle,
-    mailbox: Receiver<IngressMail>,
-    shutdown: Receiver<()>,
 }
 
 impl IngressSubsystem {
     pub fn new(ingress: BoxedIngress) -> Self {
-        let (shutdown_trigger, shutdown_signal) = channel(1);
-        let (mail_outbox, mailbox) = channel(INGRESS_MAILBOX_SIZE);
-        let shutdown = Arc::new(shutdown_trigger);
-        let handle = IngressHandle::new(Arc::new(mail_outbox), shutdown);
-        Self {
-            handle,
-            ingress,
-            mailbox,
-            shutdown: shutdown_signal,
-        }
+        Self { ingress }
     }
 
-    /// Create a new handle to the underlying ingress. The handle is a BoxedIngress itself,
-    /// but it communicates with the real ingress over a channel, so it's Send+Sync+Clone.
-    pub fn handle(&self) -> BoxedIngress {
-        Box::new(self.handle.clone())
-    }
-
-    async fn respond_to_mail(&mut self, mail: IngressMail) {
-        match mail {
-            IngressMail::Release(params) => self.handle_release(params).await,
-            IngressMail::RollbackCanary(params) => self.handle_rollback(params).await,
-            IngressMail::PromoteCanary(params) => self.handle_promote(params).await,
-            IngressMail::SetCanaryTraffic(params) => self.handle_set_traffic(params).await,
-        }
-    }
-
-    async fn handle_release(&mut self, params: ReleaseParams) {
-        let result = self
-            .ingress
-            .release_canary(params.baseline_version_id, params.canary_version_id)
-            .await;
-        params.outbox.send(result).unwrap();
-    }
-
-    async fn handle_rollback(&mut self, params: RollbackParams) {
-        let result = self.ingress.rollback_canary().await;
-        params.outbox.send(result).unwrap();
-    }
-
-    async fn handle_promote(&mut self, params: PromoteParams) {
-        let result = self.ingress.promote_canary().await;
-        params.outbox.send(result).unwrap();
-    }
-
-    async fn handle_set_traffic(&mut self, params: TrafficParams) {
-        let percent = params.percent;
-        let result = self.ingress.set_canary_traffic(percent).await;
-        params.outbox.send(result).unwrap();
+    /// Spawn the actor and return a handle (ActorRef wrapped in a BoxedIngress).
+    pub fn spawn_boxed(ingress: BoxedIngress) -> BoxedIngress {
+        let actor = Self::new(ingress);
+        let actor_ref = Self::spawn_with_mailbox(actor, mailbox::unbounded());
+        Box::new(IngressHandle::new(actor_ref))
     }
 }
 
-#[async_trait]
-impl IntoSubsystem<Report> for IngressSubsystem {
-    async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
-        loop {
-            select! {
-                _ = subsys.on_shutdown_requested() => {
-                    return self.shutdown().await;
-                }
-                // Shutdown signal from one of the handles. Since this thread has exclusive
-                // access to the platform, we have to give the outside world a way to shut
-                // us down. That's this channel, created before the SubsystemHandle existed.
-                _ = self.shutdown.recv() => {
-                    subsys.request_shutdown();
-                }
-                mail = self.mailbox.recv() => {
-                    if let Some(mail) = mail {
-                        self.respond_to_mail(mail).await;
-                    } else {
-                        debug!("Stream closed in ingress");
-                        return self.shutdown().await;
-                    }
-                }
-            }
-        }
+// --- Messages ---
+
+/// Message to release the canary.
+pub struct ReleaseCanary {
+    pub baseline_version_id: String,
+    pub canary_version_id: String,
+}
+
+impl Message<ReleaseCanary> for IngressSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: ReleaseCanary,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.ingress
+            .release_canary(msg.baseline_version_id, msg.canary_version_id)
+            .await
     }
 }
 
-#[async_trait]
-impl Shutdownable for IngressSubsystem {
-    async fn shutdown(&mut self) -> ShutdownResult {
-        // We just have to shut the ingress down manually,
-        // since we have an exclusive lock on it.
+/// Message to set canary traffic percentage.
+pub struct SetCanaryTraffic {
+    pub percent: WholePercent,
+}
+
+impl Message<SetCanaryTraffic> for IngressSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: SetCanaryTraffic,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.ingress.set_canary_traffic(msg.percent).await
+    }
+}
+
+/// Message to rollback the canary.
+pub struct RollbackCanary;
+
+impl Message<RollbackCanary> for IngressSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        _msg: RollbackCanary,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.ingress.rollback_canary().await
+    }
+}
+
+/// Message to promote the canary.
+pub struct PromoteCanary;
+
+impl Message<PromoteCanary> for IngressSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        _msg: PromoteCanary,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.ingress.promote_canary().await
+    }
+}
+
+/// Message to shutdown the ingress.
+pub struct Shutdown;
+
+impl Message<Shutdown> for IngressSubsystem {
+    type Reply = ShutdownResult;
+
+    async fn handle(
+        &mut self,
+        _msg: Shutdown,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        debug!("Shutting down ingress subsystem");
         self.ingress.shutdown().await
+    }
+}
+
+// --- Handle (wraps ActorRef to implement Ingress trait) ---
+
+/// A handle to the IngressSubsystem actor that implements the Ingress trait.
+#[derive(Clone)]
+pub struct IngressHandle {
+    actor_ref: ActorRef<IngressSubsystem>,
+}
+
+impl IngressHandle {
+    pub fn new(actor_ref: ActorRef<IngressSubsystem>) -> Self {
+        Self { actor_ref }
+    }
+
+    /// Get the underlying actor reference.
+    #[allow(dead_code)]
+    pub fn actor_ref(&self) -> &ActorRef<IngressSubsystem> {
+        &self.actor_ref
+    }
+}
+
+#[async_trait]
+impl Ingress for IngressHandle {
+    async fn release_canary(
+        &mut self,
+        baseline_version_id: String,
+        canary_version_id: String,
+    ) -> Result<()> {
+        self.actor_ref
+            .ask(ReleaseCanary {
+                baseline_version_id,
+                canary_version_id,
+            })
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to ingress: {:?}", e))?;
+        Ok(())
+    }
+
+    async fn set_canary_traffic(&mut self, percent: WholePercent) -> Result<()> {
+        self.actor_ref
+            .ask(SetCanaryTraffic { percent })
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to ingress: {:?}", e))?;
+        Ok(())
+    }
+
+    async fn rollback_canary(&mut self) -> Result<()> {
+        self.actor_ref
+            .ask(RollbackCanary)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to ingress: {:?}", e))?;
+        Ok(())
+    }
+
+    async fn promote_canary(&mut self) -> Result<()> {
+        self.actor_ref
+            .ask(PromoteCanary)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to ingress: {:?}", e))?;
+        Ok(())
+    }
+
+    fn get_config(&self) -> IngressConfig {
+        panic!(
+            "This should never be called, as the IngressHandle is a handle to an ingress that is already running."
+        )
+    }
+}
+
+#[async_trait]
+impl Shutdownable for IngressHandle {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        self.actor_ref
+            .ask(Shutdown)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to shutdown ingress: {:?}", e))?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::IngressSubsystem;
-    use miette::Report;
+    use kameo::Actor;
     use static_assertions::assert_impl_all;
-    use tokio_graceful_shutdown::IntoSubsystem;
 
-    assert_impl_all!(IngressSubsystem: IntoSubsystem<Report>);
+    assert_impl_all!(IngressSubsystem: Actor);
 }

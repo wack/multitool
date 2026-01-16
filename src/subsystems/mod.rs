@@ -1,23 +1,27 @@
 use async_trait::async_trait;
 use miette::Diagnostic;
 
+// Public API exports - allow unused since these are for external consumers
+#[allow(unused_imports)]
 pub use controller::{CONTROLLER_SUBSYSTEM_NAME, ControllerSubsystem};
 // pub use error_logs::{ERROR_LOGS_SUBSYSTEM_NAME, ErrorLogsController};
-pub use ingress::{INGRESS_SUBSYSTEM_NAME, IngressSubsystem};
-
-pub use monitor::{MONITOR_SUBSYSTEM_NAME, MonitorSubsystem};
-pub use platform::{PLATFORM_SUBSYSTEM_NAME, PlatformSubsystem};
+#[allow(unused_imports)]
+pub use ingress::{INGRESS_SUBSYSTEM_NAME, IngressHandle, IngressSubsystem};
+#[allow(unused_imports)]
+pub use monitor::{MONITOR_SUBSYSTEM_NAME, MonitorHandle, MonitorSubsystem};
+#[allow(unused_imports)]
+pub use platform::{PLATFORM_SUBSYSTEM_NAME, PlatformHandle, PlatformSubsystem};
+#[allow(unused_imports)]
 pub use relay::{RELAY_SUBSYSTEM_NAME, RelaySubsystem};
 
-mod controller;
+pub mod controller;
 mod error_logs;
-mod handle;
-mod ingress;
-mod monitor;
-mod platform;
+pub mod ingress;
+pub mod monitor;
+pub mod platform;
 /// The relay subsystem is responsible for relaying messages
 /// to and from the backend.
-mod relay;
+pub mod relay;
 
 /// A ShutdownError is an error that occurred when a subsystem
 /// was shutdown, or an error that forced the subsystem to shutdown.
@@ -35,4 +39,4 @@ pub trait Shutdownable {
 #[error(
     "Internal error: the internal state of this type was corrupted by taking a value twice. Please report this error at https://github.com/wack/multitool/issues/new"
 )]
-struct TakenOptionalError;
+pub(crate) struct TakenOptionalError;

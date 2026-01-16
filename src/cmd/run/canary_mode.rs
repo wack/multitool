@@ -1,14 +1,12 @@
 use async_trait::async_trait;
 use miette::Result;
-use tokio::time::Duration;
-use tokio_graceful_shutdown::{IntoSubsystem as _, SubsystemBuilder, Toplevel};
+use tokio::signal;
 use tracing::{debug, info};
 
-use crate::ControllerSubsystem;
 use crate::adapters::{BackendClient, BoxedIngress, BoxedMonitor, BoxedPlatform, RolloutMetadata};
-use crate::subsystems::CONTROLLER_SUBSYSTEM_NAME;
+use crate::ControllerSubsystem;
 
-use super::{DEFAULT_SHUTDOWN_TIMEOUT, DeploymentMode};
+use super::DeploymentMode;
 
 /// Canary deployment mode - runs the full canary analysis subsystems
 pub struct CanaryMode {
@@ -52,17 +50,27 @@ impl DeploymentMode for CanaryMode {
 
         info!("Starting the rollout...");
 
-        // Let's capture the shutdown signal from the OS.
-        Toplevel::new(|s| async move {
-            // • Start the action listener subsystem.
-            s.start(SubsystemBuilder::new(
-                CONTROLLER_SUBSYSTEM_NAME,
-                controller.into_subsystem(),
-            ));
-        })
-        .catch_signals()
-        .handle_shutdown_requests(Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT))
-        .await
-        .map_err(Into::into)
+        // Spawn the controller actor
+        let controller_ref = controller.spawn();
+
+        // Wait for either the controller to finish or a shutdown signal
+        tokio::select! {
+            // Wait for the controller to stop (either normally or due to error)
+            _ = controller_ref.wait_for_shutdown() => {
+                debug!("Controller stopped");
+            }
+            // Handle Ctrl+C signal
+            _ = signal::ctrl_c() => {
+                info!("Received shutdown signal, stopping...");
+                if let Err(e) = controller_ref.stop_gracefully().await {
+                    debug!("Error during graceful shutdown: {:?}", e);
+                }
+                // Wait for the actor to finish shutting down
+                controller_ref.wait_for_shutdown().await;
+                debug!("Controller stopped after shutdown signal");
+            }
+        }
+
+        Ok(())
     }
 }

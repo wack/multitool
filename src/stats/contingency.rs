@@ -97,6 +97,7 @@ impl<const N: usize, C: Categorical<N>> Default for ContingencyTable<N, C> {
 }
 
 #[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use tests::Coin;
 
 #[cfg(test)]

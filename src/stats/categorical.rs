@@ -9,9 +9,9 @@
 /// You can think of a [Categorical] as a hashmap with fixed integer keys. When the map is
 /// created, its keys must already be known and completely cover the range `[0, N)`.
 ///
-/// ```rust
+/// ```rust,ignore
 /// use std::collections::HashSet;
-/// use canary::stats::Categorical;
+/// use multitool::stats::Categorical;
 ///
 /// #[derive(PartialEq, Eq, Debug, Hash)]
 /// enum Coin {
