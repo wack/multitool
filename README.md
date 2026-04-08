@@ -1,81 +1,40 @@
 <img align="center" width="1200" alt="multitool-banner" src="https://github.com/user-attachments/assets/1463d3b1-ed84-4c8a-8374-abe0b53286b0" />
 
 <h1 align="center">MultiTool</h1>
-<p align="center"><b>Agentic deployments help teams catch production bugs before they impact users. Move fast without breaking things.</b></p>
+<p align="center"><b>Alerting that earns your team’s attention. Eliminate false positives and reduce alert fatigue.</b></p>
 
 <p align="center">
-🏡 <a href="https://www.multitool.run/">Home</a> • ✍️ <a href="https://www.multitool.run/blog">Blog</a> • 📚 <a href="https://docs.multitool.run/">Docs</a> • ✨ <a href="https://app.multitool.run/create-account">Try the MultiTool beta for free</a>
+🏡 <a href="https://www.multitool.run/">Home</a> • ✍️ <a href="https://www.multitool.run/blog">Blog</a> • 📚 <a href="https://docs.multitool.run/">Docs</a>
 
 ## ❓ What is MultiTool?
 
-MultiTool is a progressive delivery tool that helps teams catch production bugs before they impact users. The open-source CLI connects to your <a href="https://app.multitool.run/create-account">MultiTool account</a> to create and monitor canary deployments, manage traffic shifting, and automatically roll back changes when statistically significant regressions are detected.
+MultiTool is an observability tool that provides intelligent, thresholdless alerts on top of your existing telemetry. It works with your current instrumentation and deployment workflow so you can detect meaningful issues without relying on brittle thresholds or constant manual adjustment.
 
 ## 📖 Table of contents
 
 - [What is MultiTool?](#-what-is-multitool)
 - [Table of contents](#-table-of-contents)
-- [Getting started](#%EF%B8%8F-getting-started)
-- [Installation](#%EF%B8%8F-installation)
 - [Features](#-features)
 - [Mission](#-mission)
 - [Need help?](#-need-help)
 
-## 🏎️ Getting started
-
-Check out our [quickstart guide](https://docs.multitool.run/quickstart) to learn how to deploy with MultiTool!
-
-Check out our [getting started tutorial](https://docs.multitool.run/deploy-a-lambda-function) to try out a guided demo of MultiTool!
-
-## ⚙️ Installation
-
-**Installing with Homebrew:**
-
-```sh
-brew install wack/tap/multi
-```
-
-**Installing with curl:**
-
-```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wack/multitool/releases/download/v0.3.0/multitool-installer.sh | sh
-```
-
-Check the [releases page](https://github.com/wack/canary/releases) for pre-built binaries, checksums, and guides to install on additional platforms.
-
 ## ⭐ Features
 
-### Automated canary deployments
+### Thresholdless
 
-The MultiTool agent deploys every release as a canary deployment, routing a small percentage of production traffic to the canary.
+Detect issues without setting and maintaining static thresholds. MultiTool automatically identifies meaningful deviations in behavior, helping teams catch real problems earlier while avoiding the noise and maintenance overhead of traditional alerting.
 
-### Traffic scale-up
+### Signal-aware alerts
 
-As the agent gains confidence in the release, it automatically scales up traffic. No more watching logs or waiting for alerts.
+Instead of evaluating metrics in isolation, MultiTool understands patterns across signals to surface alerts that reflect real system behavior. This reduces false positives and helps teams focus on issues that actually impact performance and reliability.
 
-### Fast roll-backs
+### Built on OpenTelemetry
 
-The MultiTool agent automatically rolls back the deployment if it detects a statistical increase in errors, preventing user-facing bugs and downtime. MultiTool keeps a hot standby ready for instantaneous rollback in case of incident.
-
-### Run locally or in CI/CD
-
-MultiTool doesn’t store your cloud provider keys. The MultiTool agent runs on your local system or any CI/CD tool you currently use.
-
-## 🛠️ Platform support
-
-MultiTool supports deploying canaries for AWS Lambda functions running in AWS API Gateway. The MultiTool team is actively expanding platform support. Our platform roadmap is presented in the following table:
-
-|                                                           Platform                                                           |            Support             |
-| :--------------------------------------------------------------------------------------------------------------------------: | :----------------------------: |
-| [**Cloudflare**](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/#_top) |     :sparkles: Available!      |
-|                                                 **AWS Lambda + API Gateway**                                                 |     :sparkles: Available!      |
-|                                                     [Vercel](vercel.com)                                                     |         :eyes: Up next         |
-|                                             [Kubernetes](https://kubernetes.io/)                                             |         :eyes: Up next         |
-|    [AWS Function Aliases](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-lambda-alias.html)     |          :watch: Soon          |
-|                               [Google Cloud Run Functions](https://cloud.google.com/functions)                               | :hourglass_flowing_sand: Later |
+MultiTool is built on OpenTelemetry (OTel), allowing it to work directly with the telemetry you already collect. This means no vendor lock-in, no custom instrumentation, and seamless integration with your existing observability stack.
 
 ## 🎯 Mission
 
-We help teams take a more proactive approach to progressive delivery by using agentic deployments to catch regressions early. Today, operators either manually watch deployments in real time or rely on passive alerts to catch problems after they’ve hit users. We want to empower operators to _proactively_ identify and rollback disruptive deployments _before_ they cause widespread impact. MultiTool is bringing agentic deployments to everyone. Learn more about our team and vision at [our company website](https://www.multitool.run/company).
+We help teams operate reliably in the AI era by rethinking how observability and alerting should work. We believe alerts should be grounded in real system behavior rather than manual thresholds so teams can spend less time tuning monitors and more time building. Learn more about our team and vision at [our company website](https://www.multitool.run/company).
 
 ## 📬 Need help?
 
