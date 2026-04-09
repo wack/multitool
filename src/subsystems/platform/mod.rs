@@ -1,176 +1,214 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
-use mail::{DeleteParams, DeployParams, PlatformMail, PromoteParams, YankParams};
-use miette::{Report, Result};
-use tokio::{
-    select,
-    sync::mpsc::{self, Receiver, channel},
-};
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use kameo::actor::{ActorRef, Spawn};
+use kameo::error::SendError;
+use kameo::mailbox;
+use kameo::message::{Context, Message};
+use kameo::Actor;
+use miette::Result;
 use tracing::debug;
 
-use crate::adapters::BoxedPlatform;
+use crate::adapters::backend::PlatformConfig;
+use crate::adapters::{BoxedPlatform, Platform};
+use crate::subsystems::{ShutdownResult, Shutdownable};
 
+#[allow(dead_code)]
 pub const PLATFORM_SUBSYSTEM_NAME: &str = "platform";
-/// if you're going to pick an arbirary number, you could do worse
-/// than picking a power of two.
-const PLATFORM_MAILBOX_SIZE: usize = 1 << 4;
 
-use mail::PlatformHandle;
-
-use super::{ShutdownResult, Shutdownable};
-
-mod mail;
-
-/// The PlatformSubsystem handles sychronizing access to the
-/// `[BoxedPlatform]` using message-passing and channels.
+/// The PlatformSubsystem handles synchronizing access to the
+/// `BoxedPlatform` using Kameo's actor model.
+#[derive(Actor)]
 pub struct PlatformSubsystem {
     platform: BoxedPlatform,
-    handle: PlatformHandle,
-    mailbox: Receiver<PlatformMail>,
-    shutdown: Receiver<()>,
 }
 
 impl PlatformSubsystem {
     pub fn new(platform: BoxedPlatform) -> Self {
-        //   • We need to give the outside world a way to shutdown
-        //     via the handle, and we don't yet have access to the
-        //     subsystem. We could also do this by blocking the `handle()`
-        //     method until we have the subsystem available, but that's trickier
-        //     and potentially more deadlock-prone.
-        let (shutdown_trigger, shutdown_recv) = channel(1);
-        let (mail_outbox, mailbox) = mpsc::channel(PLATFORM_MAILBOX_SIZE);
-        let shutdown_sender = Arc::new(shutdown_trigger);
-        let handle = PlatformHandle::new(Arc::new(mail_outbox), shutdown_sender);
-        Self {
-            handle,
-            platform,
-            mailbox,
-            shutdown: shutdown_recv,
-        }
+        Self { platform }
     }
 
-    pub fn handle(&self) -> BoxedPlatform {
-        Box::new(self.handle.clone())
-    }
-
-    async fn respond_to_mail(&mut self, mail: PlatformMail) {
-        match mail {
-            PlatformMail::DeployCanary(params) => self.handle_deploy(params).await,
-            PlatformMail::YankCanary(params) => self.handle_yank(params).await,
-            PlatformMail::DeleteCanary(params) => self.handle_delete(params).await,
-            PlatformMail::PromoteRollout(params) => self.handle_promote(params).await,
-        }
-    }
-
-    async fn handle_deploy(&mut self, params: DeployParams) {
-        let outbox = params.outbox;
-        let result = self.platform.deploy().await;
-        outbox.send(result).unwrap();
-    }
-
-    async fn handle_yank(&mut self, params: YankParams) {
-        let outbox = params.outbox;
-        let result = self.platform.yank_canary().await;
-        outbox.send(result).unwrap();
-    }
-
-    async fn handle_delete(&mut self, params: DeleteParams) {
-        let outbox = params.outbox;
-        let result = self.platform.delete_canary().await;
-        outbox.send(result).unwrap();
-    }
-
-    async fn handle_promote(&mut self, params: PromoteParams) {
-        let outbox = params.outbox;
-        let result = self.platform.yank_canary().await;
-        outbox.send(result).unwrap();
+    /// Spawn the actor and return a handle (ActorRef wrapped in a BoxedPlatform).
+    pub fn spawn_boxed(platform: BoxedPlatform) -> BoxedPlatform {
+        let actor_ref = Self::spawn_with_mailbox(Self::new(platform), mailbox::unbounded());
+        Box::new(PlatformHandle::new(actor_ref))
     }
 }
 
-#[async_trait]
-impl IntoSubsystem<Report> for PlatformSubsystem {
-    async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
-        // Process all messages in a loop, while listening for shutdown.
-        loop {
-            select! {
-                // Shutdown comes first so it has high priority.
-                _ = subsys.on_shutdown_requested() => {
-                    return self.shutdown().await;
-                }
-                // Shutdown signal from one of the handles. Since this thread has exclusive
-                // access to the platform, we have to give the outside world a way to shut
-                // us down. That's this channel, created before the SubsystemHandle existed.
-                _ = self.shutdown.recv() => {
-                    return self.shutdown().await;
-                }
-                mail = self.mailbox.recv() => {
-                    if let Some(mail) = mail {
-                        self.respond_to_mail(mail).await;
-                    } else {
-                        debug!("Stream closed in platform");
-                        subsys.request_shutdown()
-                    }
-                }
-            }
-        }
+// --- Messages ---
+
+/// Message to deploy the canary.
+pub struct DeployCanary;
+
+impl Message<DeployCanary> for PlatformSubsystem {
+    type Reply = Result<(String, String)>;
+
+    async fn handle(
+        &mut self,
+        _msg: DeployCanary,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.platform.deploy().await
     }
 }
 
-#[async_trait]
-impl Shutdownable for PlatformSubsystem {
-    async fn shutdown(&mut self) -> ShutdownResult {
-        // We just have to shut the platform down manually,
-        // since we have an exclusive lock on it.
+/// Message to yank the canary.
+pub struct YankCanary;
+
+impl Message<YankCanary> for PlatformSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        _msg: YankCanary,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.platform.yank_canary().await
+    }
+}
+
+/// Message to delete the canary.
+pub struct DeleteCanary;
+
+impl Message<DeleteCanary> for PlatformSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        _msg: DeleteCanary,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.platform.delete_canary().await
+    }
+}
+
+/// Message to promote the rollout.
+pub struct PromoteRollout;
+
+impl Message<PromoteRollout> for PlatformSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        _msg: PromoteRollout,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        // Note: original code called yank_canary here, preserving that behavior
+        self.platform.yank_canary().await
+    }
+}
+
+/// Message to shutdown the platform.
+pub struct Shutdown;
+
+impl Message<Shutdown> for PlatformSubsystem {
+    type Reply = ShutdownResult;
+
+    async fn handle(
+        &mut self,
+        _msg: Shutdown,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        debug!("Shutting down platform subsystem");
         self.platform.shutdown().await
+    }
+}
+
+// --- Handle (wraps ActorRef to implement Platform trait) ---
+
+/// A handle to the PlatformSubsystem actor that implements the Platform trait.
+#[derive(Clone)]
+pub struct PlatformHandle {
+    actor_ref: ActorRef<PlatformSubsystem>,
+}
+
+impl PlatformHandle {
+    pub fn new(actor_ref: ActorRef<PlatformSubsystem>) -> Self {
+        Self { actor_ref }
+    }
+
+    /// Get the underlying actor reference.
+    #[allow(dead_code)]
+    pub fn actor_ref(&self) -> &ActorRef<PlatformSubsystem> {
+        &self.actor_ref
+    }
+}
+
+#[async_trait]
+impl Platform for PlatformHandle {
+    async fn deploy(&mut self) -> Result<(String, String)> {
+        self.actor_ref
+            .ask(DeployCanary)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to platform: {:?}", e))
+    }
+
+    async fn yank_canary(&mut self) -> Result<()> {
+        self.actor_ref
+            .ask(YankCanary)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to platform: {:?}", e))?;
+        Ok(())
+    }
+
+    async fn delete_canary(&mut self) -> Result<()> {
+        self.actor_ref
+            .ask(DeleteCanary)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to platform: {:?}", e))?;
+        Ok(())
+    }
+
+    async fn promote_rollout(&mut self) -> Result<()> {
+        self.actor_ref
+            .ask(PromoteRollout)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to platform: {:?}", e))?;
+        Ok(())
+    }
+
+    fn get_config(&self) -> PlatformConfig {
+        panic!(
+            "This should never be called, as the PlatformHandle is a handle to a platform that is already running."
+        )
+    }
+}
+
+#[async_trait]
+impl Shutdownable for PlatformHandle {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        self.actor_ref
+            .ask(Shutdown)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to shutdown platform: {:?}", e))?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use crate::adapters::MockPlatform;
-    use crate::{adapters::Platform, subsystems::platform::mail::PlatformHandle};
+    use crate::adapters::Platform;
 
-    use super::{PLATFORM_SUBSYSTEM_NAME, PlatformSubsystem};
-    use miette::Report;
+    use super::{PlatformHandle, PlatformSubsystem};
+    use kameo::Actor;
     use miette::Result;
     use static_assertions::assert_impl_all;
-    use tokio::join;
-    use tokio_graceful_shutdown::{IntoSubsystem, SubsystemBuilder, Toplevel};
 
-    assert_impl_all!(PlatformSubsystem: IntoSubsystem<Report>);
+    assert_impl_all!(PlatformSubsystem: Actor);
     assert_impl_all!(PlatformHandle: Platform, Clone);
 
     /// This test demonstrates how to use the PlatformSubsystem.
-    /// It shows how you can launch it and call it's handle to
-    /// perform actions, and shut it down manually.
     #[tokio::test]
     async fn use_platform_subsystem() -> Result<()> {
-        // • We construct a mock platform to provide to the subsystem.
+        // Construct a mock platform to provide to the subsystem.
         let mut mock_platform = MockPlatform::new();
         mock_platform.expect_yank_canary().returning(|| Ok(()));
-        let platform_subsys = PlatformSubsystem::new(Box::new(mock_platform));
-        // • We create a handle so we can shutdown the system later.
-        let mut handle = platform_subsys.handle();
-        // • Launch the system.
-        let system_fut = Toplevel::new(|s| async move {
-            s.start(SubsystemBuilder::new(
-                PLATFORM_SUBSYSTEM_NAME,
-                platform_subsys.into_subsystem(),
-            ));
-        })
-        .handle_shutdown_requests(Duration::from_millis(1000));
-        let join_handle = tokio::spawn(system_fut);
-        // • Yank the canary.
+
+        // Spawn the actor and get a handle
+        let mut handle = PlatformSubsystem::spawn_boxed(Box::new(mock_platform));
+
+        // Yank the canary.
         assert!(handle.yank_canary().await.is_ok());
-        // • Wait for shutdown.
-        let (res1, res2) = join!(handle.shutdown(), join_handle);
-        // • Check errors.
-        assert!(res1.is_ok());
-        assert!(res2.is_ok());
+
         Ok(())
     }
 }

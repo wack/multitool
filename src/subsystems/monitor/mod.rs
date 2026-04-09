@@ -1,123 +1,183 @@
-use std::sync::Arc;
-
-use crate::adapters::{BoxedMonitor, StatusCode};
-use crate::metrics::ResponseStatusCode;
-use crate::stats::{CategoricalObservation, Observation};
 use async_trait::async_trait;
-use mail::{MonitorHandle, MonitorMail, QueryParams};
-use miette::{Report, Result};
-use tokio::{
-    select,
-    sync::mpsc::{Receiver, channel},
-};
-use tokio_graceful_shutdown::{IntoSubsystem, SubsystemHandle};
+use kameo::actor::{ActorRef, Spawn};
+use kameo::error::SendError;
+use kameo::mailbox;
+use kameo::message::{Context, Message};
+use kameo::Actor;
+use miette::Result;
 use tracing::debug;
 
-use super::handle::Handle;
-use super::{ShutdownResult, Shutdownable};
+use crate::adapters::backend::MonitorConfig;
+use crate::adapters::{BoxedMonitor, Monitor, StatusCode};
+use crate::subsystems::{ShutdownResult, Shutdownable};
 
+#[allow(dead_code)]
 pub const MONITOR_SUBSYSTEM_NAME: &str = "monitor";
-/// If you're going to pick an arbitrary number, you could do worse
-/// than picking a power of two.
-const MONITOR_MAILBOX_SIZE: usize = 1 << 4;
 
-pub struct MonitorSubsystem<T: Observation> {
+/// The MonitorSubsystem handles synchronizing access to the
+/// `BoxedMonitor` using Kameo's actor model.
+#[derive(Actor)]
+pub struct MonitorSubsystem {
     monitor: BoxedMonitor,
-    handle: MonitorHandle<T>,
-    mailbox: Receiver<MonitorMail<T>>,
-    shutdown: Receiver<()>,
 }
 
-impl MonitorSubsystem<StatusCode> {
+impl MonitorSubsystem {
     pub fn new(monitor: BoxedMonitor) -> Self {
-        let (shutdown_trigger, shutdown_signal) = channel(1);
-        let (mail_outbox, mailbox) = channel(MONITOR_MAILBOX_SIZE);
-        let shutdown = Arc::new(shutdown_trigger);
-        let handle = MonitorHandle::new(Arc::new(mail_outbox), shutdown);
-        Self {
-            monitor,
-            handle,
-            mailbox,
-            shutdown: shutdown_signal,
-        }
+        Self { monitor }
     }
 
-    /// Returns a shallow copy of the Monitor, using a channel and a handle.
-    pub fn handle(
-        &self,
-    ) -> Box<Handle<MonitorMail<CategoricalObservation<5, ResponseStatusCode>>>> {
-        Box::new(self.handle.clone())
+    /// Spawn the actor and return a handle (ActorRef wrapped in a BoxedMonitor).
+    pub fn spawn_boxed(monitor: BoxedMonitor) -> BoxedMonitor {
+        let actor = Self::new(monitor);
+        let actor_ref = Self::spawn_with_mailbox(actor, mailbox::unbounded());
+        Box::new(MonitorHandle::new(actor_ref))
     }
 
-    async fn respond_to_mail(&mut self, mail: MonitorMail<StatusCode>) {
-        match mail {
-            MonitorMail::Query(params) => self.handle_query(params).await,
-            MonitorMail::SetBaselineVersionId(params) => {
-                self.monitor
-                    .set_baseline_version_id(params.version_id)
-                    .await
-                    .unwrap();
-                params.outbox.send(Ok(())).unwrap();
-            }
-            MonitorMail::SetCanaryVersionId(params) => {
-                self.monitor
-                    .set_canary_version_id(params.version_id)
-                    .await
-                    .unwrap();
-                params.outbox.send(Ok(())).unwrap();
-            }
-        }
-    }
-
-    async fn handle_query(&mut self, params: QueryParams<StatusCode>) {
-        let result = self.monitor.query().await;
-        params.outbox.send(result).unwrap();
+    /// Create the actor and return the actor reference directly.
+    /// This is useful when you need direct access to the actor ref.
+    pub fn spawn_actor(monitor: BoxedMonitor) -> ActorRef<Self> {
+        let actor = Self::new(monitor);
+        Self::spawn_with_mailbox(actor, mailbox::unbounded())
     }
 }
 
-#[async_trait]
-impl IntoSubsystem<Report> for MonitorSubsystem<StatusCode> {
-    async fn run(mut self, subsys: SubsystemHandle) -> Result<()> {
-        loop {
-            select! {
-                _ = subsys.on_shutdown_requested() => {
-                    return self.shutdown().await;
-                }
-                _ = self.shutdown.recv() => {
-                    return self.shutdown().await;
-                }
-                mail = self.mailbox.recv() => {
-                    if let Some(mail) = mail {
-                        self.respond_to_mail(mail).await;
-                    } else {
-                        debug!("Stream closed in monitor");
-                        return self.shutdown().await;
-                    }
-                }
-            }
-        }
+// --- Messages ---
+
+/// Message to query the monitor for observations.
+pub struct Query;
+
+impl Message<Query> for MonitorSubsystem {
+    type Reply = Result<Vec<StatusCode>>;
+
+    async fn handle(
+        &mut self,
+        _msg: Query,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.monitor.query().await
     }
 }
 
-#[async_trait]
-impl Shutdownable for MonitorSubsystem<StatusCode> {
-    async fn shutdown(&mut self) -> ShutdownResult {
-        // We just have to shut the monitor down manually,
-        // since we have an exclusive lock on it.
+/// Message to set the baseline version ID.
+pub struct SetBaselineVersionId {
+    pub version_id: String,
+}
+
+impl Message<SetBaselineVersionId> for MonitorSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: SetBaselineVersionId,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.monitor.set_baseline_version_id(msg.version_id).await
+    }
+}
+
+/// Message to set the canary version ID.
+pub struct SetCanaryVersionId {
+    pub version_id: String,
+}
+
+impl Message<SetCanaryVersionId> for MonitorSubsystem {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: SetCanaryVersionId,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.monitor.set_canary_version_id(msg.version_id).await
+    }
+}
+
+/// Message to shutdown the monitor.
+pub struct Shutdown;
+
+impl Message<Shutdown> for MonitorSubsystem {
+    type Reply = ShutdownResult;
+
+    async fn handle(
+        &mut self,
+        _msg: Shutdown,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        debug!("Shutting down monitor subsystem");
         self.monitor.shutdown().await
     }
 }
 
-mod mail;
+// --- Handle (wraps ActorRef to implement Monitor trait) ---
+
+/// A handle to the MonitorSubsystem actor that implements the Monitor trait.
+#[derive(Clone)]
+pub struct MonitorHandle {
+    actor_ref: ActorRef<MonitorSubsystem>,
+}
+
+impl MonitorHandle {
+    pub fn new(actor_ref: ActorRef<MonitorSubsystem>) -> Self {
+        Self { actor_ref }
+    }
+
+    /// Get the underlying actor reference.
+    #[allow(dead_code)]
+    pub fn actor_ref(&self) -> &ActorRef<MonitorSubsystem> {
+        &self.actor_ref
+    }
+}
+
+#[async_trait]
+impl Monitor for MonitorHandle {
+    type Item = StatusCode;
+
+    async fn query(&mut self) -> Result<Vec<StatusCode>> {
+        self.actor_ref
+            .ask(Query)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to monitor: {:?}", e))
+    }
+
+    async fn set_baseline_version_id(&mut self, version_id: String) -> Result<()> {
+        self.actor_ref
+            .ask(SetBaselineVersionId { version_id })
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to monitor: {:?}", e))?;
+        Ok(())
+    }
+
+    async fn set_canary_version_id(&mut self, version_id: String) -> Result<()> {
+        self.actor_ref
+            .ask(SetCanaryVersionId { version_id })
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to send to monitor: {:?}", e))?;
+        Ok(())
+    }
+
+    fn get_config(&self) -> MonitorConfig {
+        panic!(
+            "This should never be called, as the MonitorHandle is a handle to a monitor that is already running."
+        )
+    }
+}
+
+#[async_trait]
+impl Shutdownable for MonitorHandle {
+    async fn shutdown(&mut self) -> ShutdownResult {
+        self.actor_ref
+            .ask(Shutdown)
+            .await
+            .map_err(|e: SendError<_, _>| miette::miette!("Failed to shutdown monitor: {:?}", e))?;
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::adapters::StatusCode;
-
     use super::MonitorSubsystem;
-    use miette::Report;
+    use kameo::Actor;
     use static_assertions::assert_impl_all;
-    use tokio_graceful_shutdown::IntoSubsystem;
 
-    assert_impl_all!(MonitorSubsystem<StatusCode>: IntoSubsystem<Report>);
+    assert_impl_all!(MonitorSubsystem: Actor);
 }

@@ -22,6 +22,7 @@ pub use force_mode::ForceMode;
 
 /// The amount of time, in miliseconds, each subsystem has
 /// to gracefully shutdown before being forcably shutdown.
+#[allow(dead_code)]
 pub(super) const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5000;
 
 /// Trait defining different deployment modes for the MultiTool CLI

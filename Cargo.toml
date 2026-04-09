@@ -58,7 +58,7 @@ serde_json5 = "0.2.1"
 serde_with = { version = "3.12", features = ["chrono"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
-tokio-graceful-shutdown = "0.16.0"
+kameo = "0.19"
 tokio-stream = { workspace = true, features = ["time"] }
 toml = { version = "0.8.8", features = ["preserve_order"] }
 multi-core = { path = "crates/multi-core" }
