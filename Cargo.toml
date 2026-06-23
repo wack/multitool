@@ -113,3 +113,34 @@ lto = "thin"
 
 [package.metadata.dist]
 formula = "multi"
+
+[package.metadata.bacon]
+default_job = "fmt-check"
+env.CARGO_TERM_COLOR = "always"
+
+[package.metadata.bacon.jobs.fmt-check]
+command = ["cargo", "fmt", "--all", "--", "--check"]
+need_stdout = false
+on_success = "job:check"
+
+[package.metadata.bacon.jobs.check]
+command = ["cargo", "check", "--all-targets", "--workspace"]
+need_stdout = false
+on_success = "job:clippy"
+
+[package.metadata.bacon.jobs.clippy]
+command = ["cargo", "make", "clippy"]
+need_stdout = false
+
+[package.metadata.bacon.jobs.nextest]
+command = [
+  "cargo",
+  "nextest",
+  "run",
+  "--workspace",
+  "--hide-progress-bar",
+  "--failure-output",
+  "final",
+]
+need_stdout = true
+analyzer = "nextest"
