@@ -77,46 +77,83 @@ pub async fn execute(
     let ids: Vec<CheckId> = planned.iter().map(|p| p.id).collect();
     let mut server = ResultServer::start(&ids).await?;
 
-    // Dispatch all checks concurrently, bounded by the configured limit.
-    let permits = Arc::new(Semaphore::new(cfg.concurrency.max(1)));
-    let mut set: JoinSet<(CheckId, Result<AgentOutcome>)> = JoinSet::new();
-    for p in &planned {
-        let permit = permits.clone().acquire_owned().await.into_diagnostic()?;
-        let executor = executor.clone();
-        let sandbox = sandbox.clone();
-        let id = p.id;
-        let instructions = assemble_instructions(&p.check);
-        let endpoint_url = server.endpoint_url(id);
-        let working_dir = working_dir.to_path_buf();
-        set.spawn(async move {
-            let _permit = permit;
-            let outcome = run_one(
-                executor,
-                sandbox,
-                id,
-                instructions,
-                &endpoint_url,
-                &working_dir,
-            )
-            .await;
-            (id, outcome)
-        });
+    // Finalized verdict per check (from the MCP channel or an inline report) and
+    // the most recent agent outcome (for synthesizing an error reason).
+    let mut reports: HashMap<CheckId, CheckReport> = HashMap::new();
+    let mut last_outcome: HashMap<CheckId, Result<AgentOutcome>> = HashMap::new();
+
+    // Re-run any check whose agent fails to report, up to `max_attempts`. Agents
+    // are nondeterministic and occasionally hang or stop without calling the
+    // tool; a fresh attempt usually succeeds. The per-check endpoint's
+    // single-call flag stays unset until a real report arrives, so a retry
+    // reports to the same endpoint.
+    let mut pending: Vec<&PlannedCheck> = planned.iter().collect();
+    let attempts = cfg.max_attempts.max(1);
+    for attempt in 1..=attempts {
+        if pending.is_empty() {
+            break;
+        }
+        if attempt > 1 {
+            tracing::info!(
+                attempt,
+                checks = pending.len(),
+                "retrying checks whose agent did not report"
+            );
+        }
+
+        // Dispatch the pending checks concurrently, bounded by the limit.
+        let permits = Arc::new(Semaphore::new(cfg.concurrency.max(1)));
+        let mut set: JoinSet<(CheckId, Result<AgentOutcome>)> = JoinSet::new();
+        for p in &pending {
+            let permit = permits.clone().acquire_owned().await.into_diagnostic()?;
+            let executor = executor.clone();
+            let sandbox = sandbox.clone();
+            let id = p.id;
+            let instructions = assemble_instructions(&p.check);
+            let endpoint_url = server.endpoint_url(id);
+            let working_dir = working_dir.to_path_buf();
+            set.spawn(async move {
+                let _permit = permit;
+                let outcome = run_one(
+                    executor,
+                    sandbox,
+                    id,
+                    instructions,
+                    &endpoint_url,
+                    &working_dir,
+                )
+                .await;
+                (id, outcome)
+            });
+        }
+        while let Some(joined) = set.join_next().await {
+            let (id, outcome) = joined.into_diagnostic()?;
+            if let Ok(o) = &outcome
+                && let Some(report) = &o.reported
+            {
+                reports.entry(id).or_insert_with(|| report.clone());
+            }
+            last_outcome.insert(id, outcome);
+        }
+
+        // Wait briefly for MCP-channel reports for checks without an inline one.
+        let needed: HashSet<CheckId> = pending
+            .iter()
+            .map(|p| p.id)
+            .filter(|id| !reports.contains_key(id))
+            .collect();
+        let collected = server.collect(&needed, cfg.report_grace).await;
+        for (id, report) in collected {
+            reports.entry(id).or_insert(report);
+        }
+
+        // Whatever still has no verdict is retried in the next round.
+        pending = planned
+            .iter()
+            .filter(|p| !reports.contains_key(&p.id))
+            .collect();
     }
 
-    let mut agent_outcomes: HashMap<CheckId, Result<AgentOutcome>> = HashMap::new();
-    while let Some(joined) = set.join_next().await {
-        let (id, outcome) = joined.into_diagnostic()?;
-        agent_outcomes.insert(id, outcome);
-    }
-
-    // Only wait on the MCP channel for checks that ran cleanly but did not
-    // already deliver an inline verdict.
-    let needed: HashSet<CheckId> = planned
-        .iter()
-        .filter(|p| matches!(agent_outcomes.get(&p.id), Some(Ok(o)) if o.reported.is_none()))
-        .map(|p| p.id)
-        .collect();
-    let reports = server.collect(&needed, cfg.report_grace).await;
     server.shutdown().await;
 
     // Reconcile each check, then aggregate per requirement.
@@ -124,7 +161,7 @@ pub async fn execute(
     for p in &planned {
         let outcome = reconcile(
             reports.get(&p.id).cloned(),
-            agent_outcomes.get(&p.id),
+            last_outcome.get(&p.id),
             &p.check.title,
         );
         outcomes.insert(p.id, outcome);

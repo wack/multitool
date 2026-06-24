@@ -36,6 +36,11 @@ pub struct Config {
     pub report_grace: Duration,
     /// Per-agent wall-clock timeout.
     pub agent_timeout: Duration,
+    /// How many times to (re)run a check whose agent fails to report. Agents are
+    /// nondeterministic and occasionally hang or finish without calling the
+    /// report tool; a fresh attempt against the same endpoint usually succeeds.
+    /// A check only resolves as errored after all attempts are exhausted.
+    pub max_attempts: usize,
 }
 
 impl Config {
@@ -61,9 +66,15 @@ pub fn configuration() -> Config {
         provider_url: None,
         model: "haiku".to_string(),
         effort: Effort::Low,
-        concurrency: 8,
+        // Each check is a full `claude` agent process, so keep the fan-out
+        // small: more than a couple of concurrent agents starve each other of
+        // CPU/network and some exceed the timeout without reporting.
+        concurrency: 2,
         report_grace: Duration::from_secs(10),
-        agent_timeout: Duration::from_secs(300),
+        // A healthy agent inspects a few files in well under a minute; a much
+        // longer wait means the process has hung, so reap it and retry.
+        agent_timeout: Duration::from_secs(120),
+        max_attempts: 3,
     }
 }
 

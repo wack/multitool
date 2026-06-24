@@ -139,12 +139,13 @@ impl ResultServer {
             let reported = Arc::new(AtomicBool::new(false));
             let tx_for_check = tx.clone();
             // `StreamableHttpServerConfig` is `#[non_exhaustive]`, so build it
-            // from `default()` and tweak the public fields we care about.
-            // One short request/response per check; stateless + plain JSON keeps
-            // the single tool call simple (no SSE framing needed).
+            // from `default()` and override the fields we care about. We run in
+            // *stateful* Streamable HTTP mode: the Claude Code MCP client expects
+            // the standard session flow (initialize → `Mcp-Session-Id` →
+            // subsequent requests), and a stateless server stalls its multi-step
+            // handshake.
             let mut config = StreamableHttpServerConfig::default();
-            config.stateful_mode = false;
-            config.json_response = true;
+            config.stateful_mode = true;
             config.cancellation_token = cancel.clone();
             let factory = move || {
                 Ok::<_, std::io::Error>(ReportServer {
