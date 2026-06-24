@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Walk a single file's AST and produce its `Requirement`s with their `Check`s. Requirement = an H1 whose text matches `^(Requirement|Req) ` (`Req` is an alias); the remainder of the line is the title. Check = an H2 whose text matches `^Check `, associated with the nearest preceding requirement; the Markdown beneath it is the prompt.\n\n———\nMirrors Linear **MULTI-1336** · git branch `robbie/multi-1336`\nhttps://linear.app/wack-incorporated/issue/MULTI-1336/extract-requirements-and-checks-by-walking-the-markdown-ast",
+  "id": "T-005",
+  "order": 40,
+  "phase": "m1-discovery",
+  "status": "open",
+  "title": "Extract requirements and checks by walking the Markdown AST",
+  "type": "task"
+}

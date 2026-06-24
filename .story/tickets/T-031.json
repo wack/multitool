@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. Add a Windows implementation of the `Sandbox` trait (M3). The MVP is macOS-only. Windows CoW options to evaluate: ReFS block cloning, or a junction/copy-based fallback on NTFS. Slots in as a new `Sandbox` impl behind the existing platform gating.\n\n———\nMirrors Linear **MULTI-1361** · git branch `robbie/multi-1361`\nhttps://linear.app/wack-incorporated/issue/MULTI-1361/windows-copy-on-write-sandbox-support",
+  "id": "T-031",
+  "order": 50,
+  "phase": "future-work",
+  "status": "open",
+  "title": "Windows copy-on-write sandbox support",
+  "type": "feature"
+}

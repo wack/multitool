@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Recursively scan the working directory (and subdirectories) for files named exactly `CHECKS.md`, producing the list of files to parse. Use the `ignore` crate (already a dependency — the ripgrep walker) for a fast, parallel, gitignore-aware walk rooted at the working directory. Default to respecting `.gitignore`; document the decision.\n\n———\nMirrors Linear **MULTI-1334** · git branch `robbie/multi-1334`\nhttps://linear.app/wack-incorporated/issue/MULTI-1334/recursively-discover-checksmd-files-from-the-working-directory",
+  "id": "T-003",
+  "order": 20,
+  "phase": "m1-discovery",
+  "status": "open",
+  "title": "Recursively discover `CHECKS.md` files from the working directory",
+  "type": "task"
+}

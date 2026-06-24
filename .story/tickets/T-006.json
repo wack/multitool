@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "When a requirement declares no `## Check`, its prose body becomes a single anonymous check that inherits the requirement's title. Produces one `Check { title: <requirement title>, prompt: <prose body> }`.\n\n———\nMirrors Linear **MULTI-1337** · git branch `robbie/multi-1337`\nhttps://linear.app/wack-incorporated/issue/MULTI-1337/infer-anonymous-checks-from-requirement-prose",
+  "id": "T-006",
+  "order": 50,
+  "phase": "m1-discovery",
+  "status": "open",
+  "title": "Infer anonymous checks from requirement prose",
+  "type": "task"
+}

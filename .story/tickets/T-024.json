@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Make the pipeline testable without invoking real agents or touching the real filesystem, and lock down the parser/extractor with unit tests. Fake executor: a `CheckExecutor` test double returning scripted `AgentOutcome`s / driving scripted MCP reports so M5/M6 can be tested deterministically (repo already depends on `mockall`). Unit tests for AST extraction: requirements, explicit + anonymous checks, and edge cases.\n\n———\nMirrors Linear **MULTI-1354** · git branch `robbie/multi-1354`\nhttps://linear.app/wack-incorporated/issue/MULTI-1354/fake-executor-unit-tests-for-ast-extraction",
+  "id": "T-024",
+  "order": 10,
+  "phase": "tests-docs",
+  "status": "open",
+  "title": "Fake executor + unit tests for AST extraction",
+  "type": "chore"
+}

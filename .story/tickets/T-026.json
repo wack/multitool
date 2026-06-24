@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "User-facing documentation for `multi check`. Usage: what it does, how to run it (working directory, exit codes for CI), and MVP constraints (macOS-only sandboxing, `prompt`-type checks via `claude -p` + Haiku, hardcoded config). Authoring `CHECKS.md`: the format with examples — `# Requirement <title>` / `# Req <title>`, `## Check <title>`, prompts, prose, and anonymous checks.\n\n———\nMirrors Linear **MULTI-1356** · git branch `robbie/multi-1356`\nhttps://linear.app/wack-incorporated/issue/MULTI-1356/docs-multi-check-usage-and-checksmd-authoring-guide",
+  "id": "T-026",
+  "order": 30,
+  "phase": "tests-docs",
+  "status": "open",
+  "title": "Docs: `multi check` usage and `CHECKS.md` authoring guide",
+  "type": "chore"
+}

@@ -1,0 +1,13 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Own the server's lifetime so it runs only as long as needed, then returns control to the main task. Normal shutdown: once all N endpoints have received their tool call, signal completion, stop the server task, and hand the collected `CheckReport`s back. Missing reports: an agent may exit without ever calling `report-check-result` (crash/timeout) — treat as an unreported/failed check rather than hanging forever.\n\n———\nMirrors Linear **MULTI-1347** (sub-issue of MULTI-1332) · git branch `robbie/multi-1347`\nhttps://linear.app/wack-incorporated/issue/MULTI-1347/manage-server-lifecycle-shutdown-after-all-report-handle-missing",
+  "id": "T-017",
+  "order": 50,
+  "parentTicket": "T-013",
+  "phase": "m4-mcp-result-server",
+  "status": "open",
+  "title": "Manage server lifecycle: shutdown after all report, handle missing reports",
+  "type": "task"
+}

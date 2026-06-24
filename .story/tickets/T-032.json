@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. An MCP server (exposed to the user's own agent/editor) with tools for writing and updating requirements/checks in `CHECKS.md` files, so requirements can be authored conversationally. Distinct from the MVP's internal `report-check-result` guardrail (one tool, in-process): this is a separate, user-facing server whose tools mutate `CHECKS.md` on disk — different concerns and lifecycle.\n\n———\nMirrors Linear **MULTI-1362** · git branch `robbie/multi-1362`\nhttps://linear.app/wack-incorporated/issue/MULTI-1362/mcp-server-for-writingupdating-requirements",
+  "id": "T-032",
+  "order": 60,
+  "phase": "future-work",
+  "status": "open",
+  "title": "MCP server for writing/updating requirements",
+  "type": "feature"
+}

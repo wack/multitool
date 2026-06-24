@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "The configuration phase: hardcoded for the MVP (no env/file loading) but its values are dependency-injected forward rather than read at point of use, so swapping providers later is a config change not a rewrite. Define a `Config` carrying provider/model-provider URL, model (default the `haiku` family), and effort; construct the concrete `BoxedExecutor` from it and inject into execution.\n\n———\nMirrors Linear **MULTI-1341** · git branch `robbie/multi-1341`\nhttps://linear.app/wack-incorporated/issue/MULTI-1341/implement-the-hardcoded-configuration-phase-and-dependency-injection",
+  "id": "T-010",
+  "order": 30,
+  "phase": "m2-configuration-executor",
+  "status": "open",
+  "title": "Implement the hardcoded configuration phase and dependency injection",
+  "type": "task"
+}

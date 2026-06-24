@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. Add a `shell` check `type` alongside the default `prompt` type. The check body is a shell script; a zero exit status = success, non-zero = failure; no agent involved. Introduces check `type` selection (a header attribute or fenced metadata) and a non-agent execution path that bypasses the MCP reporting guardrail (the script's exit status IS the report).\n\n———\nMirrors Linear **MULTI-1357** · git branch `robbie/multi-1357`\nhttps://linear.app/wack-incorporated/issue/MULTI-1357/support-the-shell-check-type",
+  "id": "T-027",
+  "order": 10,
+  "phase": "future-work",
+  "status": "open",
+  "title": "Support the `shell` check type",
+  "type": "feature"
+}

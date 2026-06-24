@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. Replace the hardcoded configuration with real configuration loading: adjust the global default model/provider/effort via environment variables and/or a config file. M2 deliberately hardcodes config behind the injection seam; this adds the loading layer — env (the CLI already uses clap's `env` feature) and/or a file (the repo already uses `toml`/manifest patterns) — feeding the same `Config` the executor consumes.\n\n———\nMirrors Linear **MULTI-1359** · git branch `robbie/multi-1359`\nhttps://linear.app/wack-incorporated/issue/MULTI-1359/global-model-configuration-environment-file-loading",
+  "id": "T-029",
+  "order": 30,
+  "phase": "future-work",
+  "status": "open",
+  "title": "Global model configuration (environment / file loading)",
+  "type": "feature"
+}

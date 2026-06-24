@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. Emit check/requirement results to a remote HTTP endpoint (webhooks/hooks) so runs can feed dashboards, audit logs, or CI systems. The MVP reports only to the terminal + exit code; this adds an outbound reporting sink (`reqwest` is already a dependency) with a payload schema, target/auth config, and failure handling that doesn't block the run.\n\n———\nMirrors Linear **MULTI-1363** · git branch `robbie/multi-1363`\nhttps://linear.app/wack-incorporated/issue/MULTI-1363/remote-http-result-hooks",
+  "id": "T-033",
+  "order": 70,
+  "phase": "future-work",
+  "status": "open",
+  "title": "Remote HTTP result hooks",
+  "type": "feature"
+}

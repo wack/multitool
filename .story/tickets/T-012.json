@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Implement the `Sandbox` trait on macOS using APFS copy-on-write cloning so each check gets a near-instant, space-efficient clone of the working tree. Prefer `libc::clonefile(2)` (`libc` already a dependency) for a direct `clonefile`/`clonefileat` call over `cp -c`. Place clones under a temp root; clean up on drop.\n\n———\nMirrors Linear **MULTI-1343** · git branch `robbie/multi-1343`\nhttps://linear.app/wack-incorporated/issue/MULTI-1343/implement-the-macos-apfs-copy-on-write-sandbox",
+  "id": "T-012",
+  "order": 20,
+  "phase": "m3-sandboxing",
+  "status": "open",
+  "title": "Implement the macOS APFS copy-on-write sandbox",
+  "type": "task"
+}

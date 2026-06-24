@@ -1,0 +1,13 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Produce, per check, the `--mcp-config` JSON payload that points each agent at ITS endpoint, so `claude -p` connects to the right per-check URL. Declare the `report-check-result` MCP server at that check's localhost endpoint (host + port from the server, path from the per-check endpoint). Decide delivery (a temp config file path passed to `--mcp-config`, or inline).\n\n———\nMirrors Linear **MULTI-1348** (sub-issue of MULTI-1332) · git branch `robbie/multi-1348`\nhttps://linear.app/wack-incorporated/issue/MULTI-1348/generate-the-per-check-mcp-config-payload-for-claude-p",
+  "id": "T-018",
+  "order": 60,
+  "parentTicket": "T-013",
+  "phase": "m4-mcp-result-server",
+  "status": "open",
+  "title": "Generate the per-check `--mcp-config` payload for `claude -p`",
+  "type": "task"
+}

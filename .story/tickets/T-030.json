@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. Add a Linux implementation of the `Sandbox` trait (M3) so checks can run sandboxed on Linux. The MVP ships macOS-only (APFS `clonefile`) behind the `cfg`-gated trait. Linux CoW options to evaluate: btrfs/xfs reflink (`FICLONE` ioctl / `cp --reflink`) or overlayfs, with a copy fallback where reflinks aren't supported. Slots in as a new `Sandbox` impl + platform selection; no execution-phase changes expected.\n\n———\nMirrors Linear **MULTI-1360** · git branch `robbie/multi-1360`\nhttps://linear.app/wack-incorporated/issue/MULTI-1360/linux-copy-on-write-sandbox-support",
+  "id": "T-030",
+  "order": 40,
+  "phase": "future-work",
+  "status": "open",
+  "title": "Linux copy-on-write sandbox support",
+  "type": "feature"
+}

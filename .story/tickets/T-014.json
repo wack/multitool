@@ -1,0 +1,13 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Define the single MCP tool every agent uses to report its verdict, and the Rust types behind it. `report-check-result`: `success: bool` (required — true = satisfied), `evidence?: String` (optional — explanation of how the agent concluded). Define the serde input schema and the corresponding server-side result type.\n\n———\nMirrors Linear **MULTI-1344** (sub-issue of MULTI-1332) · git branch `robbie/multi-1344`\nhttps://linear.app/wack-incorporated/issue/MULTI-1344/define-the-report-check-result-tool-contract-and-result-types",
+  "id": "T-014",
+  "order": 20,
+  "parentTicket": "T-013",
+  "phase": "m4-mcp-result-server",
+  "status": "open",
+  "title": "Define the `report-check-result` tool contract and result types",
+  "type": "task"
+}
