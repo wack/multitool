@@ -24,7 +24,11 @@ impl Check {
         // The pipeline returns a process exit code distinct from operational
         // errors: check *failures* exit 1 cleanly; invalid input surfaces as a
         // `miette` diagnostic (non-zero) instead.
-        let code = rt.block_on(crate::checks::run(&self.terminal, self.args.directory()))?;
+        let code = rt.block_on(crate::checks::run(
+            &self.terminal,
+            self.args.directory(),
+            self.args.overrides(),
+        ))?;
         if code != 0 {
             std::process::exit(code);
         }

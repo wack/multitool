@@ -2,20 +2,42 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 
+use crate::checks::config::{CliOverrides, Effort, ProviderKind};
+
 /// `multi check`: validate the requirements declared in `CHECKS.md` files.
 ///
-/// Model/provider flags are intentionally absent — configuration is hardcoded
-/// for the MVP (see M2). Only the working directory is configurable.
+/// The model/provider/effort flags are the highest-precedence config layer
+/// (`flag > env > file`). They are intentionally `Option<T>` with **no**
+/// `default_value`: an unset flag must contribute nothing to the figment merge,
+/// otherwise clap's defaults would silently clobber the env/file layers.
 #[derive(Args, Clone)]
 pub struct CheckSubcommand {
     /// The directory to recursively scan for `CHECKS.md` files.
     #[arg(default_value = ".")]
     directory: PathBuf,
+
+    /// The model provider to use. Overrides `checks.provider` from env/file.
+    #[arg(long, value_enum)]
+    provider: Option<ProviderKind>,
+
+    /// The concrete model ID to run. Overrides `checks.model` from env/file.
+    #[arg(long)]
+    model: Option<String>,
+
+    /// The agent effort level. Overrides `checks.effort` from env/file.
+    #[arg(long, value_enum)]
+    effort: Option<Effort>,
 }
 
 impl CheckSubcommand {
     /// The directory to scan (defaults to the current directory).
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    /// The flag layer for the config merge, carrying only the values the user
+    /// actually passed.
+    pub fn overrides(&self) -> CliOverrides {
+        CliOverrides::new(self.provider, self.model.clone(), self.effort)
     }
 }
