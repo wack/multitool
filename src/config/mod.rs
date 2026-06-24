@@ -2,6 +2,8 @@ pub use check::CheckSubcommand;
 pub use cli::Cli;
 pub use init::InitSubcommand;
 pub use login::LoginSubcommand;
+#[cfg(feature = "proxy")]
+pub use proxy::ProxySubcommand;
 pub use run::RunSubcommand;
 
 mod check;

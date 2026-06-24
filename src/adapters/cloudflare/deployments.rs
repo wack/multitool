@@ -253,7 +253,7 @@ mod tests {
         // Test deserialization
         let response: CloudflareResponse<TestResult> = serde_json::from_str(json_str).unwrap();
 
-        assert_eq!(response.success, true);
+        assert!(response.success);
 
         // Test errors
         let errors = response.errors.as_ref().unwrap();
