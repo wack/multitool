@@ -1,37 +1,77 @@
-name: "On Push"
+name: "On Push – Validate Build"
 
 on:
   push:
-    branches-ignore:
-      - trunk
+    # Skip the default branch (the merge queue validates trunk commits) and the
+    # merge queue's own temporary branches. on-push and on-merge share the
+    # "⚡ PR Ready" required-check name; if on-push ran on a gh-readonly-queue/**
+    # branch, its fast PR-time gate (format + clippy) could satisfy the merge
+    # queue's required check before on-merge.yml's comprehensive gate (build +
+    # coverage + dist-build + publish-edge) finished — letting a failing commit
+    # merge. The merge_group event in on-merge.yml is what gates the queue.
+    branches:
+      - '**'
+      - '!trunk'
+      - '!gh-readonly-queue/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
 jobs:
-  # Do not change this job's name without also changing "pr-ready"'s
-  # job name in "on-merge.yml". These jobs must have the same name.
-  # See the README for more details.
+  # Do not change this job's name without also changing "pr-ready"'s job name
+  # in "on-merge.yml". Both workflows back the same "⚡ PR Ready" required-check
+  # context, so the name must stay identical in both.
   pr-ready:
     if: always()
     name: "⚡ PR Ready"
     runs-on: ubuntu-22.04
     needs:
-    - "build"
+      - "format"
+      - "clippy"
     steps:
-      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')  || contains(needs.*.result, 'skipped') }}
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
         run: |
           echo "One or more dependent jobs failed, was skipped, or was cancelled. All jobs must pass for the PR to be ready."
           exit 1
       - run: echo "OK"
-  # This job installs Cargo Make and Cargo Nextest before running
-  # the CI workflow using Cargo Make. Most of the time, it should
-  # restore Cargo Make and other dependencies from cache.
-  build:
-    name: Validate Rust Build
-    uses: "wack/gh-actions/.github/workflows/validate.yml@trunk"
-    permissions:
-      id-token: "write"
-      contents: "read"
-      attestations: "write"
+
+  # Fast formatting gate. The full test suite + coverage run only in the merge
+  # queue (on-merge.yml) so PR authors get quick feedback here.
+  #
+  # We use wack/gh-actions/setup-rust (which pins to dtolnay's stable as the
+  # rustup *default*) rather than forcing a toolchain: the repo's
+  # rust-toolchain.toml (1.96.0) takes precedence over the default, so cargo
+  # commands run on the pinned toolchain — matching local dev exactly. No
+  # CROSS_REPO_PAT is configured because multitool's only git dependency
+  # (multitool-rust-sdk) is a public repo.
+  format:
+    name: Check Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Setup Rust
+        uses: "wack/gh-actions/setup-rust@trunk"
+      - name: Check formatting
+        run: cargo make check-format
+
+  # Clippy runs on PR branches so lint failures surface here, not only in the
+  # merge queue. Same canonical command the merge queue's ci-flow runs:
+  # `cargo make clippy` == clippy --all-targets --workspace --locked -D warnings.
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Setup Rust
+        uses: "wack/gh-actions/setup-rust@trunk"
+      - name: Clippy
+        run: cargo make clippy

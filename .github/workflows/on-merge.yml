@@ -1,33 +1,233 @@
-name: "On Merge"
+name: "On Merge | Validate Build"
 
 on:
-  # Use a merge queue to gate the creation and storage
-  # of these Docker images.
+  # The merge queue gates trunk; this is the comprehensive tier.
   merge_group:
-  # Allow this job to be executed manually from the GH UI.
+  # Allow this workflow to be executed manually from the GH UI.
   workflow_dispatch:
 
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
 jobs:
+  # Single required-check context for the merge queue. Keep this job's name
+  # ("⚡ PR Ready") identical to the one in on-push.yml. publish-edge is in the
+  # needs list so the merge waits for the rolling edge prerelease to be
+  # published before the candidate fast-forwards onto trunk.
   pr-ready:
     if: always()
     name: "⚡ PR Ready"
     runs-on: ubuntu-22.04
     needs:
-    - "build"
+      - "format"
+      - "build"
+      - "dist-plan"
+      - "dist-build"
+      - "publish-edge"
     steps:
-      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')  || contains(needs.*.result, 'skipped') }}
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
         run: |
           echo "One or more dependent jobs failed, was skipped, or was cancelled. All jobs must pass for the PR to be ready."
           exit 1
       - run: echo "OK"
-    
-  # This job installs Cargo Make and Cargo Nextest before running
-  # the CI workflow using Cargo Make. Most of the time, it should
-  # restore Cargo Make and other dependencies from cache.
+
+  # Fast-fail formatting gate (cheap; surfaces a formatting miss before the
+  # heavier build job finishes). See on-push.yml for why we use setup-rust
+  # without forcing a toolchain and without a CROSS_REPO_PAT.
+  format:
+    name: Check Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Setup Rust
+        uses: "wack/gh-actions/setup-rust@trunk"
+      - name: Check formatting
+        run: cargo make check-format
+
+  # Full validation. multitool's `ci-flow` bundles pre-build checks, format,
+  # clippy, build, docs, the nextest suite, AND llvm-cov coverage in one task,
+  # so there is no separate coverage job (unlike the Helm-based Wack repos that
+  # split coverage out).
   build:
     name: Validate Rust Build
-    uses: "wack/gh-actions/.github/workflows/validate.yml@trunk"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Setup Rust
+        uses: "wack/gh-actions/setup-rust@trunk"
+        with:
+          # ci-flow runs the suite with cargo-nextest and collects coverage with
+          # cargo-llvm-cov, so both must be installed alongside cargo-make.
+          shared-key: rust-ci
+          extra-tools: cargo-nextest,cargo-llvm-cov
+      - name: Cargo Make
+        run: cargo make ci-flow
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Gating release build. Every merge-queue candidate is built for all Linux
+  # dist targets before it can land, so trunk never holds a commit that fails to
+  # produce a release artifact. The macOS targets are intentionally excluded
+  # here to keep (10×-billed) macOS runner spend off every merge — they're built
+  # and published only on a version tag, via release.yml. Consequently the
+  # rolling `edge` prerelease published below carries Linux binaries only; macOS
+  # binaries ship with tagged releases.
+  #
+  # The matrix is read at runtime from `dist plan` (then filtered to Linux), so
+  # it tracks dist-workspace.toml automatically — no hand-maintained target list.
+  # ───────────────────────────────────────────────────────────────────────────
+  dist-plan:
+    name: Plan release build
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Install dist
+        shell: bash
+        run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh"
+      - id: plan
+        shell: bash
+        run: |
+          # Tagless plan (no GitHub Release is created); we only need the build
+          # matrix that describes each target's runner and dist invocation.
+          # Filter to Linux targets so the merge queue never pays for macOS
+          # builds — those run on tags (release.yml) with the full target set.
+          dist plan --output-format=json > plan-dist-manifest.json
+          echo "matrix=$(jq -c '{include: [.ci.github.artifacts_matrix.include[] | select([.targets[] | contains("linux")] | any)]}' plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
+
+  dist-build:
+    name: "Build (${{ join(matrix.targets, ', ') }})"
+    needs: dist-plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.dist-plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container && matrix.container.image || null }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Install Rust non-interactively if not already installed
+        if: ${{ matrix.container }}
+        run: |
+          if ! command -v cargo > /dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          fi
+      - name: Install OpenSSL and MUSL build dependencies
+        if: ${{ startsWith(matrix.runner, 'ubuntu') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -yq openssl libssl-dev musl-tools perl make
+      - name: Install dist
+        run: ${{ matrix.install_dist.run }}
+      - name: Install dependencies
+        run: |
+          ${{ matrix.packages_install }}
+      - id: build
+        name: Build artifacts
+        shell: bash
+        run: |
+          dist build --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+          echo "dist ran successfully"
+          # Collect the artifact paths dist just produced so publish-edge can
+          # reuse them without rebuilding.
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          dist print-upload-files-from-manifest --manifest dist-manifest.json >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: edge-artifacts-${{ join(matrix.targets, '_') }}
+          path: ${{ steps.build.outputs.paths }}
+          retention-days: 1
+          if-no-files-found: error
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Publish the validated artifacts to the rolling `edge` prerelease. Because it
+  # depends on format + build + dist-build, it runs LAST in the merge group —
+  # only after every other check is green — so it publishes a candidate that has
+  # already cleared validation and is the commit about to fast-forward onto
+  # trunk. It reuses dist-build's (Linux-only) artifacts (no rebuild), so `edge`
+  # carries Linux binaries; macOS binaries ship with tagged releases. It is in
+  # pr-ready's needs, so the merge waits for it.
+  #
+  # The publish steps only run on merge_group, not workflow_dispatch, so a manual
+  # dispatch (used for inspection) validates without touching the edge release —
+  # but the job still succeeds, keeping pr-ready green.
+  # ───────────────────────────────────────────────────────────────────────────
+  publish-edge:
+    name: Publish edge prerelease
+    needs:
+      - format
+      - build
+      - dist-build
+    runs-on: ubuntu-22.04
     permissions:
-      id-token: "write"
-      contents: "read"
-      attestations: "write"
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      EDGE_TAG: edge
+    steps:
+      - name: Download built artifacts
+        if: ${{ github.event_name == 'merge_group' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: edge-artifacts-*
+          path: edge/
+          merge-multiple: true
+      - name: Generate checksums
+        if: ${{ github.event_name == 'merge_group' }}
+        working-directory: edge
+        run: |
+          shopt -s nullglob
+          files=(*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts were downloaded; refusing to publish an empty edge release." >&2
+            exit 1
+          fi
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+      - name: Update rolling edge prerelease
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          # github.sha is the merge-queue candidate that fast-forwards onto trunk
+          # when this run passes — the exact commit we want edge to point at.
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          # Recreate the rolling prerelease so its assets and target commit are
+          # always the latest trunk candidate. Delete + recreate (rather than
+          # uploading over the top) guarantees stale per-platform assets from a
+          # previous build never linger.
+          gh release delete "$EDGE_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          # Retry create/upload so a transient API hiccup doesn't wedge the queue.
+          n=0
+          until [ "$n" -ge 3 ]; do
+            if gh release create "$EDGE_TAG" \
+                 --repo "$GITHUB_REPOSITORY" \
+                 --target "$RELEASE_COMMIT" \
+                 --prerelease \
+                 --title "Edge (latest trunk build)" \
+                 --notes "Rolling pre-release built from the most recent trunk commit (${RELEASE_COMMIT}). Updated automatically on every merge; not a stable release." \
+                 edge/*; then
+              break
+            fi
+            n=$((n + 1))
+            echo "gh release create failed (attempt ${n}); retrying in 10s..." >&2
+            sleep 10
+          done
+          if [ "$n" -ge 3 ]; then
+            echo "Failed to publish edge release after 3 attempts." >&2
+            exit 1
+          fi
