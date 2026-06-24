@@ -1,5 +1,11 @@
 # Getting started: Roll out a Lambda function with MultiTool
 
+> [!WARNING]
+> **Deprecated.** The `multi login` and `multi run` canary-rollout workflow
+> described below is a legacy feature and is no longer supported. It still works
+> for now but will be removed in a future release. This repository now hosts
+> **MultiTool Checks** — see [Validate requirements with `multi check`](./checks.md).
+
 This tutorial walks through rolling out a simple AWS Lambda function behind an API Gateway. You’ll simulate user traffic to the API, and the MultiTool agent will automatically decide whether to promote or roll out based on the observed error rate.
 
 You will:

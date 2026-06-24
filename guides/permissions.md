@@ -1,5 +1,11 @@
 # Required permissions for MultiTool
 
+> [!WARNING]
+> **Deprecated.** These cloud permissions apply to the legacy `multi run`
+> canary-rollout workflow, which is no longer supported and will be removed in a
+> future release. This repository now hosts **MultiTool Checks** — see
+> [Validate requirements with `multi check`](./checks.md).
+
 MultiTool is designed to minimize security risk. <b>MultiTool never stores your cloud credentials</b> and relies solely on local credentials to interact with your cloud provider.
 
 ## Cloudflare permissions
