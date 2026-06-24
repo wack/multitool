@@ -15,7 +15,7 @@ use crate::checks::config::Effort;
 /// effort come from injected configuration (see [`crate::checks::config::Config`]),
 /// never hardcoded here.
 pub struct ClaudeExecutor {
-    /// The model family to run (e.g. the `haiku` family for the MVP).
+    /// The model family to run (e.g. the `sonnet` family for the MVP).
     model: String,
     /// Optional model-provider base URL; when set, passed as `ANTHROPIC_BASE_URL`.
     provider_url: Option<String>,
@@ -48,7 +48,7 @@ impl ClaudeExecutor {
 #[async_trait]
 impl CheckExecutor for ClaudeExecutor {
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
-        // TODO: "effort level" has no clean `claude -p` flag for Haiku yet; for
+        // TODO: "effort level" has no clean `claude -p` flag yet; for
         // now it is recorded for diagnostics and wired through when a richer
         // provider lands.
         tracing::debug!(

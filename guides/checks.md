@@ -153,7 +153,7 @@ trustworthy despite agent nondeterminism.
 
 - **macOS only** — copy-on-write sandboxing uses APFS `clonefile`. Linux and
   Windows support is planned.
-- **`prompt`-type checks only** — checks run via `claude -p` against the `haiku`
+- **`prompt`-type checks only** — checks run via `claude -p` against the `sonnet`
   model family. A `shell` check type is planned.
 - **Hardcoded configuration** — the model/provider are fixed for the MVP; there
   is no environment or file-based configuration yet.

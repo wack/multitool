@@ -7,15 +7,14 @@
 //! this process (never a subprocess).
 //!
 //! The single server hosts **N endpoints — one per check** (`/checks/{id}`), so
-//! each agent has a unique URL to write its singleton result to. Reports flow
-//! back to the main task over an mpsc channel keyed by check id. Once every
-//! check has reported (or a grace period elapses for missing reports), the
-//! server task is cancelled and control returns to execution.
+//! each agent has a unique URL to write its singleton result to. Each check has
+//! a [`tokio::sync::Notify`] and a slot in a shared map; when an agent reports,
+//! the handler records the verdict and notifies, so execution can wake the
+//! instant a check reports (and kill that agent — its job is done).
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use miette::{IntoDiagnostic, Result};
 use rmcp::handler::server::wrapper::Parameters;
@@ -25,7 +24,7 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -37,6 +36,9 @@ pub const REPORT_TOOL: &str = "report-check-result";
 
 /// The MCP server name advertised in the `--mcp-config` payload.
 pub const SERVER_NAME: &str = "multitool-checks";
+
+/// Shared store of reported verdicts, keyed by check id.
+pub type ReportStore = Arc<Mutex<HashMap<CheckId, CheckReport>>>;
 
 /// The arguments of a `report-check-result` tool call (the wire contract).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -56,13 +58,15 @@ pub struct CheckReport {
 }
 
 /// The per-check MCP handler. One is constructed per session by the service
-/// factory; all sessions for a given check share the same `reported` flag and
-/// result `tx`, so single-call semantics hold across reconnects.
+/// factory; all sessions for a given check share the same `reported` flag,
+/// result store, and notifier, so single-call semantics hold across reconnects
+/// and the report is observable to execution.
 #[derive(Clone)]
 struct ReportServer {
     check_id: CheckId,
-    tx: UnboundedSender<(CheckId, CheckReport)>,
     reported: Arc<AtomicBool>,
+    reports: ReportStore,
+    notify: Arc<Notify>,
 }
 
 #[tool_router]
@@ -76,6 +80,11 @@ impl ReportServer {
         params: Parameters<ReportCheckResult>,
     ) -> Result<CallToolResult, ErrorData> {
         let Parameters(input) = params;
+        tracing::debug!(
+            check_id = self.check_id,
+            success = input.success,
+            "report-check-result received"
+        );
         let recorded = self.record(CheckReport {
             success: input.success,
             evidence: input.evidence,
@@ -100,9 +109,10 @@ impl ReportServer {
             );
             return false;
         }
-        // The receiver lives for the whole run; a send error only means the run
-        // is already tearing down, which we can safely ignore.
-        let _ = self.tx.send((self.check_id, report));
+        self.reports.lock().unwrap().insert(self.check_id, report);
+        // `notify_one` stores a permit if no one is waiting yet, so a waiter that
+        // arrives after the report still wakes immediately (no lost wakeups).
+        self.notify.notify_one();
         true
     }
 }
@@ -110,15 +120,14 @@ impl ReportServer {
 #[tool_handler]
 impl ServerHandler for ReportServer {}
 
-/// A handle to the running result server: the bound port, the result channel,
-/// and the means to shut the server task down.
+/// A handle to the running result server: the bound port, the per-check result
+/// store + notifiers, and the means to shut the server task down.
 pub struct ResultServer {
     base_url: String,
     cancel: CancellationToken,
     join: JoinHandle<()>,
-    rx: UnboundedReceiver<(CheckId, CheckReport)>,
-    /// Kept alive purely so the result channel never closes while checks run.
-    _keepalive: UnboundedSender<(CheckId, CheckReport)>,
+    reports: ReportStore,
+    notifiers: HashMap<CheckId, Arc<Notify>>,
 }
 
 /// The URL path hosting the endpoint for `check_id`.
@@ -130,14 +139,17 @@ impl ResultServer {
     /// Stand up the single server with one endpoint per check id, bound to an
     /// OS-assigned localhost port, on a dedicated tokio task.
     pub async fn start(check_ids: &[CheckId]) -> Result<Self> {
-        let (tx, rx) = unbounded_channel::<(CheckId, CheckReport)>();
         let cancel = CancellationToken::new();
         let session_manager = Arc::new(LocalSessionManager::default());
+        let reports: ReportStore = Arc::new(Mutex::new(HashMap::new()));
+        let mut notifiers: HashMap<CheckId, Arc<Notify>> = HashMap::new();
 
         let mut router = axum::Router::new();
         for &id in check_ids {
+            let notify = Arc::new(Notify::new());
+            notifiers.insert(id, notify.clone());
             let reported = Arc::new(AtomicBool::new(false));
-            let tx_for_check = tx.clone();
+            let reports_for_check = reports.clone();
             // `StreamableHttpServerConfig` is `#[non_exhaustive]`, so build it
             // from `default()` and override the fields we care about. We run in
             // *stateful* Streamable HTTP mode: the Claude Code MCP client expects
@@ -150,8 +162,9 @@ impl ResultServer {
             let factory = move || {
                 Ok::<_, std::io::Error>(ReportServer {
                     check_id: id,
-                    tx: tx_for_check.clone(),
                     reported: reported.clone(),
+                    reports: reports_for_check.clone(),
+                    notify: notify.clone(),
                 })
             };
             let service = StreamableHttpService::new(factory, session_manager.clone(), config);
@@ -176,8 +189,8 @@ impl ResultServer {
             base_url: format!("http://127.0.0.1:{port}"),
             cancel,
             join,
-            rx,
-            _keepalive: tx,
+            reports,
+            notifiers,
         })
     }
 
@@ -186,35 +199,15 @@ impl ResultServer {
         format!("{}{}", self.base_url, endpoint_path(check_id))
     }
 
-    /// Collect reports until every id in `needed` has reported or `grace`
-    /// elapses. Available reports are drained immediately; only genuinely
-    /// missing ones incur waiting. Missing ids are simply absent from the map
-    /// (reconciliation treats them as failures).
-    pub async fn collect(
-        &mut self,
-        needed: &HashSet<CheckId>,
-        grace: Duration,
-    ) -> HashMap<CheckId, CheckReport> {
-        let mut map = HashMap::new();
-        while let Ok((id, report)) = self.rx.try_recv() {
-            map.entry(id).or_insert(report);
-        }
-        let have_all =
-            |m: &HashMap<CheckId, CheckReport>| needed.iter().all(|id| m.contains_key(id));
-        if have_all(&map) {
-            return map;
-        }
-        let deadline = tokio::time::Instant::now() + grace;
-        while !have_all(&map) {
-            match tokio::time::timeout_at(deadline, self.rx.recv()).await {
-                Ok(Some((id, report))) => {
-                    map.entry(id).or_insert(report);
-                }
-                Ok(None) => break, // all senders dropped (shouldn't happen: keepalive)
-                Err(_) => break,   // grace elapsed
-            }
-        }
-        map
+    /// The notifier + result store for `check_id`, so a caller can await the
+    /// check's report and read it once it arrives.
+    pub fn report_handle(&self, check_id: CheckId) -> (Arc<Notify>, ReportStore) {
+        (self.notifiers[&check_id].clone(), self.reports.clone())
+    }
+
+    /// The verdict recorded for `check_id`, if any.
+    pub fn report_for(&self, check_id: CheckId) -> Option<CheckReport> {
+        self.reports.lock().unwrap().get(&check_id).cloned()
     }
 
     /// Signal the server task to stop and wait for it to wind down.
@@ -239,31 +232,50 @@ pub fn mcp_config_json(endpoint_url: &str) -> String {
 mod tests {
     use super::*;
 
+    fn report_server(check_id: CheckId) -> (ReportServer, ReportStore, Arc<Notify>) {
+        let reports: ReportStore = Arc::new(Mutex::new(HashMap::new()));
+        let notify = Arc::new(Notify::new());
+        let server = ReportServer {
+            check_id,
+            reported: Arc::new(AtomicBool::new(false)),
+            reports: reports.clone(),
+            notify: notify.clone(),
+        };
+        (server, reports, notify)
+    }
+
     #[test]
     fn record_enforces_single_call_and_delivers() {
-        let (tx, mut rx) = unbounded_channel();
-        let server = ReportServer {
-            check_id: 7,
-            tx,
-            reported: Arc::new(AtomicBool::new(false)),
-        };
+        let (server, reports, _notify) = report_server(7);
 
         assert!(server.record(CheckReport {
             success: true,
             evidence: Some("ok".into())
         }));
-        // Duplicate is ignored.
+        // Duplicate is ignored and does not overwrite.
         assert!(!server.record(CheckReport {
             success: false,
             evidence: None
         }));
 
-        let (id, report) = rx.try_recv().expect("first report delivered");
-        assert_eq!(id, 7);
-        assert!(report.success);
-        assert_eq!(report.evidence.as_deref(), Some("ok"));
-        // No second message was sent.
-        assert!(rx.try_recv().is_err());
+        let stored = reports.lock().unwrap().get(&7).cloned().expect("recorded");
+        assert!(stored.success);
+        assert_eq!(stored.evidence.as_deref(), Some("ok"));
+        assert_eq!(reports.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn record_wakes_a_waiter() {
+        let (server, _reports, notify) = report_server(0);
+        // A report that lands before the wait still wakes it (notify_one permit).
+        server.record(CheckReport {
+            success: true,
+            evidence: None,
+        });
+        // Should return promptly rather than hang.
+        tokio::time::timeout(std::time::Duration::from_secs(1), notify.notified())
+            .await
+            .expect("notified");
     }
 
     #[test]
@@ -279,13 +291,12 @@ mod tests {
 
     #[tokio::test]
     async fn server_binds_a_port_and_shuts_down() {
-        let mut server = ResultServer::start(&[0, 1, 2]).await.unwrap();
+        let server = ResultServer::start(&[0, 1, 2]).await.unwrap();
         assert!(server.endpoint_url(1).ends_with("/checks/1"));
         assert!(server.endpoint_url(1).starts_with("http://127.0.0.1:"));
-        // No reports arrive; collect returns promptly after the grace window.
-        let needed: HashSet<CheckId> = [0usize, 1, 2].into_iter().collect();
-        let got = server.collect(&needed, Duration::from_millis(50)).await;
-        assert!(got.is_empty());
+        // No reports arrived.
+        assert!(server.report_for(1).is_none());
+        let _ = server.report_handle(2);
         server.shutdown().await;
     }
 }

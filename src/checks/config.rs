@@ -11,7 +11,7 @@ use crate::checks::executor::BoxedExecutor;
 use crate::checks::executor::claude::ClaudeExecutor;
 
 /// Effort level for the agent. Carried through configuration and logged by the
-/// executor; not yet mapped to a concrete `claude -p` flag for the Haiku MVP
+/// executor; not yet mapped to a concrete `claude -p` flag for the MVP
 /// (see TODO in the executor). `Medium`/`High` are reserved for richer providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)] // Medium/High are reserved for future provider wiring.
@@ -26,15 +26,13 @@ pub enum Effort {
 pub struct Config {
     /// Optional model-provider base URL. `None` uses the `claude` CLI default.
     pub provider_url: Option<String>,
-    /// The model family to run (default: the `haiku` family).
+    /// The model family to run (default: the `sonnet` family).
     pub model: String,
     /// The effort level (default: low).
     pub effort: Effort,
     /// Maximum number of checks executed concurrently.
     pub concurrency: usize,
-    /// Grace period to wait for a missing MCP report before failing a check.
-    pub report_grace: Duration,
-    /// Per-agent wall-clock timeout.
+    /// Per-agent wall-clock timeout (reaps an agent that hangs before reporting).
     pub agent_timeout: Duration,
     /// How many times to (re)run a check whose agent fails to report. Agents are
     /// nondeterministic and occasionally hang or finish without calling the
@@ -59,21 +57,25 @@ impl Config {
 
 /// The configuration phase: produce the hardcoded MVP [`Config`].
 ///
-/// Hardcoded to `claude -p` + the `haiku` family. Environment/file loading is
+/// Hardcoded to `claude -p` + the `sonnet` family. Environment/file loading is
 /// explicitly out of scope (see *Future work: global model configuration*).
 pub fn configuration() -> Config {
     Config {
         provider_url: None,
-        model: "haiku".to_string(),
+        // The `sonnet` family. (The original MVP target was `haiku`, but on the
+        // multi-file *reasoning* checks this feature exists for, haiku reliably
+        // spins in a runaway exploration loop and never reaches a verdict;
+        // sonnet reasons efficiently and reports in well under a minute.)
+        model: "sonnet".to_string(),
         effort: Effort::Low,
-        // Each check is a full `claude` agent process, so keep the fan-out
-        // small: more than a couple of concurrent agents starve each other of
-        // CPU/network and some exceed the timeout without reporting.
+        // Each check is a full `claude` agent process, killed the instant it
+        // reports (see execution::run_one), so they don't linger. A small fan-out
+        // gives each (CPU-heavy) reasoning agent enough cores to finish promptly.
         concurrency: 2,
-        report_grace: Duration::from_secs(10),
-        // A healthy agent inspects a few files in well under a minute; a much
-        // longer wait means the process has hung, so reap it and retry.
-        agent_timeout: Duration::from_secs(120),
+        // Reaps an agent that hangs *before* reporting so the check can be
+        // retried. Generous: the heaviest reasoning checks can take a few minutes
+        // under contention before they report.
+        agent_timeout: Duration::from_secs(240),
         max_attempts: 3,
     }
 }
@@ -83,9 +85,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_haiku_and_bounded_concurrency() {
+    fn defaults_are_hardcoded_and_bounded_concurrency() {
         let cfg = configuration();
-        assert_eq!(cfg.model, "haiku");
+        assert_eq!(cfg.model, "sonnet");
         assert!(cfg.concurrency >= 1);
         // The executor is constructible (DI seam works).
         let _exec = cfg.build_executor();
