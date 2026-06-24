@@ -18,6 +18,9 @@ pub mod model;
 mod reporting;
 pub mod sandbox;
 
+#[cfg(test)]
+mod e2e;
+
 use std::path::Path;
 
 use miette::Result;

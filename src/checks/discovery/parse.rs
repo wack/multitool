@@ -378,4 +378,24 @@ mod tests {
         assert_eq!(out.requirements[0].checks[0].title, "No JSON");
         assert_eq!(out.requirements[1].title, "Small Images");
     }
+
+    #[test]
+    fn duplicate_titles_are_preserved_not_deduped() {
+        // Two requirements share a title; one of them has two checks with the
+        // same title. None of these are unique — all must survive verbatim.
+        let src =
+            "# Requirement Dup\ndo a\n\n# Requirement Dup\n## Check Same\nb1\n## Check Same\nb2\n";
+        let out = extract_str(src);
+        assert!(out.errors.is_empty(), "errors: {:?}", out.errors);
+        assert_eq!(out.requirements.len(), 2);
+        assert_eq!(out.requirements[0].title, "Dup");
+        assert_eq!(out.requirements[1].title, "Dup");
+        // Both same-titled checks are kept, in order.
+        let checks = &out.requirements[1].checks;
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].title, "Same");
+        assert_eq!(checks[1].title, "Same");
+        assert_eq!(checks[0].prompt, "b1");
+        assert_eq!(checks[1].prompt, "b2");
+    }
 }
