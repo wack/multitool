@@ -26,8 +26,7 @@ use std::path::Path;
 use miette::Result;
 
 use crate::Terminal;
-
-pub use config::configuration;
+use crate::checks::config::CliOverrides;
 
 /// Run the full `multi check` pipeline rooted at `working_dir`.
 ///
@@ -35,9 +34,21 @@ pub use config::configuration;
 /// empty tree counts as success), `1` if any requirement is unsatisfied.
 /// Operational errors (e.g. an invalid `CHECKS.md`) surface as `Err` diagnostics
 /// rather than an exit code, so CI can tell "checks failed" from "tool errored".
-pub async fn run(terminal: &Terminal, working_dir: &Path) -> Result<i32> {
-    // Phase 1: configuration (hardcoded for the MVP, injected forward).
-    let cfg = configuration();
+pub async fn run(terminal: &Terminal, working_dir: &Path, overrides: CliOverrides) -> Result<i32> {
+    // Phase 1: configuration — resolve provider/model/effort (flag > env > file)
+    // and construct the provider registry, injected forward.
+    let resolved = config::load(overrides)?;
+    let cfg = resolved.config;
+
+    // The provider registry is constructed and handed off here; wiring it into a
+    // real executor is a follow-up. For now the MVP `ClaudeExecutor` runs the
+    // checks, so just record what was built.
+    tracing::debug!(
+        provider = cfg.provider.as_str(),
+        model = %cfg.model,
+        available_providers = ?resolved.providers.keys().collect::<Vec<_>>(),
+        "resolved checks configuration and provider registry",
+    );
 
     // Phase 2: discovery.
     let requirements = discovery::discover(working_dir).await?;

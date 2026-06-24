@@ -1,5 +1,4 @@
 use directories::ProjectDirs;
-use file::StaticFile;
 use miette::{Diagnostic, IntoDiagnostic, Result, miette};
 use std::fs;
 use thiserror::Error;
@@ -10,6 +9,9 @@ use std::{
 };
 
 pub(crate) use file::File;
+// Re-exported so config layers outside the `fs` module (e.g. `checks::config`)
+// can declare their own `StaticFile` marker types and reuse the loader/discovery.
+pub(crate) use file::StaticFile;
 pub(crate) use manifest::application_manifest;
 pub(crate) use session::{Session, SessionFile, UserCreds};
 pub(crate) use wrangler::{JsonWranglerFile, JsoncWranglerFile, TomlWranglerFile};

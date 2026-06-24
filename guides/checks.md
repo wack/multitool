@@ -149,14 +149,52 @@ server the CLI runs on `localhost` (one dedicated endpoint per check). An agent
 that finishes **without** calling the tool fails its check. This keeps results
 trustworthy despite agent nondeterminism.
 
+## ⚙️ Configuration
+
+The default **provider**, **model**, and **effort** are resolved from three
+sources, in order of precedence (highest wins):
+
+1. **Flags** — `--provider`, `--model`, `--effort` on `multi check`.
+2. **Environment** — `MULTI_`-prefixed vars mapped into the `checks` namespace,
+   e.g. `MULTI_CHECKS_MODEL`, `MULTI_CHECKS_PROVIDER`, `MULTI_CHECKS_EFFORT`.
+3. **Config file** — the `[checks]` table of `MultiTool.toml` (or `.json` /
+   `.jsonc`), discovered up the directory tree like any MultiTool manifest.
+
+```toml
+[checks]
+provider = "anthropic"          # anthropic | openai | gemini
+model    = "claude-sonnet-4-6"  # must be a known model ID for the provider
+effort   = "low"                # low | medium | high
+
+# optional, non-secret base-URL overrides per provider
+[checks.providers.anthropic]
+base_url = "https://..."
+```
+
+An unset flag contributes nothing — it never overrides a value from the
+environment or file. The `model` is validated against a hardcoded allowlist of
+known IDs for the selected provider; an unknown ID is a clear error.
+
+**Credentials are environment-only.** API keys are read directly from each
+provider's native variable and never live in the config file or under the
+`MULTI_` prefix:
+
+| Provider  | API key                                  | Base URL (optional)  |
+| --------- | ---------------------------------------- | -------------------- |
+| Anthropic | `ANTHROPIC_API_KEY`                      | `ANTHROPIC_BASE_URL` |
+| OpenAI    | `OPENAI_API_KEY`                         | `OPENAI_BASE_URL`    |
+| Gemini    | `GOOGLE_API_KEY` (or `GEMINI_API_KEY`)   | `GEMINI_BASE_URL`    |
+
+A provider is only selectable when its API key is present; selecting a provider
+whose key is missing is an error.
+
 ## ⚠️ MVP constraints
 
 - **macOS only** — copy-on-write sandboxing uses APFS `clonefile`. Linux and
   Windows support is planned.
-- **`prompt`-type checks only** — checks run via `claude -p` against the `sonnet`
-  model family. A `shell` check type is planned.
-- **Hardcoded configuration** — the model/provider are fixed for the MVP; there
-  is no environment or file-based configuration yet.
+- **`prompt`-type checks only** — checks run via `claude -p` against the
+  configured model (the `sonnet` family by default). A `shell` check type is
+  planned.
 
 ## 📬 Need help?
 
