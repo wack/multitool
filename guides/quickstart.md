@@ -1,5 +1,11 @@
 # Quickstart: Deploy with MultiTool
 
+> [!WARNING]
+> **Deprecated.** The `multi login` and `multi run` canary-rollout workflow
+> described below is a legacy feature and is no longer supported. It still works
+> for now but will be removed in a future release. This repository now hosts
+> **MultiTool Checks** — see [Validate requirements with `multi check`](./checks.md).
+
 This guide shows you how to deploy your own AWS Lambda code using MultiTool. You'll connect the CLI to your MultiTool dashboard and run a deployment using Lambda code packaged as a zip file.
 
 ## ✅ Prerequisites

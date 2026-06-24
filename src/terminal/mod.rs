@@ -73,6 +73,25 @@ impl Terminal {
         self.stdout.allow_color()
     }
 
+    /// Emit a deprecation notice for a legacy subcommand to stderr.
+    ///
+    /// MultiTool now centers on `multi check`; the remaining legacy subcommands
+    /// are soft-deprecated (MULTI-1365) and still function, but invoking one
+    /// surfaces this warning. Routed through stderr so it never pollutes a
+    /// command's stdout, and honors the global `--enable-colors` setting.
+    pub fn deprecation_notice(&self, command: &str) -> Result<()> {
+        let body = format!(
+            "warning: `multi {command}` is deprecated and will be removed in a future release. \
+             MultiTool now centers on `multi check`."
+        );
+        let line = if self.stderr.allow_color() {
+            console::style(body).yellow().to_string()
+        } else {
+            body
+        };
+        self.stderr.term().write_line(&line).into_diagnostic()
+    }
+
     pub fn print_version(&self, version: &'static str) -> Result<()> {
         let msg = format!("v{version}");
         self.stdout
