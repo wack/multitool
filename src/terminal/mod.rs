@@ -62,6 +62,17 @@ impl Terminal {
             .into_diagnostic()
     }
 
+    /// Write a single line to stdout. Used by the `multi check` reporting phase,
+    /// which applies its own `console` styling before calling this.
+    pub fn write_stdout_line(&self, line: &str) -> Result<()> {
+        self.stdout.term().write_line(line).into_diagnostic()
+    }
+
+    /// Whether stdout may emit color, honoring the global `--enable-colors` flag.
+    pub fn stdout_allows_color(&self) -> bool {
+        self.stdout.allow_color()
+    }
+
     pub fn print_version(&self, version: &'static str) -> Result<()> {
         let msg = format!("v{version}");
         self.stdout

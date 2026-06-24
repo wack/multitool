@@ -15,6 +15,9 @@ mod adapters;
 /// Currently, we expect all artifacts to be  zipped
 /// lambda functions.
 pub mod artifacts;
+/// The `multi check` feature: discover `CHECKS.md` requirements and validate
+/// them with AI-agent checks, reporting through an in-process MCP server.
+mod checks;
 /// Contains the dispatch logic for running individual CLI subcommands.
 /// The CLI's main function calls into these entrypoints for each subcommand.
 mod cmd;
