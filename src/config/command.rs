@@ -3,10 +3,10 @@ use miette::Result;
 
 #[cfg(feature = "proxy")]
 use crate::cmd::Proxy;
-use crate::cmd::{Init, Login, Logout, Run, Version};
+use crate::cmd::{Check, Init, Login, Logout, Run, Version};
 use crate::terminal::Terminal;
 
-use super::{InitSubcommand, LoginSubcommand, RunSubcommand};
+use super::{CheckSubcommand, InitSubcommand, LoginSubcommand, RunSubcommand};
 
 #[cfg(feature = "proxy")]
 use super::ProxySubcommand;
@@ -26,6 +26,8 @@ pub enum MultiCommand {
     /// Run will execute `multi` in "runner mode", where it will
     /// immediately deploy the provided artifact and start canarying.
     Run(RunSubcommand),
+    /// Validate the requirements declared in `CHECKS.md` files using AI-agent checks.
+    Check(CheckSubcommand),
     /// Print the CLI version and exit
     Version,
 }
@@ -40,6 +42,7 @@ impl MultiCommand {
             #[cfg(feature = "proxy")]
             Self::Proxy(flags) => Proxy::new(console, flags).dispatch(),
             Self::Run(flags) => Run::new(console, flags)?.dispatch(),
+            Self::Check(flags) => Check::new(console, flags)?.dispatch(),
             Self::Version => Version::new(console).dispatch(),
         }
     }

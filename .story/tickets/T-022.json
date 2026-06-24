@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Render the run's results to the terminal per the spec. Print each requirement title green if satisfied, red if not; for a failed requirement also print its failing checks in red, including the agent's `evidence`; passing checks are omitted (only the green requirement title shows). Route output through the existing `Terminal` and honor global color settings.\n\n———\nMirrors Linear **MULTI-1352** · git branch `robbie/multi-1352`\nhttps://linear.app/wack-incorporated/issue/MULTI-1352/implement-the-reporting-phase-colored-requirementcheck-output",
+  "id": "T-022",
+  "order": 10,
+  "phase": "m6-reporting-exit",
+  "status": "open",
+  "title": "Implement the reporting phase (colored requirement/check output)",
+  "type": "task"
+}

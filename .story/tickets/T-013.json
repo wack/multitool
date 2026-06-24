@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Epic. The result-reporting guardrail. Because agents are nondeterministic, do NOT trust stdout or sentinel files — every agent reports its verdict by calling a single MCP tool, `report-check-result`, served by ONE in-process MCP server built with `rmcp`, bound to a localhost port, running on a dedicated tokio task within the CLI process (never a subprocess). Decomposed into the sub-tickets in this phase.\n\n———\nMirrors Linear **MULTI-1332** (parent epic) · git branch `robbie/multi-1332`\nhttps://linear.app/wack-incorporated/issue/MULTI-1332/in-process-mcp-result-reporting-server",
+  "id": "T-013",
+  "order": 10,
+  "phase": "m4-mcp-result-server",
+  "status": "open",
+  "title": "In-process MCP result-reporting server (epic)",
+  "type": "feature"
+}

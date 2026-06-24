@@ -97,9 +97,6 @@ impl<const N: usize, C: Categorical<N>> Default for ContingencyTable<N, C> {
 }
 
 #[cfg(test)]
-pub(crate) use tests::Coin;
-
-#[cfg(test)]
 mod tests {
     use std::num::NonZeroUsize;
 

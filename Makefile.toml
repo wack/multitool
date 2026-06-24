@@ -2,7 +2,6 @@
 default_to_workspace = false
 
 [env]
-CARGO_MAKE_CLIPPY_ARGS = "-- --no-deps"
 CARGO_MAKE_COVERAGE_PROVIDER = "llvm-cov"
 CARGO_MAKE_CARGO_BUILD_TEST_FLAGS = ""
 # This is the directory where we generate the CLI's reference
@@ -30,6 +29,19 @@ dependencies = [
 
 [tasks.pre-build]
 dependencies = ["format-toml-conditioned-flow", "unused-dependencies-flow"]
+
+# Canonical clippy command — the single source of truth shared by CI
+# (ci-flow -> clippy-flow) and the bacon clippy job. Overrides cargo-make's
+# built-in `clippy` task so both paths run the IDENTICAL command. `-- -D warnings`
+# makes any clippy or rustc warning fail both CI and the bacon monitor, so a
+# clean monitor run predicts a clean CI clippy run exactly. `workspace = false`
+# is explicit (the command iterates the workspace itself via `--workspace`).
+[tasks.clippy]
+description = "Canonical clippy command — shared by CI (ci-flow) and bacon."
+category = "Development"
+workspace = false
+command = "cargo"
+args = ["clippy", "--all-targets", "--workspace", "--locked", "--", "-D", "warnings"]
 
 [tasks.ci-flow]
 dependencies = [
@@ -109,3 +121,10 @@ args = [
   "--workspace",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
+
+[tasks.monitor]
+description = "Run bacon headless for Claude Code's Monitor tool (no TTY, summary output on each change)."
+category = "Development"
+workspace = false
+command = "bacon"
+args = ["--headless", "--summary", "--no-help-line"]

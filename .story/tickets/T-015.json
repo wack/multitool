@@ -1,0 +1,13 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Stand up the single MCP server that receives `report-check-result` calls, using the `rmcp` framework (add as a dependency; not present today). Bind ONE server to a localhost port (ephemeral/OS-assigned is fine; capture the chosen port for endpoint URLs). Run it on a dedicated tokio task spawned on the CLI's runtime.\n\n———\nMirrors Linear **MULTI-1345** (sub-issue of MULTI-1332) · git branch `robbie/multi-1345`\nhttps://linear.app/wack-incorporated/issue/MULTI-1345/stand-up-the-in-process-rmcp-server-on-a-localhost-port",
+  "id": "T-015",
+  "order": 30,
+  "parentTicket": "T-013",
+  "phase": "m4-mcp-result-server",
+  "status": "open",
+  "title": "Stand up the in-process `rmcp` server on a localhost port",
+  "type": "task"
+}

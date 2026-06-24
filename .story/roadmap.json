@@ -1,0 +1,76 @@
+{
+  "blockers": [],
+  "date": "2026-06-23",
+  "phases": [
+    {
+      "description": "Wire `multi check` into the CLI and stand up the phase-orchestration skeleton (configuration → discovery → execution → reporting) with error/exit plumbing. Mirrors the existing `Run` command. Linear milestone: M0 · Subcommand skeleton.",
+      "id": "m0-subcommand-skeleton",
+      "label": "M0",
+      "name": "M0 · Subcommand skeleton",
+      "summary": "Wire `multi check` + phase-orchestration skeleton"
+    },
+    {
+      "description": "Discover `CHECKS.md` files, parse them to a Markdown AST (comrak), and extract the requirement/check model (anonymous checks + discovery-time validation). Produces the `Vec<Requirement>` consumed by execution. Linear milestone: M1 · Discovery.",
+      "id": "m1-discovery",
+      "label": "M1",
+      "name": "M1 · Discovery",
+      "summary": "Discover + parse CHECKS.md into Vec&lt;Requirement&gt;"
+    },
+    {
+      "description": "The hardcoded-but-injected configuration phase and the boxed agent-executor trait abstraction, plus the concrete `claude -p` executor. Linear milestone: M2 · Configuration &amp; executor.",
+      "id": "m2-configuration-executor",
+      "label": "M2",
+      "name": "M2 · Configuration &amp; executor",
+      "summary": "Injected config + boxed CheckExecutor + claude -p"
+    },
+    {
+      "description": "Per-check copy-on-write filesystem sandboxing. macOS-only for the MVP, behind a `cfg`-gated boxed trait so other OSes can be added later. Linear milestone: M3 · Sandboxing.",
+      "id": "m3-sandboxing",
+      "label": "M3",
+      "name": "M3 · Sandboxing",
+      "summary": "Per-check CoW sandbox (macOS, cfg-gated trait)"
+    },
+    {
+      "description": "The trustworthy result-reporting guardrail: one in-process `rmcp` server on a localhost port (dedicated tokio task, never a subprocess) exposing the `report-check-result` tool across N per-check endpoints. Built as a parent epic with sub-issues. Linear milestone: M4 · MCP result server.",
+      "id": "m4-mcp-result-server",
+      "label": "M4",
+      "name": "M4 · MCP result server",
+      "summary": "In-process rmcp result server, N per-check endpoints"
+    },
+    {
+      "description": "The parallel execution phase: for each check, create a sandbox, dispatch the agent against its MCP endpoint, reconcile the reported result, and aggregate checks into per-requirement verdicts via logical AND. Linear milestone: M5 · Execution.",
+      "id": "m5-execution",
+      "label": "M5",
+      "name": "M5 · Execution",
+      "summary": "Parallel execution + reconcile + AND aggregation"
+    },
+    {
+      "description": "Render results and set the process exit code: green/red requirement titles, failing checks in red with evidence, passing checks omitted; exit 0 iff all requirements satisfied, else 1. Linear milestone: M6 · Reporting &amp; exit.",
+      "id": "m6-reporting-exit",
+      "label": "M6",
+      "name": "M6 · Reporting &amp; exit",
+      "summary": "Colored report + exit code (0 pass / 1 fail)"
+    },
+    {
+      "description": "Cross-cutting test infrastructure (a fake executor so the pipeline can run without invoking `claude`), unit tests for AST extraction, an end-to-end pipeline test, and user-facing docs. Linear milestone: Tests &amp; docs.",
+      "id": "tests-docs",
+      "label": "TESTS",
+      "name": "Tests &amp; docs",
+      "summary": "Fake executor, AST unit tests, E2E test, docs"
+    },
+    {
+      "description": "Post-MVP work explicitly out of scope for the initial release, captured so nothing is lost. These are real tickets but carry no roadmap label. Linear milestone: Future work (post-MVP).",
+      "id": "future-work",
+      "label": "FUTURE",
+      "name": "Future work (post-MVP)",
+      "summary": "Post-MVP backlog (shell checks, more OSes, hooks…)"
+    },
+    {
+      "description": "Initial project setup.",
+      "id": "p0",
+      "label": "PHASE 0",
+      "name": "Setup"
+    }
+  ],
+  "title": "multitool"
+}

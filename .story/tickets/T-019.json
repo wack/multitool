@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "The heart of the execution phase: run every check in parallel, each in its own sandbox, against its own MCP endpoint, and collect the reported results. Per check: (1) create a CoW sandbox of the working tree (M3 `BoxedSandbox`); (2) resolve the dedicated MCP endpoint + `--mcp-config` (M4); (3) dispatch the injected `BoxedExecutor` (M2) with instructions + prompt (M5).\n\n———\nMirrors Linear **MULTI-1349** · git branch `robbie/multi-1349`\nhttps://linear.app/wack-incorporated/issue/MULTI-1349/implement-the-parallel-execution-orchestrator",
+  "id": "T-019",
+  "order": 10,
+  "phase": "m5-execution",
+  "status": "open",
+  "title": "Implement the parallel execution orchestrator",
+  "type": "task"
+}

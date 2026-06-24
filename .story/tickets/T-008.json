@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Define the abstraction over \"run one check's agent\" — the seam that lets us swap `claude -p` for a Claude Code SDK (or other providers) later without touching execution. Per the spec it MUST be a boxed `#[async_trait]` trait object for dynamic dispatch, following the repo convention (`BoxedIngress`/`BoxedMonitor`/`BoxedPlatform`).\n\n———\nMirrors Linear **MULTI-1339** · git branch `robbie/multi-1339`\nhttps://linear.app/wack-incorporated/issue/MULTI-1339/define-the-boxed-agent-executor-trait-checkexecutor",
+  "id": "T-008",
+  "order": 10,
+  "phase": "m2-configuration-executor",
+  "status": "open",
+  "title": "Define the boxed agent-executor trait (`CheckExecutor`)",
+  "type": "task"
+}

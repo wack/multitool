@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. Run checks continuously as monitors during interactive development — re-evaluating on file changes and surfacing live pass/fail status, rather than a single batch run. The MVP is a one-shot batch invocation; this introduces a watch loop (file-change triggers), incremental/affected-check evaluation, and a live UI/status surface — a substantial mode shift on top of the batch pipeline.\n\n———\nMirrors Linear **MULTI-1364** · git branch `robbie/multi-1364`\nhttps://linear.app/wack-incorporated/issue/MULTI-1364/checks-as-monitors-for-interactive-development",
+  "id": "T-034",
+  "order": 80,
+  "phase": "future-work",
+  "status": "open",
+  "title": "Checks as monitors for interactive development",
+  "type": "feature"
+}

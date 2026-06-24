@@ -1,3 +1,12 @@
+// The pre-existing (largely abandoned) legacy modules carry dead code and a few
+// non-idiomatic API shapes that the Rust 1.96 toolchain refresh surfaced as
+// warnings. Allow those categories crate-wide rather than churn abandoned code;
+// the `checks` feature added in this PR is clippy-clean on its own.
+#![allow(dead_code)]
+#![allow(private_interfaces)]
+#![allow(clippy::wrong_self_convention)]
+#![allow(clippy::large_enum_variant)]
+
 pub use config::Cli;
 pub use fs::manifest;
 pub use terminal::Terminal;
@@ -15,6 +24,9 @@ mod adapters;
 /// Currently, we expect all artifacts to be  zipped
 /// lambda functions.
 pub mod artifacts;
+/// The `multi check` feature: discover `CHECKS.md` requirements and validate
+/// them with AI-agent checks, reporting through an in-process MCP server.
+mod checks;
 /// Contains the dispatch logic for running individual CLI subcommands.
 /// The CLI's main function calls into these entrypoints for each subcommand.
 mod cmd;

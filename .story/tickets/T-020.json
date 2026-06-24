@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Build the instruction text handed to each agent: standing operating instructions (verify the requirement described by the prompt, working in the current directory — the sandbox — and you MUST call the `report-check-result` tool exactly once with your verdict) plus the check's prompt. The instructions are what make the unreliable agent reliably report.\n\n———\nMirrors Linear **MULTI-1350** · git branch `robbie/multi-1350`\nhttps://linear.app/wack-incorporated/issue/MULTI-1350/assemble-agent-instructions-and-bind-the-report-tool",
+  "id": "T-020",
+  "order": 20,
+  "phase": "m5-execution",
+  "status": "open",
+  "title": "Assemble agent instructions and bind the report tool",
+  "type": "task"
+}

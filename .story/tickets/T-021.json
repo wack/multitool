@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Turn raw signals into a per-requirement verdict. Reconcile each check: the authoritative verdict is the MCP-reported `success` (M4), NOT the agent exit code — reported true → satisfied (carry evidence); reported false → failed (carry evidence); no report (agent died) → failed. Then apply logical AND across the checks within each requirement to mark it satisfied/unsatisfied.\n\n———\nMirrors Linear **MULTI-1351** · git branch `robbie/multi-1351`\nhttps://linear.app/wack-incorporated/issue/MULTI-1351/reconcile-agent-results-and-aggregate-requirement-verdicts-logical-and",
+  "id": "T-021",
+  "order": 30,
+  "phase": "m5-execution",
+  "status": "open",
+  "title": "Reconcile agent results and aggregate requirement verdicts (logical AND)",
+  "type": "task"
+}

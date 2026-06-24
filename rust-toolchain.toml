@@ -1,0 +1,9 @@
+[toolchain]
+channel = "1.96.0"
+# The "default" profile adds the components:
+# "clippy", "rustfmt", "rustdocs", "rustc", "cargo", and "ruststd".
+# "llvm-tools-preview" is required by cargo-llvm-cov (the `coverage` job in
+# on-merge.yml). Declaring it here provisions it onto this pinned toolchain so
+# cargo-llvm-cov doesn't have to `rustup component add` it lazily at build time.
+components = ["rust-analyzer", "rust-src", "llvm-tools-preview"]
+profile = "default"

@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Parse each discovered `CHECKS.md` into a Markdown AST that the extraction step walks. **Decision: use `comrak`** (CommonMark, AST node tree) — NOT pulldown-cmark — because its node tree is the easier fit for finding H1/H2 headers and capturing the text between them. Add `comrak` as a dependency (none present today).\n\n———\nMirrors Linear **MULTI-1335** · git branch `robbie/multi-1335`\nhttps://linear.app/wack-incorporated/issue/MULTI-1335/parse-checksmd-into-a-markdown-ast",
+  "id": "T-004",
+  "order": 30,
+  "phase": "m1-discovery",
+  "status": "open",
+  "title": "Parse `CHECKS.md` into a Markdown AST",
+  "type": "task"
+}

@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "The concrete `CheckExecutor` for the MVP: shell out to the Claude Code CLI via `claude -p` with the assembled prompt/instructions, the `haiku` model family, and `--mcp-config` pointing at this check's dedicated endpoint (payload from M4). Run with the sandbox directory (M3) as the working directory; capture exit status/stderr into an `AgentOutcome`.\n\n———\nMirrors Linear **MULTI-1340** · git branch `robbie/multi-1340`\nhttps://linear.app/wack-incorporated/issue/MULTI-1340/implement-the-claude-p-claude-code-executor",
+  "id": "T-009",
+  "order": 20,
+  "phase": "m2-configuration-executor",
+  "status": "open",
+  "title": "Implement the `claude -p` Claude Code executor",
+  "type": "task"
+}

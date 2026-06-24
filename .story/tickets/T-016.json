@@ -1,0 +1,13 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "The one server hosts N endpoints — one per check — so each agent has a unique URL to write its singleton result to. Expose N distinct endpoints (e.g. URL paths like `/checks/{check_id}`) on the single server/port. Enforce single-call semantics (each endpoint expects exactly one `report-check-result` from its associated agent) and plumb each result back over a channel.\n\n———\nMirrors Linear **MULTI-1346** (sub-issue of MULTI-1332) · git branch `robbie/multi-1346`\nhttps://linear.app/wack-incorporated/issue/MULTI-1346/build-n-per-check-endpoints-with-single-call-semantics-and-a-result",
+  "id": "T-016",
+  "order": 40,
+  "parentTicket": "T-013",
+  "phase": "m4-mcp-result-server",
+  "status": "open",
+  "title": "Build N per-check endpoints with single-call semantics and a result channel",
+  "type": "task"
+}

@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Introduce the `multi check` subcommand and the top-level orchestration skeleton the rest of the project fills in. Add a `CheckSubcommand` (clap `Args`) under `src/config/check/`, exported from `src/config/mod.rs`, starting with a working-directory arg (default `.`). Land the configuration → discovery → execution → reporting phases as stubs; mirrors the existing `Run` command (`src/cmd/run`, `src/config/run`).\n\n———\nMirrors Linear **MULTI-1331** · git branch `robbie/multi-1331`\nhttps://linear.app/wack-incorporated/issue/MULTI-1331/wire-up-the-multi-check-subcommand-and-phase-orchestration-skeleton",
+  "id": "T-001",
+  "order": 10,
+  "phase": "m0-subcommand-skeleton",
+  "status": "open",
+  "title": "Wire up the `multi check` subcommand and phase-orchestration skeleton",
+  "type": "task"
+}

@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Define the in-memory representation produced by discovery and consumed by execution: `Requirement { filepath: PathBuf, title: String, checks: Vec<Check> }` and `Check { title: String, prompt: String }`. Titles are NOT unique across the set; requirements/checks are grouped by declaring file. `checks` is guaranteed non-empty after M1 validation.\n\n———\nMirrors Linear **MULTI-1333** · git branch `robbie/multi-1333`\nhttps://linear.app/wack-incorporated/issue/MULTI-1333/define-the-requirement-and-check-domain-types",
+  "id": "T-002",
+  "order": 10,
+  "phase": "m1-discovery",
+  "status": "open",
+  "title": "Define the `Requirement` and `Check` domain types",
+  "type": "task"
+}

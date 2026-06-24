@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Post-MVP. Let a user override the model (and effort) on a per-check basis, so an expensive check can use a stronger model while the rest stay cheap. Needs per-check metadata (e.g. an attribute on `## Check`) flowing into executor selection, building on the configuration seam (M2) and the `CheckExecutor` abstraction.\n\n———\nMirrors Linear **MULTI-1358** · git branch `robbie/multi-1358`\nhttps://linear.app/wack-incorporated/issue/MULTI-1358/per-check-model-overrides",
+  "id": "T-028",
+  "order": 20,
+  "phase": "future-work",
+  "status": "open",
+  "title": "Per-check model overrides",
+  "type": "feature"
+}

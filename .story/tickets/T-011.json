@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Each check runs inside a copy-on-write filesystem sandbox so an agent can read/modify the tree freely without corrupting the real working directory. Define a boxed `#[async_trait] Sandbox: Send + Sync` trait (mirroring `BoxedIngress` etc.) plus `cfg`-gated platform selection. The macOS implementation is a separate ticket.\n\n———\nMirrors Linear **MULTI-1342** · git branch `robbie/multi-1342`\nhttps://linear.app/wack-incorporated/issue/MULTI-1342/define-the-copy-on-write-sandbox-trait-with-cfg-gated-platform",
+  "id": "T-011",
+  "order": 10,
+  "phase": "m3-sandboxing",
+  "status": "open",
+  "title": "Define the copy-on-write sandbox trait with `cfg`-gated platform selection",
+  "type": "task"
+}

@@ -1,0 +1,26 @@
+{
+  "features": {
+    "handovers": true,
+    "issues": true,
+    "reviews": true,
+    "roadmap": true,
+    "tickets": true
+  },
+  "language": "rust",
+  "project": "multitool",
+  "schemaVersion": 2,
+  "type": "cargo",
+  "version": 2,
+  "recipeOverrides": {
+    "stages": {
+      "TEST": {
+        "enabled": true,
+        "command": "cargo nextest run --workspace"
+      },
+      "BUILD": {
+        "enabled": true,
+        "command": "cargo build --workspace"
+      }
+    }
+  }
+}

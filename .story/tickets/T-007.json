@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Validate the extracted model and assemble the final `Vec<Requirement>` discovery returns. Errors (not warnings): orphan check — a `## Check` with no preceding requirement in its file; checkless requirement — a requirement with no explicit checks AND no prose to promote to an anonymous check. Surface as miette diagnostics. Joins the parallel per-file parse results.\n\n———\nMirrors Linear **MULTI-1338** · git branch `robbie/multi-1338`\nhttps://linear.app/wack-incorporated/issue/MULTI-1338/validate-discovery-results-and-assemble-the-requirement-set",
+  "id": "T-007",
+  "order": 60,
+  "phase": "m1-discovery",
+  "status": "open",
+  "title": "Validate discovery results and assemble the requirement set",
+  "type": "task"
+}

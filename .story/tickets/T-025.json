@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "A black-box test that drives `multi check` over a fixture project and asserts discovery → execution → reporting → exit code, using the fake executor (no real `claude`). Fixture tree with multiple `CHECKS.md` files exercising: a satisfied requirement, a failed requirement (one failing check), a multi-check requirement (AND), and an anonymous check. Inject the fake executor/sandbox so verdicts are scripted.\n\n———\nMirrors Linear **MULTI-1355** · git branch `robbie/multi-1355`\nhttps://linear.app/wack-incorporated/issue/MULTI-1355/end-to-end-pipeline-integration-test-fake-executor",
+  "id": "T-025",
+  "order": 20,
+  "phase": "tests-docs",
+  "status": "open",
+  "title": "End-to-end pipeline integration test (fake executor)",
+  "type": "chore"
+}

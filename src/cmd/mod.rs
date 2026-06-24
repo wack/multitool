@@ -1,3 +1,4 @@
+pub use check::Check;
 pub use init::Init;
 pub use login::Login;
 pub use logout::Logout;
@@ -7,6 +8,7 @@ pub use version::Version;
 #[cfg(feature = "proxy")]
 pub use proxy::Proxy;
 
+mod check;
 mod init;
 mod login;
 mod logout;

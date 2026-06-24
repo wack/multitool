@@ -17,3 +17,11 @@ MultiTool.yaml
 /worker/**
 wrangler.toml
 wrangler.json
+
+# Scratch prompt location.
+/prompt.md
+
+# storybloq local session state (roadmap/tickets ARE tracked)
+.story/snapshots/
+.story/sessions/
+.story/status.json

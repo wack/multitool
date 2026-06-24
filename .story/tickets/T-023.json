@@ -1,0 +1,12 @@
+{
+  "blockedBy": [],
+  "completedDate": null,
+  "createdDate": "2026-06-23",
+  "description": "Map the aggregate result to the process exit code so `multi check` is CI-usable. One or more requirements unsatisfied → exit 1. All requirements satisfied (including the trivial empty-suite case) → exit 0. Thread the exit code out of the reporting phase through `Check::dispatch()` to the process (the CLI's dispatch currently returns `miette::Result<()>`; choose a clean mapping).\n\n———\nMirrors Linear **MULTI-1353** · git branch `robbie/multi-1353`\nhttps://linear.app/wack-incorporated/issue/MULTI-1353/set-the-process-exit-code-from-the-aggregate-result",
+  "id": "T-023",
+  "order": 20,
+  "phase": "m6-reporting-exit",
+  "status": "open",
+  "title": "Set the process exit code from the aggregate result",
+  "type": "task"
+}

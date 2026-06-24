@@ -9,14 +9,15 @@
 /// You can think of a [Categorical] as a hashmap with fixed integer keys. When the map is
 /// created, its keys must already be known and completely cover the range `[0, N)`.
 ///
-/// ```rust
-/// use std::collections::HashSet;
-/// use canary::stats::Categorical;
+/// `Categorical` lives in a crate-internal module, so this example is shown for
+/// illustration only (it can't be a runnable doctest); the same logic is
+/// exercised by a unit test below.
 ///
+/// ```ignore
 /// #[derive(PartialEq, Eq, Debug, Hash)]
 /// enum Coin {
-///   Heads,
-///   Tails,
+///     Heads,
+///     Tails,
 /// }
 ///
 /// impl Categorical<2> for Coin {
@@ -40,4 +41,25 @@ mod tests {
 
     // The categorical trait must be object-safe.
     assert_obj_safe!(Categorical<5>);
+
+    #[test]
+    fn coin_maps_to_its_category() {
+        #[derive(PartialEq, Eq, Debug, Hash)]
+        enum Coin {
+            Heads,
+            Tails,
+        }
+
+        impl Categorical<2> for Coin {
+            fn category(&self) -> usize {
+                match self {
+                    Self::Heads => 0,
+                    Self::Tails => 1,
+                }
+            }
+        }
+
+        assert_eq!(Coin::Heads.category(), 0);
+        assert_eq!(Coin::Tails.category(), 1);
+    }
 }
