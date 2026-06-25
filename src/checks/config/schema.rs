@@ -32,13 +32,27 @@ impl ProviderKind {
 }
 
 /// The agent effort level. Carried through configuration and consumed by the
-/// executor. `Medium`/`High` are reserved for richer providers.
+/// executor, where it maps to a thinking-token budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Effort {
     Low,
     Medium,
     High,
+}
+
+/// Which execution engine runs each check. The default is the in-process
+/// [`cersei`](crate::checks::executor::cersei) agent; `claude` selects the
+/// legacy `claude -p` shell-out fallback, kept selectable during the migration
+/// (MULTI-1367) so verdicts from both can be compared before the fallback is
+/// retired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutorKind {
+    /// The in-process `cersei-agent` executor (default).
+    Cersei,
+    /// The legacy `claude -p` shell-out fallback.
+    Claude,
 }
 
 /// The whole config file, of which only the `[checks]` table concerns us. Other
@@ -60,6 +74,9 @@ pub struct ChecksSection {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
+    /// Which execution engine runs each check (`cersei` by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<ExecutorKind>,
     /// Optional, non-secret per-provider base-URL overrides.
     #[serde(default)]
     pub providers: ProvidersSection,
@@ -115,6 +132,8 @@ pub struct CliChecksOverrides {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executor: Option<ExecutorKind>,
 }
 
 impl CliOverrides {
@@ -123,12 +142,14 @@ impl CliOverrides {
         provider: Option<ProviderKind>,
         model: Option<String>,
         effort: Option<Effort>,
+        executor: Option<ExecutorKind>,
     ) -> Self {
         Self {
             checks: CliChecksOverrides {
                 provider,
                 model,
                 effort,
+                executor,
             },
         }
     }

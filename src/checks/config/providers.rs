@@ -104,6 +104,53 @@ fn build_one(
     Ok(provider)
 }
 
+/// A per-provider handle factory: the resolved provider kind + credential +
+/// base URL needed to mint a **fresh** [`Box<dyn Provider>`] on demand.
+///
+/// cersei's `Agent` takes an *owned* `Box<dyn Provider>` and checks run
+/// concurrently (plus retries), so a single pre-built handle cannot be shared
+/// across agents. The configuration phase resolves credentials once and hands
+/// the executor this factory, which builds one handle per check run.
+#[derive(Clone)]
+pub struct ProviderFactory {
+    kind: ProviderKind,
+    key: String,
+    base_url: Option<String>,
+}
+
+impl std::fmt::Debug for ProviderFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the credential.
+        f.debug_struct("ProviderFactory")
+            .field("kind", &self.kind)
+            .field("base_url", &self.base_url)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProviderFactory {
+    /// Mint a fresh provider handle.
+    pub fn build(&self) -> Result<Box<dyn Provider>> {
+        build_one(self.kind, self.key.clone(), self.base_url.clone())
+    }
+}
+
+/// Build a [`ProviderFactory`] for `provider` if its credential is present,
+/// resolving the same base-URL precedence as the registry. Returns `None` when
+/// the provider has no credential (and therefore cannot be selected).
+pub fn build_factory(
+    provider: ProviderKind,
+    overrides: &ProvidersSection,
+) -> Option<ProviderFactory> {
+    let key = credential(provider)?;
+    let base_url = resolve_base_url(provider, overrides);
+    Some(ProviderFactory {
+        kind: provider,
+        key,
+        base_url,
+    })
+}
+
 /// Build the registry: one handle per provider whose credential is present.
 pub fn build_registry(overrides: &ProvidersSection) -> Result<ProviderRegistry> {
     let mut registry = ProviderRegistry::new();

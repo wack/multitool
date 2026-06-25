@@ -1,19 +1,27 @@
-//! The agent-executor seam (M2). [`CheckExecutor`] abstracts "run one check's
-//! agent" so the concrete `claude -p` executor can later be swapped for a Claude
-//! Code SDK (or other provider) without touching the execution phase. Per the
-//! spec it is a boxed trait object for dynamic dispatch, mirroring the repo's
-//! `BoxedIngress` / `BoxedMonitor` / `BoxedPlatform` convention.
+//! The agent-executor seam (M2, narrowed in MULTI-1367). [`CheckExecutor`]
+//! abstracts "run one check's agent → verdict/outcome". cersei-agent absorbs the
+//! *provider-abstraction* rationale the seam originally carried, but not its
+//! *test-seam* rationale: `cersei_agent::Agent` is a concrete struct, so the
+//! execution-phase tests still need a fake. The trait keeps one method with three
+//! impls — the real in-process [`cersei::CerseiExecutor`], the soon-to-retire
+//! shell-out [`claude::ClaudeExecutor`] fallback (selectable for migration), and
+//! the test [`FakeExecutor`]. It is a boxed trait object for dynamic dispatch,
+//! mirroring the repo's `BoxedIngress` / `BoxedMonitor` / `BoxedPlatform`
+//! convention.
 
+pub mod cersei;
 pub mod claude;
 #[cfg(test)]
 mod fake;
+pub mod judge;
 
 use std::path::PathBuf;
 
 use async_trait::async_trait;
 use miette::Result;
 
-use crate::checks::mcp::{CheckReport, REPORT_TOOL};
+pub use judge::{CheckReport, JUDGE_TOOL};
+
 use crate::checks::model::{Check, CheckId};
 
 #[cfg(test)]
@@ -21,62 +29,79 @@ pub use fake::FakeExecutor;
 
 /// Everything an executor needs to run one check's agent.
 pub struct AgentRunRequest {
-    /// The check this request runs, for routing/labelling.
+    /// The check this request runs, for routing/labelling and assembling the
+    /// agent's instructions.
     pub check_id: CheckId,
-    /// The assembled instructions + check prompt (see [`assemble_instructions`]).
-    pub instructions: String,
+    /// The check to validate (title + prompt). Each executor assembles its own
+    /// instructions from this so it can describe its own reporting channel.
+    pub check: Check,
     /// The sandbox directory to run the agent in (its working directory).
     pub working_dir: PathBuf,
-    /// Path to the per-check `--mcp-config` JSON file (points at this check's
-    /// dedicated MCP endpoint).
-    pub mcp_config_path: PathBuf,
 }
 
-/// Process-level signal from running an agent.
+/// The result of running one check's agent in-process.
 ///
-/// **Note:** the authoritative verdict is the MCP-reported result, not this.
-/// [`AgentOutcome::reported`] is an *optional* inline verdict for executors that
-/// capture the tool call directly (a future in-process SDK, or the test fake);
-/// the shell-out `claude -p` executor always leaves it `None`.
+/// The authoritative signal is [`AgentOutcome::verdict`]: when present, the agent
+/// reported via the judge tool. The remaining fields are diagnostics that
+/// distinguish the *new* failure modes — an agent that hit `max_turns` without
+/// reporting, a stream error, or a timeout — so execution can synthesize a clear
+/// "errored" reason when no verdict arrived.
 #[derive(Debug, Clone, Default)]
 pub struct AgentOutcome {
-    /// Whether the agent process exited with a success status.
-    pub exited_cleanly: bool,
-    /// The process exit code, if one was produced.
-    pub exit_code: Option<i32>,
-    /// Captured stderr, for surfacing execution errors (distinct from a check
-    /// merely *failing*).
-    pub stderr: String,
-    /// An inline verdict obtained by the executor itself, if any.
-    pub reported: Option<CheckReport>,
+    /// The verdict the agent reported via the judge tool, if it reported at all.
+    pub verdict: Option<CheckReport>,
+    /// Why the agent's loop stopped (human-readable), for diagnostics when no
+    /// verdict was reported.
+    pub stop_reason: Option<String>,
+    /// How many turns the agent took (best-effort; `0` when unavailable).
+    pub turns: u32,
+    /// An execution-level error distinct from a check merely *failing* (stream
+    /// error, agent-build error, or timeout). `None` on a clean finish.
+    pub error: Option<String>,
+}
+
+impl AgentOutcome {
+    /// Whether the agent reported a verdict (the only authoritative signal).
+    pub fn has_verdict(&self) -> bool {
+        self.verdict.is_some()
+    }
 }
 
 /// The abstraction over running a single check's agent.
 #[async_trait]
 pub trait CheckExecutor: Send + Sync {
-    /// Run a single check's agent against its dedicated MCP endpoint.
+    /// Run a single check's agent and return its verdict/outcome.
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome>;
 }
 
 /// A boxed [`CheckExecutor`] for dynamic dispatch (DI seam).
 pub type BoxedExecutor = Box<dyn CheckExecutor + Send + Sync>;
 
+/// The reporting directive for the default (in-process) executor: call the judge
+/// tool exactly once. Kept separate from [`assemble_instructions`] so the legacy
+/// shell-out fallback can substitute its own reporting channel.
+pub fn judge_tool_directive() -> String {
+    format!(
+        "Carry out the check described below. When — and only when — you have reached a conclusion, \
+you MUST call the `{JUDGE_TOOL}` tool EXACTLY ONCE:\n\
+  - set `success` to true if the check passes, or false if it fails;\n\
+  - optionally set `evidence` to a short explanation of how you concluded.\n\
+Report your result ONLY through `{JUDGE_TOOL}` — not via stdout, not via a file — and do not \
+call it more than once. After calling it, stop. If you finish without calling `{JUDGE_TOOL}`, \
+the check is treated as a FAILURE.",
+    )
+}
+
 /// Assemble the instruction text handed to an agent: standing operating
-/// instructions (it MUST call the report tool exactly once) plus the check
-/// prompt verbatim. (MULTI-1350)
-pub fn assemble_instructions(check: &Check) -> String {
+/// instructions, the executor-supplied `reporting` directive, then the check
+/// prompt verbatim. (MULTI-1350, parametrized in MULTI-1367.)
+pub fn assemble_instructions(check: &Check, reporting: &str) -> String {
     format!(
         "You are validating a single requirement for the MultiTool Checks tool.\n\
 Your current working directory is a sandboxed, throwaway copy of the user's repository; \
 you may read it and run commands against it freely.\n\
 \n\
-Carry out the check described below. When — and only when — you have reached a conclusion, \
-you MUST call the `{REPORT_TOOL}` tool EXACTLY ONCE:\n\
-  - set `success` to true if the check passes, or false if it fails;\n\
-  - optionally set `evidence` to a short explanation of how you concluded.\n\
-Report your result ONLY through `{REPORT_TOOL}` — not via stdout, not via a file — and do not \
-call it more than once. After calling it, stop. If you finish without calling `{REPORT_TOOL}`, \
-the check is treated as a FAILURE.\n\
+{reporting}\n\
 \n\
 --- CHECK: {title} ---\n\
 {prompt}\n",
@@ -98,9 +123,9 @@ mod tests {
             title: "No yellow".into(),
             prompt: "scan for yellow text".into(),
         };
-        let text = assemble_instructions(&check);
+        let text = assemble_instructions(&check, &judge_tool_directive());
         assert!(text.contains("scan for yellow text"));
-        assert!(text.contains(REPORT_TOOL));
+        assert!(text.contains(JUDGE_TOOL));
         assert!(text.contains("EXACTLY ONCE"));
         assert!(text.contains("No yellow"));
     }

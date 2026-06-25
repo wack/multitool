@@ -2,31 +2,47 @@
 
 # Requirement Provider-Agnostic Execution
 
-The agent executor must be swappable so we can evolve from shelling out to `claude -p` toward a Claude Code SDK (or another provider) without rewriting the execution phase. This extensibility is the whole point of the configuration/executor seam.
+The agent executor is swappable behind a trait so execution can run over different engines (the in-process `cersei-agent` executor, the legacy `claude -p` fallback, or a test fake) without rewriting the execution phase. This extensibility is the whole point of the configuration/executor seam.
 
 ## Check Boxed Executor Trait
 
-Inspect the Rust sources for the `multi check` feature. Confirm that agent execution is defined behind a trait (for example `CheckExecutor`) that is consumed as a boxed, dynamically-dispatched trait object — a type alias of the form `Box<dyn CheckExecutor + Send + Sync>`, mirroring the existing `BoxedIngress`, `BoxedMonitor`, and `BoxedPlatform` aliases. The check passes only if the execution phase depends on this trait rather than naming a concrete `claude -p` executor type. Report a failure if the execution path references a concrete executor struct directly instead of the trait object.
+Inspect the Rust sources for the `multi check` feature. Confirm that agent execution is defined behind a trait (for example `CheckExecutor`) that is consumed as a boxed or `Arc`-wrapped, dynamically-dispatched trait object — for example a type alias of the form `Box<dyn CheckExecutor + Send + Sync>`, mirroring the existing `BoxedIngress`, `BoxedMonitor`, and `BoxedPlatform` aliases. The check passes only if the execution phase depends on this trait rather than naming a concrete executor type. Report a failure if the execution path references a concrete executor struct (such as the cersei or claude executor) directly instead of the trait object.
+
+# Requirement In-Process Agent Execution
+
+The default executor runs each check's agent **inside the CLI process** via the `cersei-agent` library — there is no longer any requirement to shell out to the `claude` CLI for a check to run. A `claude -p` executor is retained only as an optional, explicitly-selected migration fallback.
+
+## Check Default Executor Runs In-Process
+
+Inspect the executor implementations and how the default executor is selected from configuration. Confirm that the default execution engine builds and runs a `cersei_agent::Agent` in-process (calling its `run`/`run_stream` method) rather than spawning the `claude` CLI. Confirm that any use of `std::process::Command` / `tokio::process` to launch `claude -p` lives only in the non-default fallback executor, gated behind an explicit `executor` selection. The check fails if running a check with the default configuration requires spawning an external `claude` process.
 
 # Requirement Trustworthy In-Process Reporting
 
-Check verdicts must arrive through the single `report-check-result` MCP tool, served from inside the CLI process. This guardrail is what makes results reliable despite agent nondeterminism; running the server out-of-process, or trusting agent stdout, would defeat it.
+Check verdicts must arrive through a single in-process **judge tool**, `report-check-result`, registered on the agent — not from agent stdout, a sentinel file, or a process exit code. Capturing the verdict in-process is what makes results reliable despite agent nondeterminism.
 
-## Check Server Runs In-Process
+## Check Verdict Captured Via Judge Tool
 
-Inspect how the result-reporting MCP server is started. Confirm it is built with the `rmcp` framework and run on a Tokio task within the CLI process — not spawned as a child process. Search for any use of `std::process::Command` or `tokio::process` that would launch the server externally; if the MCP server runs as a subprocess, the check fails. It passes only if the server runs on a task in the same process as the CLI.
+Inspect how a check's verdict is reported and captured. Confirm there is an in-process tool named `report-check-result` (implementing the cersei `Tool` trait) that is registered fresh on each check's agent and writes the verdict into an in-process sink the executor reads after the run. Confirm the verdict is **not** carried over a network MCP server or an external transport: there should be no in-process HTTP/`rmcp` server standing up per-check endpoints for reporting. The check fails if verdict reporting relies on an out-of-process server or a network endpoint.
 
-## Check Verdict From Tool Call
+## Check Verdict From Tool Call Not Stdout
 
-Confirm that a check's pass/fail verdict is derived from the `success` boolean of the `report-check-result` tool call, and never from the agent's stdout, stderr, or process exit code. Verify that a check whose agent exits without ever calling the tool is treated as a failure or error rather than silently passing. The check fails if the verdict is obtained by parsing stdout or by reading the agent's exit status.
+Confirm that a check's pass/fail verdict is derived from the `success` boolean reported through the `report-check-result` judge tool, and never from the agent's stdout, stderr, or process exit code. Verify that a check whose agent finishes without ever calling the tool (for example by hitting the turn limit) is treated as a failure or error rather than silently passing. The check fails if the verdict is obtained by parsing stdout or by reading an exit status.
 
-# Requirement Stateful MCP Sessions
+# Requirement Least-Privilege Agent Permissions
 
-The Claude Code MCP client connects to the result-reporting server over Streamable HTTP and expects the standard *stateful* session flow: it sends `initialize`, receives an `Mcp-Session-Id`, and issues subsequent requests under that session. A stateless server stalls this multi-step handshake, so the in-process MCP server must run in stateful mode.
+A verification agent should observe, not mutate. By default each check's agent gets a read-only tool set and a permission policy that denies anything beyond read-only, so a check cannot alter files even within its sandbox.
 
-## Check Server Is Stateful
+## Check Read-Only Tools By Default
 
-Inspect how the `rmcp` result-reporting MCP server is configured (its `StreamableHttpServerConfig`). Confirm the server runs in stateful Streamable HTTP mode — that is, `stateful_mode` is true and is not set to `false`. The check passes only if the server is configured for stateful sessions; it fails if `stateful_mode` is set to `false` (stateless mode).
+Inspect how the in-process executor configures its agent's tools and permission policy. Confirm that, by default, the agent is given a read-only tool set (such as file-read, grep, and glob) plus the reporting/judge tool, and a read-only permission policy (for example `AllowReadOnly`) — not a full read-write-execute tool set with an allow-all policy. The check fails if the default agent is granted write or shell-execution tools, or an allow-everything permission policy.
+
+# Requirement Isolated Agent Sessions
+
+Checks run concurrently and the agent's shell tools persist per-session state in a process-global registry. Each check must therefore use a distinct session identifier so parallel agents cannot clobber one another's shell state.
+
+## Check Distinct Session Per Check
+
+Inspect how the in-process executor assigns a session identifier to each check's agent. Confirm that each check is given a unique `session_id` (for example derived from the check's id) rather than a shared constant, and that the per-session shell state is cleared on teardown. The check fails if all checks share one session id, or if per-check shell state is never cleared.
 
 # Requirement Checks Cannot Corrupt the Workspace
 
@@ -64,6 +80,14 @@ Confirm that discovery-time validation produces `miette` diagnostics for both ma
 
 Confirm that the command exits with status code 0 when every requirement is satisfied (including the trivial case of an empty suite), and with status code 1 when one or more requirements are unsatisfied. The check fails if a run containing an unsatisfied requirement can exit 0, or if an all-satisfied run exits with a non-zero code.
 
-# Requirement No Hidden Configuration
+# Requirement Layered Configuration
 
-For the MVP, the model, model-provider URL, and effort level are hardcoded and injected into the pipeline. Inspect the configuration phase of `multi check` and confirm these values are hardcoded, and that the discovery and execution phases do not read them from environment variables or from a configuration file. The requirement is satisfied only if configuration is hardcoded for the MVP; it is not satisfied if any model, provider, or effort value is sourced from the environment or a configuration file.
+The model, provider, effort, and executor are resolved from three sources with standard CLI precedence — flag, then environment, then config file (flag wins) — while credentials are read only from each provider's native environment variable, never from the config file.
+
+## Check Precedence And Validation
+
+Inspect the configuration phase of `multi check`. Confirm that provider/model/effort/executor are merged from a config file, `MULTI_`-prefixed environment variables, and CLI flags, with flags overriding environment overriding file. Confirm the selected model is validated against a hardcoded allowlist of known IDs for the provider (an unknown ID is a clear error). The check fails if any of these values cannot be set from configuration, or if the merge precedence is not flag > env > file.
+
+## Check Credentials Are Environment-Only
+
+Confirm that provider API keys are read directly from each provider's native environment variable (for example `ANTHROPIC_API_KEY`) and are never loaded from the config file or from a `MULTI_`-prefixed variable. The check fails if a credential can be supplied through the config file or the `MULTI_` namespace.

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 
-use crate::checks::config::{CliOverrides, Effort, ProviderKind};
+use crate::checks::config::{CliOverrides, Effort, ExecutorKind, ProviderKind};
 
 /// `multi check`: validate the requirements declared in `CHECKS.md` files.
 ///
@@ -27,6 +27,11 @@ pub struct CheckSubcommand {
     /// The agent effort level. Overrides `checks.effort` from env/file.
     #[arg(long, value_enum)]
     effort: Option<Effort>,
+
+    /// The execution engine: `cersei` (in-process, default) or `claude` (the
+    /// legacy `claude -p` fallback). Overrides `checks.executor` from env/file.
+    #[arg(long, value_enum)]
+    executor: Option<ExecutorKind>,
 }
 
 impl CheckSubcommand {
@@ -38,6 +43,11 @@ impl CheckSubcommand {
     /// The flag layer for the config merge, carrying only the values the user
     /// actually passed.
     pub fn overrides(&self) -> CliOverrides {
-        CliOverrides::new(self.provider, self.model.clone(), self.effort)
+        CliOverrides::new(
+            self.provider,
+            self.model.clone(),
+            self.effort,
+            self.executor,
+        )
     }
 }

@@ -136,6 +136,37 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -yq openssl libssl-dev musl-tools perl make
+      - name: "Install MUSL C++ cross toolchain"
+        if: "${{ contains(join(matrix.targets, ','), '-linux-musl') }}"
+        run: |
+          set -euo pipefail
+          ver=20260515
+          file=x86_64-unknown-linux-musl.tar.xz
+          base="https://github.com/cross-tools/musl-cross/releases/download/${ver}"
+          for attempt in 1 2 3; do
+            if curl -fSL --retry 3 --connect-timeout 30 -o "/tmp/${file}" "${base}/${file}" \
+               && curl -fSL --retry 3 --connect-timeout 30 -o "/tmp/${file}.sha256" "${base}/${file}.sha256"; then
+              break
+            fi
+            echo "download attempt $attempt failed; retrying in 10s" >&2
+            sleep 10
+          done
+          expected=$(awk '{print $1}' "/tmp/${file}.sha256")
+          actual=$(sha256sum "/tmp/${file}" | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "checksum mismatch for ${file}: got ${actual}, expected ${expected}" >&2
+            exit 1
+          fi
+          sudo tar -xJf "/tmp/${file}" -C /opt
+          bindir=/opt/x86_64-unknown-linux-musl/bin
+          echo "$bindir" >> "$GITHUB_PATH"
+          {
+            echo "CC_x86_64_unknown_linux_musl=$bindir/x86_64-unknown-linux-musl-gcc"
+            echo "CXX_x86_64_unknown_linux_musl=$bindir/x86_64-unknown-linux-musl-g++"
+            echo "AR_x86_64_unknown_linux_musl=$bindir/x86_64-unknown-linux-musl-ar"
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$bindir/x86_64-unknown-linux-musl-gcc"
+          } >> "$GITHUB_ENV"
+        shell: "bash"
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
