@@ -28,6 +28,7 @@ use crate::checks::messages::{
     CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete, RetryCheck,
 };
 use crate::checks::model::{Check, CheckId, CheckOutcome, Verdict};
+use crate::checks::presenter::{PresenterActor, UiEvent};
 use crate::checks::reporting::ReportingActor;
 use crate::checks::sandbox::Sandbox;
 
@@ -43,6 +44,8 @@ pub(crate) struct ExecutionActor {
     max_attempts: usize,
     /// The downstream reporting actor.
     reporting: ActorRef<ReportingActor>,
+    /// The display-only presenter, told of each check's lifecycle milestones.
+    presenter: ActorRef<PresenterActor>,
 }
 
 impl Actor for ExecutionActor {
@@ -66,6 +69,7 @@ impl ExecutionActor {
         concurrency: usize,
         max_attempts: usize,
         reporting: ActorRef<ReportingActor>,
+        presenter: ActorRef<PresenterActor>,
     ) -> Self {
         Self {
             executor,
@@ -74,6 +78,7 @@ impl ExecutionActor {
             semaphore: Arc::new(Semaphore::new(concurrency.max(1))),
             max_attempts: max_attempts.max(1),
             reporting,
+            presenter,
         }
     }
 
@@ -86,7 +91,9 @@ impl ExecutionActor {
         let semaphore = self.semaphore.clone();
         let working_dir = self.working_dir.clone();
         let reporting = self.reporting.clone();
+        let presenter = self.presenter.clone();
         let me = ctx.actor_ref().clone();
+        let id = job.id;
 
         tokio::spawn(async move {
             // Acquire the permit inside the task. If the semaphore was closed the
@@ -95,11 +102,21 @@ impl ExecutionActor {
                 return;
             };
 
+            // Permit acquired ⇒ the agent is about to run: mark the check Running.
+            let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
+
             let result = run_one(executor, sandbox, job.id, job.check.clone(), &working_dir).await;
 
             if has_verdict(Some(&result)) {
-                // The agent reported: reconcile and forward straight to reporting.
+                // The agent reported: reconcile, surface the verdict to the
+                // presenter, and forward straight to reporting.
                 let outcome = reconcile(Some(&result), &job.check.title);
+                let _ = presenter
+                    .tell(UiEvent::CheckSettled {
+                        id,
+                        outcome: outcome.clone(),
+                    })
+                    .await;
                 if let Err(err) = reporting.tell(CheckCompleted { job, outcome }).await {
                     tracing::debug!(?err, "reporting actor unavailable for completed check");
                 }
@@ -120,6 +137,13 @@ impl ExecutionActor {
     /// an errored outcome.
     async fn finish_errored(&self, job: CheckJob, last: Result<AgentOutcome>) {
         let outcome = reconcile(Some(&last), &job.check.title);
+        let _ = self
+            .presenter
+            .tell(UiEvent::CheckSettled {
+                id: job.id,
+                outcome: outcome.clone(),
+            })
+            .await;
         if let Err(err) = self.reporting.tell(CheckCompleted { job, outcome }).await {
             tracing::debug!(?err, "reporting actor unavailable for errored check");
         }
@@ -145,6 +169,13 @@ impl Message<RetryCheck> for ExecutionActor {
                 attempt = attempt + 1,
                 "retrying check whose agent did not report"
             );
+            let _ = self
+                .presenter
+                .tell(UiEvent::CheckRetrying {
+                    id: job.id,
+                    attempt: attempt as u32,
+                })
+                .await;
             self.dispatch(ctx, job, attempt + 1);
         } else {
             self.finish_errored(job, last).await;
@@ -308,6 +339,7 @@ mod tests {
             Arc::new(NoopSandbox),
             &PathBuf::from("."),
             &reqs,
+            crate::checks::presenter::null_backend(),
         )
         .await
         .unwrap();
@@ -336,6 +368,7 @@ mod tests {
             Arc::new(NoopSandbox),
             &PathBuf::from("."),
             &reqs,
+            crate::checks::presenter::null_backend(),
         )
         .await
         .unwrap();
@@ -356,6 +389,7 @@ mod tests {
             Arc::new(NoopSandbox),
             &PathBuf::from("."),
             &reqs,
+            crate::checks::presenter::null_backend(),
         )
         .await
         .unwrap();

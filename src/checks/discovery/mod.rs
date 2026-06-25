@@ -21,6 +21,7 @@ use multi_core::ManyError;
 use crate::checks::execution::ExecutionActor;
 use crate::checks::messages::{BeginDiscovery, DiscoveryFailed};
 use crate::checks::model::Requirement;
+use crate::checks::presenter::PresenterActor;
 use crate::checks::reporting::ReportingActor;
 
 /// Run the full discovery phase rooted at `root`.
@@ -69,6 +70,7 @@ pub(crate) struct DiscoveryActor {
     root: PathBuf,
     execution: ActorRef<ExecutionActor>,
     reporting: ActorRef<ReportingActor>,
+    presenter: ActorRef<PresenterActor>,
 }
 
 impl Actor for DiscoveryActor {
@@ -88,11 +90,13 @@ impl DiscoveryActor {
         root: PathBuf,
         execution: ActorRef<ExecutionActor>,
         reporting: ActorRef<ReportingActor>,
+        presenter: ActorRef<PresenterActor>,
     ) -> Self {
         Self {
             root,
             execution,
             reporting,
+            presenter,
         }
     }
 }
@@ -103,8 +107,12 @@ impl Message<BeginDiscovery> for DiscoveryActor {
     async fn handle(&mut self, _msg: BeginDiscovery, _ctx: &mut Context<Self, ()>) -> Self::Reply {
         match discover(&self.root).await {
             Ok(requirements) => {
-                if let Err(err) =
-                    crate::checks::stream_requirements(&self.execution, &requirements).await
+                if let Err(err) = crate::checks::stream_requirements(
+                    &self.execution,
+                    &self.presenter,
+                    &requirements,
+                )
+                .await
                 {
                     tracing::error!(?err, "failed to stream discovered checks to execution");
                 }

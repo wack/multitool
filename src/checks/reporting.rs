@@ -175,6 +175,24 @@ pub fn report(terminal: &Terminal, outcomes: &[RequirementOutcome]) -> Result<i3
     Ok(if all_satisfied { 0 } else { 1 })
 }
 
+/// The process exit code for a set of outcomes, without writing anything: `0` if
+/// every requirement is satisfied (empty suite included), else `1`. Used by the
+/// TTY path, where the presenter has already written the record to scrollback so
+/// [`report`] must not also write to stdout.
+pub(crate) fn exit_code(outcomes: &[RequirementOutcome]) -> i32 {
+    if outcomes.iter().all(|o| o.satisfied) {
+        0
+    } else {
+        1
+    }
+}
+
+/// The plain-text requirement line (`[PASS]`/`[FAIL] title`). Exposed so the
+/// inline presenter can assert its flushed record matches this exactly.
+pub(crate) fn format_requirement_plain(outcome: &RequirementOutcome) -> String {
+    format_requirement(outcome, false)
+}
+
 fn format_requirement(outcome: &RequirementOutcome, color: bool) -> String {
     if color {
         let styled = console::style(outcome.title.clone()).bold();
@@ -190,9 +208,16 @@ fn format_requirement(outcome: &RequirementOutcome, color: bool) -> String {
     }
 }
 
-fn format_failing_check(check: &CheckOutcome, color: bool) -> String {
+/// The plain-text failing-check line (`  ✗ title: evidence`). Shared with the
+/// inline presenter so the TTY scrollback record and the non-TTY stdout report
+/// render a failing check identically.
+pub(crate) fn failing_check_text(check: &CheckOutcome) -> String {
     let evidence = check.evidence.as_deref().unwrap_or("no evidence provided");
-    let body = format!("  ✗ {}: {}", check.title, evidence);
+    format!("  ✗ {}: {}", check.title, evidence)
+}
+
+fn format_failing_check(check: &CheckOutcome, color: bool) -> String {
+    let body = failing_check_text(check);
     if color {
         console::style(body).red().to_string()
     } else {
