@@ -14,6 +14,15 @@ path = "src/bin/main.rs"
 [workspace]
 members = ["crates/multi-core"]
 
+# MultiTool local patch (MULTI-1367). cersei-provider 0.1.9 unconditionally sends
+# a stale `anthropic-beta: interleaved-thinking-2025-04-14` header that the
+# current Anthropic API rejects with HTTP 400, breaking every in-process check.
+# Vendor the crate with that header corrected until upstream releases a fix.
+# See third_party/cersei-provider/PATCH.md and
+# https://github.com/pacifio/cersei/issues/20.
+[patch.crates-io]
+cersei-provider = { path = "third_party/cersei-provider" }
+
 [workspace.package]
 authors = ["The MultiTool Team"]
 edition = "2024"
@@ -80,10 +89,10 @@ base64.workspace = true
 tokio-util.workspace = true
 comrak = { version = "0.52", default-features = false }
 libc = "0.2.186"
-rmcp = { version = "1.8", default-features = false, features = ["server", "macros", "schemars", "transport-streamable-http-server", "transport-streamable-http-server-session", "tower"] }
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
-schemars = "1"
 tempfile = "3"
+cersei-agent = "0.1.9"
+cersei-tools = "0.1.9"
+cersei-types = "0.1.9"
 
 [workspace.dependencies]
 pretty_assertions = "1.4"
@@ -97,13 +106,6 @@ miette = { version = "7", features = ["fancy"] }
 tokio-stream = { version = "0.1", features = ["time"] }
 async-stream = "0.3.6"
 thiserror = "2.0"
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls",
-  "charset",
-  "http2",
-  "macos-system-configuration",
-] }
-openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 # The `test` feature enables `figment::Jail` for hermetic env/file config tests.

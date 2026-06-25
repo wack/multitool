@@ -1,23 +1,22 @@
-//! The execution phase (M5).
+//! The execution phase (M5; in-process rework in MULTI-1367).
 //!
-//! Run every check **in parallel** (bounded), each in its own CoW sandbox and
-//! against its own MCP endpoint; then reconcile each check's verdict (the
-//! MCP-reported `success` is authoritative) and aggregate checks into
-//! per-requirement outcomes via logical AND.
+//! Run every check **in parallel** (bounded), each in its own CoW sandbox, via
+//! an in-process agent that reports its verdict through a per-check judge tool;
+//! then reconcile each check's verdict (the reported `success` is authoritative)
+//! and aggregate checks into per-requirement outcomes via logical AND.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use miette::{IntoDiagnostic, Result};
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::checks::config::Config;
 use crate::checks::executor::{
-    AgentOutcome, AgentRunRequest, BoxedExecutor, CheckExecutor, assemble_instructions,
+    AgentOutcome, AgentRunRequest, BoxedExecutor, CheckExecutor, CheckReport,
 };
-use crate::checks::mcp::{CheckReport, ReportStore, ResultServer, mcp_config_json};
 use crate::checks::model::{
     Check, CheckId, CheckOutcome, Requirement, RequirementOutcome, Verdict,
 };
@@ -31,8 +30,8 @@ struct PlannedCheck {
     check: Check,
 }
 
-/// Convenience wrapper used by the pipeline orchestrator: build the executor and
-/// sandbox from configuration (DI) and run [`execute`].
+/// Convenience wrapper used by the pipeline orchestrator: build the sandbox from
+/// configuration (DI) and run [`execute`] with the injected executor.
 pub async fn execution_phase(
     cfg: &Config,
     executor: BoxedExecutor,
@@ -73,20 +72,14 @@ pub async fn execute(
         return Ok(aggregate(requirements, HashMap::new()));
     }
 
-    // Stand up the one MCP server with an endpoint per check.
-    let ids: Vec<CheckId> = planned.iter().map(|p| p.id).collect();
-    let server = ResultServer::start(&ids).await?;
-
-    // The most recent agent outcome per check. The MCP-reported verdict is folded
-    // into `AgentOutcome::reported` by `run_one` (which kills the agent the
-    // instant it reports).
+    // The most recent agent outcome per check. The reported verdict lives in
+    // `AgentOutcome::verdict`.
     let mut last_outcome: HashMap<CheckId, Result<AgentOutcome>> = HashMap::new();
 
-    // Re-run any check whose agent fails to report, up to `max_attempts`. Agents
-    // are nondeterministic and occasionally hang or stop without calling the
-    // tool; a fresh attempt usually succeeds. The per-check endpoint's
-    // single-call flag stays unset until a real report arrives, so a retry
-    // reports to the same endpoint.
+    // Re-run any check whose agent fails to report a verdict, up to
+    // `max_attempts`. Agents are nondeterministic and occasionally hit the turn
+    // cap, error, or time out without reporting; a fresh attempt usually
+    // succeeds.
     let mut pending: Vec<&PlannedCheck> = planned.iter().collect();
     let attempts = cfg.max_attempts.max(1);
     for attempt in 1..=attempts {
@@ -109,23 +102,11 @@ pub async fn execute(
             let executor = executor.clone();
             let sandbox = sandbox.clone();
             let id = p.id;
-            let instructions = assemble_instructions(&p.check);
-            let endpoint_url = server.endpoint_url(id);
-            let (notify, reports) = server.report_handle(id);
+            let check = p.check.clone();
             let working_dir = working_dir.to_path_buf();
             set.spawn(async move {
                 let _permit = permit;
-                let outcome = run_one(
-                    executor,
-                    sandbox,
-                    id,
-                    instructions,
-                    &endpoint_url,
-                    &working_dir,
-                    notify,
-                    reports,
-                )
-                .await;
+                let outcome = run_one(executor, sandbox, id, check, &working_dir).await;
                 (id, outcome)
             });
         }
@@ -137,11 +118,9 @@ pub async fn execute(
         // Whatever still has no reported verdict is retried in the next round.
         pending = planned
             .iter()
-            .filter(|p| !has_report(last_outcome.get(&p.id)))
+            .filter(|p| !has_verdict(last_outcome.get(&p.id)))
             .collect();
     }
-
-    server.shutdown().await;
 
     // Reconcile each check, then aggregate per requirement.
     let mut outcomes: HashMap<CheckId, CheckOutcome> = HashMap::new();
@@ -153,87 +132,40 @@ pub async fn execute(
 }
 
 /// Whether an agent outcome carries a reported verdict.
-fn has_report(outcome: Option<&Result<AgentOutcome>>) -> bool {
-    matches!(outcome, Some(Ok(o)) if o.reported.is_some())
+fn has_verdict(outcome: Option<&Result<AgentOutcome>>) -> bool {
+    matches!(outcome, Some(Ok(o)) if o.has_verdict())
 }
 
-/// Drive one check: sandbox → mcp-config → dispatch the agent, racing the
-/// agent's MCP report against its process. The agent's job is done the instant
-/// it reports, so on a report we drop the run future — which kills the agent
-/// (`kill_on_drop`) and avoids the post-report cleanup hangs some agents
-/// exhibit. If the process exits (or the executor's timeout fires) first, we
-/// fold in any report that landed alongside.
-#[allow(clippy::too_many_arguments)]
+/// Drive one check: create its CoW sandbox, run the agent against it, then tear
+/// the sandbox down. The executor owns the agent lifecycle (the in-process
+/// executor cancels its agent the instant it reports; the legacy fallback runs
+/// the subprocess to completion or timeout).
 async fn run_one(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     id: CheckId,
-    instructions: String,
-    endpoint_url: &str,
+    check: Check,
     working_dir: &Path,
-    notify: Arc<Notify>,
-    reports: ReportStore,
 ) -> Result<AgentOutcome> {
     let handle = sandbox.create(working_dir).await?;
-    let config_file = write_mcp_config(&mcp_config_json(endpoint_url))?;
 
     let request = AgentRunRequest {
         check_id: id,
-        instructions,
+        check,
         working_dir: handle.path().to_path_buf(),
-        mcp_config_path: config_file.path().to_path_buf(),
     };
 
-    let report_for = |reports: &ReportStore| reports.lock().unwrap().get(&id).cloned();
-    // `run_check` already returns a boxed (Unpin) future, so `&mut run` is fine.
-    let mut run = executor.run_check(request);
-    let outcome = tokio::select! {
-        // The agent reported: take the verdict. `run` is dropped when this
-        // function returns (just below), which kills the now-redundant agent.
-        _ = notify.notified() => {
-            AgentOutcome {
-                exited_cleanly: true,
-                exit_code: None,
-                stderr: String::new(),
-                reported: report_for(&reports),
-            }
-        }
-        // The process finished (clean exit, error, or the executor's timeout).
-        result = &mut run => {
-            let mut o = result?;
-            if o.reported.is_none() {
-                o.reported = report_for(&reports);
-            }
-            o
-        }
-    };
+    let outcome = executor.run_check(request).await;
 
-    // Drop the run future first so a still-running agent is killed before we
-    // tear down its sandbox and mcp-config file.
-    drop(run);
-    drop(config_file);
+    // Drop the sandbox after the run completes (RAII teardown of the clone).
     drop(handle);
-    Ok(outcome)
+    outcome
 }
 
-/// Write the `--mcp-config` JSON to a temp file the agent can read.
-fn write_mcp_config(json: &str) -> Result<tempfile::NamedTempFile> {
-    use std::io::Write;
-    let mut file = tempfile::Builder::new()
-        .prefix("multi-mcp-")
-        .suffix(".json")
-        .tempfile()
-        .into_diagnostic()?;
-    file.write_all(json.as_bytes()).into_diagnostic()?;
-    file.flush().into_diagnostic()?;
-    Ok(file)
-}
-
-/// Reconcile a single check's verdict from its agent outcome. The report folded
-/// into [`AgentOutcome::reported`] (the MCP-reported `success`) is authoritative;
-/// its absence is an error.
+/// Reconcile a single check's verdict from its agent outcome. The reported
+/// verdict ([`AgentOutcome::verdict`]) is authoritative; its absence is an error.
 fn reconcile(agent: Option<&Result<AgentOutcome>>, title: &str) -> CheckOutcome {
-    if let Some(report) = inline_report(agent) {
+    if let Some(report) = reported_verdict(agent) {
         let verdict = if report.success {
             Verdict::Satisfied
         } else {
@@ -247,14 +179,14 @@ fn reconcile(agent: Option<&Result<AgentOutcome>>, title: &str) -> CheckOutcome 
     }
 
     let reason = match agent {
-        Some(Ok(o)) if o.exited_cleanly => {
-            "agent finished without calling report-check-result".to_string()
-        }
-        Some(Ok(o)) => format!(
-            "agent exited without reporting (exit {:?}){}",
-            o.exit_code,
-            stderr_suffix(&o.stderr)
-        ),
+        Some(Ok(o)) => match &o.error {
+            Some(err) => format!("agent errored without reporting: {err}"),
+            None => format!(
+                "agent finished without reporting a verdict{}{}",
+                stop_reason_suffix(o.stop_reason.as_deref()),
+                turns_suffix(o.turns),
+            ),
+        },
         Some(Err(e)) => format!("execution error: {e}"),
         None => "no result was collected for this check".to_string(),
     };
@@ -265,20 +197,25 @@ fn reconcile(agent: Option<&Result<AgentOutcome>>, title: &str) -> CheckOutcome 
     }
 }
 
-fn inline_report(agent: Option<&Result<AgentOutcome>>) -> Option<CheckReport> {
+fn reported_verdict(agent: Option<&Result<AgentOutcome>>) -> Option<CheckReport> {
     match agent {
-        Some(Ok(o)) => o.reported.clone(),
+        Some(Ok(o)) => o.verdict.clone(),
         _ => None,
     }
 }
 
-fn stderr_suffix(stderr: &str) -> String {
-    let trimmed = stderr.trim();
-    if trimmed.is_empty() {
-        String::new()
+fn stop_reason_suffix(stop_reason: Option<&str>) -> String {
+    match stop_reason {
+        Some(r) if !r.is_empty() => format!(" (stop: {r})"),
+        _ => String::new(),
+    }
+}
+
+fn turns_suffix(turns: u32) -> String {
+    if turns > 0 {
+        format!(" after {turns} turns")
     } else {
-        let snippet: String = trimmed.chars().take(200).collect();
-        format!(": {snippet}")
+        String::new()
     }
 }
 

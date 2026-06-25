@@ -1,7 +1,7 @@
-//! A test-only [`CheckExecutor`] double: returns scripted inline verdicts per
-//! check id without spawning any process or touching the MCP server, so the
+//! A test-only [`CheckExecutor`] double: returns scripted verdicts per check id
+//! without spawning a process, building a model, or touching the network, so the
 //! execution → reconciliation → reporting pipeline can be driven
-//! deterministically. (Tests & docs, MULTI-1354)
+//! deterministically. (Tests & docs, MULTI-1354; updated for MULTI-1367.)
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -9,14 +9,14 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use miette::Result;
 
+use super::judge::CheckReport;
 use super::{AgentOutcome, AgentRunRequest, CheckExecutor};
-use crate::checks::mcp::CheckReport;
 use crate::checks::model::CheckId;
 
 #[derive(Default)]
 pub struct FakeExecutor {
     scripted: HashMap<CheckId, CheckReport>,
-    /// Check ids that should simulate an agent crashing without reporting.
+    /// Check ids that should simulate an agent finishing without reporting.
     silent: HashSet<CheckId>,
     seen: Mutex<Vec<CheckId>>,
 }
@@ -38,7 +38,7 @@ impl FakeExecutor {
         self
     }
 
-    /// Make `id` simulate an agent that crashes/exits without reporting.
+    /// Make `id` simulate an agent that finishes without reporting a verdict.
     pub fn with_silent(mut self, id: CheckId) -> Self {
         self.silent.insert(id);
         self
@@ -56,17 +56,17 @@ impl CheckExecutor for FakeExecutor {
         self.seen.lock().unwrap().push(req.check_id);
         if self.silent.contains(&req.check_id) {
             return Ok(AgentOutcome {
-                exited_cleanly: false,
-                exit_code: Some(1),
-                stderr: "fake: agent crashed".into(),
-                reported: None,
+                verdict: None,
+                stop_reason: Some("fake: finished without reporting".into()),
+                turns: 1,
+                error: None,
             });
         }
         Ok(AgentOutcome {
-            exited_cleanly: true,
-            exit_code: Some(0),
-            stderr: String::new(),
-            reported: self.scripted.get(&req.check_id).cloned(),
+            verdict: self.scripted.get(&req.check_id).cloned(),
+            stop_reason: Some("fake: reported".into()),
+            turns: 1,
+            error: None,
         })
     }
 }

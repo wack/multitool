@@ -7,14 +7,19 @@ requirements** that have no direct, programmatic unit to test (e.g. "no serif
 fonts", "no images over 5 MB", "every public function is documented").
 
 Each requirement is validated by one or more **checks**. In the MVP a check is a
-`prompt`: a natural-language instruction that a Claude Code agent carries out to
-decide whether the requirement is satisfied. A requirement is satisfied only if
-**all** of its checks pass (logical AND).
+`prompt`: a natural-language instruction that an AI agent carries out to decide
+whether the requirement is satisfied. The agent runs **in-process** (no external
+CLI), explores the sandbox with read-only tools, and reports its verdict. A
+requirement is satisfied only if **all** of its checks pass (logical AND).
 
 ## ✅ Prerequisites
 
-- [ ] A working [`claude`](https://docs.claude.com/en/docs/claude-code) CLI on
-      your `PATH` (checks shell out to `claude -p`).
+- [ ] An API key for your chosen provider in the environment (e.g.
+      `ANTHROPIC_API_KEY`) — see [Configuration](#️-configuration). The default
+      in-process executor talks to the provider directly; **no `claude` CLI is
+      required**. (The optional `claude -p` fallback — `--executor claude` — does
+      need the [`claude`](https://docs.claude.com/en/docs/claude-code) CLI on your
+      `PATH`.)
 - [ ] **macOS** — the MVP sandboxes each check with an APFS copy-on-write clone.
       Other operating systems are not yet supported.
 
@@ -144,19 +149,23 @@ to a clear plain-text form when disabled.
 
 Agents are nondeterministic, so `multi check` does **not** trust their stdout or
 any sentinel file. Instead, each agent reports its verdict by calling a single
-MCP tool, `report-check-result(success, evidence?)`, served by an in-process MCP
-server the CLI runs on `localhost` (one dedicated endpoint per check). An agent
-that finishes **without** calling the tool fails its check. This keeps results
+in-process **judge tool**, `report-check-result(success, evidence?)`, registered
+fresh on that check's agent and closing over its own result sink. An agent that
+finishes **without** calling the tool fails its check. This keeps results
 trustworthy despite agent nondeterminism.
+
+Agents run with a **least-privilege, read-only** tool set by default (Read, Grep,
+Glob, plus the judge tool) — a verification agent observes, it does not mutate.
 
 ## ⚙️ Configuration
 
-The default **provider**, **model**, and **effort** are resolved from three
-sources, in order of precedence (highest wins):
+The default **provider**, **model**, **effort**, and **executor** are resolved
+from three sources, in order of precedence (highest wins):
 
-1. **Flags** — `--provider`, `--model`, `--effort` on `multi check`.
+1. **Flags** — `--provider`, `--model`, `--effort`, `--executor` on `multi check`.
 2. **Environment** — `MULTI_`-prefixed vars mapped into the `checks` namespace,
-   e.g. `MULTI_CHECKS_MODEL`, `MULTI_CHECKS_PROVIDER`, `MULTI_CHECKS_EFFORT`.
+   e.g. `MULTI_CHECKS_MODEL`, `MULTI_CHECKS_PROVIDER`, `MULTI_CHECKS_EFFORT`,
+   `MULTI_CHECKS_EXECUTOR`.
 3. **Config file** — the `[checks]` table of `MultiTool.toml` (or `.json` /
    `.jsonc`), discovered up the directory tree like any MultiTool manifest.
 
@@ -164,7 +173,8 @@ sources, in order of precedence (highest wins):
 [checks]
 provider = "anthropic"          # anthropic | openai | gemini
 model    = "claude-sonnet-4-6"  # must be a known model ID for the provider
-effort   = "low"                # low | medium | high
+effort   = "low"                # low | medium | high  → thinking-token budget
+executor = "cersei"             # cersei (in-process, default) | claude (fallback)
 
 # optional, non-secret base-URL overrides per provider
 [checks.providers.anthropic]
@@ -173,7 +183,16 @@ base_url = "https://..."
 
 An unset flag contributes nothing — it never overrides a value from the
 environment or file. The `model` is validated against a hardcoded allowlist of
-known IDs for the selected provider; an unknown ID is a clear error.
+known IDs for the selected provider; an unknown ID is a clear error. `effort`
+currently maps to the in-process agent's sampling temperature (`low` → most
+deterministic, `high` → most exploratory); mapping it to an extended-thinking
+budget is pending an upstream provider fix.
+
+The **`executor`** selects the execution engine. The default `cersei` runs each
+check as an in-process agent (native multi-provider model swapping, no external
+CLI). `claude` is the legacy `claude -p` shell-out fallback, kept selectable for
+migration while the in-process path is validated; it requires the `claude` CLI on
+your `PATH` and will be removed once cersei is proven out.
 
 **Credentials are environment-only.** API keys are read directly from each
 provider's native variable and never live in the config file or under the
@@ -192,9 +211,12 @@ whose key is missing is an error.
 
 - **macOS only** — copy-on-write sandboxing uses APFS `clonefile`. Linux and
   Windows support is planned.
-- **`prompt`-type checks only** — checks run via `claude -p` against the
+- **`prompt`-type checks only** — checks run an in-process agent against the
   configured model (the `sonnet` family by default). A `shell` check type is
   planned.
+- **Read-only agents** — checks observe the sandbox with read-only tools and
+  cannot execute code. Per-check execution capability (for checks that must run
+  the project to verify behavior) is planned.
 
 ## 📬 Need help?
 

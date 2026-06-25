@@ -1,17 +1,16 @@
-//! The configuration phase (M2 #1341, global config #1359).
+//! The configuration phase (M2 #1341, global config #1359, executor wiring #1367).
 //!
-//! Resolves the global default **provider**, **model**, and **effort** from
-//! three sources with standard CLI precedence — `flag > env var > config file` —
-//! merged with [`figment`], and constructs a registry of ready-to-use model
-//! providers for a future executor to consume.
+//! Resolves the global default **provider**, **model**, **effort**, and
+//! **executor** from three sources with standard CLI precedence —
+//! `flag > env var > config file` — merged with [`figment`], constructs a
+//! registry of ready-to-use model providers, and builds the selected
+//! [`BoxedExecutor`] from a per-provider [`ProviderFactory`].
 //!
-//! The resolved [`Config`] is still **dependency-injected** forward: execution
-//! receives a [`BoxedExecutor`] built from it rather than reading provider
-//! details at point of use.
-//!
-//! The execution path is out of scope here: this phase *constructs and hands
-//! off* providers (see [`Resolved::providers`]); a follow-up wires them into a
-//! real executor. The MVP [`ClaudeExecutor`] still runs the checks.
+//! The resolved [`Config`] is **dependency-injected** forward: execution
+//! receives a [`BoxedExecutor`] (see [`Resolved::build_executor`]) rather than
+//! reading provider details at point of use. The default executor is the
+//! in-process [`CerseiExecutor`]; the legacy [`ClaudeExecutor`] remains
+//! selectable as a migration fallback.
 
 mod file;
 mod models;
@@ -27,10 +26,11 @@ use figment::{
 use miette::{Result, miette};
 
 use crate::checks::executor::BoxedExecutor;
+use crate::checks::executor::cersei::CerseiExecutor;
 use crate::checks::executor::claude::ClaudeExecutor;
 
-pub use providers::ProviderRegistry;
-pub use schema::{CliOverrides, Effort, ProviderKind};
+pub use providers::{ProviderFactory, ProviderRegistry};
+pub use schema::{CliOverrides, Effort, ExecutorKind, ProviderKind};
 
 /// Maximum number of checks executed concurrently. A small fan-out gives each
 /// (CPU-heavy) reasoning agent enough cores to finish promptly.
@@ -46,29 +46,33 @@ const DEFAULT_MAX_ATTEMPTS: usize = 3;
 pub struct Config {
     /// The selected provider.
     pub provider: ProviderKind,
-    /// The selected provider's optional base-URL override, if configured. Passed
-    /// to the MVP executor as `ANTHROPIC_BASE_URL`; `None` uses the default.
+    /// The selected provider's optional base-URL override, if configured. Used
+    /// by the `claude -p` fallback as `ANTHROPIC_BASE_URL` (the in-process
+    /// executor applies it via the provider factory); `None` uses the default.
     pub provider_url: Option<String>,
     /// The concrete model ID to run (validated against the hardcoded allowlist).
     pub model: String,
     /// The effort level.
     pub effort: Effort,
+    /// Which execution engine runs each check (default: in-process cersei).
+    pub executor: ExecutorKind,
     /// Maximum number of checks executed concurrently.
     pub concurrency: usize,
     /// Per-agent wall-clock timeout (reaps an agent that hangs before reporting).
     pub agent_timeout: Duration,
     /// How many times to (re)run a check whose agent fails to report. Agents are
-    /// nondeterministic and occasionally hang or finish without calling the
-    /// report tool; a fresh attempt against the same endpoint usually succeeds.
-    /// A check only resolves as errored after all attempts are exhausted.
+    /// nondeterministic and occasionally hit the turn cap or finish without
+    /// calling the judge tool; a fresh attempt usually succeeds. A check only
+    /// resolves as errored after all attempts are exhausted.
     pub max_attempts: usize,
 }
 
 impl Config {
-    /// Construct the concrete [`BoxedExecutor`] from this configuration. This is
-    /// the injection point: execution is handed the boxed executor, never a
-    /// concrete type or a global.
-    pub fn build_executor(&self) -> BoxedExecutor {
+    /// Construct the legacy `claude -p` fallback executor from this
+    /// configuration. The in-process cersei executor needs the resolved provider
+    /// factory and so is built from [`Resolved`]; this builder only covers the
+    /// fallback, which needs nothing beyond [`Config`].
+    pub fn build_claude_executor(&self) -> BoxedExecutor {
         Box::new(ClaudeExecutor::new(
             self.model.clone(),
             self.provider_url.clone(),
@@ -101,11 +105,32 @@ fn resolve_layers(
 }
 
 /// The product of the configuration phase: the resolved [`Config`] the pipeline
-/// consumes, plus the constructed [`ProviderRegistry`] handed off for a future
-/// executor.
+/// consumes, the constructed [`ProviderRegistry`] (one live handle per available
+/// provider), and the [`ProviderFactory`] for the *selected* provider that the
+/// in-process executor uses to mint a fresh handle per check.
 pub struct Resolved {
     pub config: Config,
     pub providers: ProviderRegistry,
+    pub factory: ProviderFactory,
+}
+
+impl Resolved {
+    /// Construct the selected [`BoxedExecutor`]. This is the injection point and
+    /// the migration lever: `cersei` (default) runs the in-process agent;
+    /// `claude` runs the legacy `claude -p` fallback over the same checks.
+    pub fn build_executor(&self) -> Result<BoxedExecutor> {
+        let cfg = &self.config;
+        let executor: BoxedExecutor = match cfg.executor {
+            ExecutorKind::Cersei => Box::new(CerseiExecutor::new(
+                self.factory.clone(),
+                cfg.model.clone(),
+                cfg.effort,
+                cfg.agent_timeout,
+            )),
+            ExecutorKind::Claude => cfg.build_claude_executor(),
+        };
+        Ok(executor)
+    }
 }
 
 /// The configuration phase: resolve provider/model/effort from file + env +
@@ -122,6 +147,7 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         .model
         .unwrap_or_else(|| models::default_model(provider).to_string());
     let effort = checks.effort.unwrap_or(Effort::Low);
+    let executor = checks.executor.unwrap_or(ExecutorKind::Cersei);
 
     if !models::is_valid_model(provider, &model) {
         return Err(miette!(
@@ -142,6 +168,11 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         ));
     }
 
+    // The factory for the selected provider mints a fresh handle per check; its
+    // credential is guaranteed present by the availability check above.
+    let factory = providers::build_factory(provider, &checks.providers)
+        .expect("selected provider availability was just verified");
+
     let provider_url = checks.providers.base_url(provider).map(ToOwned::to_owned);
 
     let config = Config {
@@ -149,6 +180,7 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         provider_url,
         model,
         effort,
+        executor,
         concurrency: DEFAULT_CONCURRENCY,
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
@@ -157,6 +189,7 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
     Ok(Resolved {
         config,
         providers: registry,
+        factory,
     })
 }
 
@@ -173,6 +206,7 @@ pub fn configuration() -> Config {
         // sonnet reasons efficiently and reports in well under a minute.)
         model: models::default_model(provider).to_string(),
         effort: Effort::Low,
+        executor: ExecutorKind::Cersei,
         concurrency: DEFAULT_CONCURRENCY,
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
@@ -195,6 +229,7 @@ mod tests {
                 provider: Some(provider),
                 model: Some(model.to_string()),
                 effort: Some(Effort::Low),
+                executor: None,
                 providers: ProvidersSection::default(),
             },
         }
@@ -205,17 +240,22 @@ mod tests {
         let cfg = configuration();
         assert_eq!(cfg.provider, ProviderKind::Anthropic);
         assert_eq!(cfg.model, "claude-sonnet-4-6");
+        assert_eq!(cfg.executor, ExecutorKind::Cersei);
         assert!(cfg.concurrency >= 1);
-        // The executor is constructible (DI seam works).
-        let _exec = cfg.build_executor();
+        // The fallback executor is constructible from config alone (DI seam works).
+        let _exec = cfg.build_claude_executor();
     }
 
     #[test]
     fn flag_beats_file() {
         Jail::expect_with(|_jail| {
             let file = file_with(ProviderKind::Anthropic, "claude-haiku-4-5");
-            let overrides =
-                CliOverrides::new(Some(ProviderKind::OpenAi), Some("gpt-4o".into()), None);
+            let overrides = CliOverrides::new(
+                Some(ProviderKind::OpenAi),
+                Some("gpt-4o".into()),
+                None,
+                None,
+            );
             let checks = resolve_layers(file, overrides).unwrap();
             assert_eq!(checks.provider, Some(ProviderKind::OpenAi));
             assert_eq!(checks.model.as_deref(), Some("gpt-4o"));
@@ -248,7 +288,7 @@ mod tests {
             assert_eq!(checks.model.as_deref(), Some("claude-haiku-4-5"));
 
             // ...and a flag outranks env.
-            let overrides = CliOverrides::new(None, Some("claude-opus-4-8".into()), None);
+            let overrides = CliOverrides::new(None, Some("claude-opus-4-8".into()), None, None);
             let checks = resolve_layers(file, overrides).unwrap();
             assert_eq!(checks.model.as_deref(), Some("claude-opus-4-8"));
             Ok(())
