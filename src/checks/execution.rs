@@ -1,134 +1,178 @@
-//! The execution phase (M5; in-process rework in MULTI-1367).
+//! The execution phase (M5; in-process rework in MULTI-1367; actor rework in
+//! MULTI-1368).
 //!
-//! Run every check **in parallel** (bounded), each in its own CoW sandbox, via
-//! an in-process agent that reports its verdict through a per-check judge tool;
-//! then reconcile each check's verdict (the reported `success` is authoritative)
-//! and aggregate checks into per-requirement outcomes via logical AND.
+//! [`ExecutionActor`] receives one [`CheckDiscovered`] per validated check and
+//! **immediately** offloads the (long-running) agent run onto a spawned task —
+//! never `await`-ing it inline, since a Kameo actor processes one message at a
+//! time to completion and awaiting here would serialize the pipeline. Each task
+//! creates a CoW sandbox, runs the check's agent via the injected
+//! [`CheckExecutor`] (which returns the verdict inline), drops the sandbox, and
+//! either forwards a [`CheckCompleted`] to reporting or — if the agent did not
+//! report — asks the actor to [`RetryCheck`] it.
+//!
+//! Bounded concurrency is enforced by a shared [`Semaphore`] acquired *inside*
+//! each task (the semaphore is the cap, not the mailbox depth — decision #5).
+//! Retries (`cfg.max_attempts`) are reframed as self-messages.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use miette::{IntoDiagnostic, Result};
+use kameo::Actor;
+use kameo::actor::ActorRef;
+use kameo::message::{Context, Message};
+use miette::Result;
 use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 
-use crate::checks::config::Config;
-use crate::checks::executor::{
-    AgentOutcome, AgentRunRequest, BoxedExecutor, CheckExecutor, CheckReport,
+use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport};
+use crate::checks::messages::{
+    CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete, RetryCheck,
 };
-use crate::checks::model::{
-    Check, CheckId, CheckOutcome, Requirement, RequirementOutcome, Verdict,
-};
+use crate::checks::model::{Check, CheckId, CheckOutcome, Verdict};
+use crate::checks::reporting::ReportingActor;
 use crate::checks::sandbox::Sandbox;
 
-/// A single check flattened out of the requirement set for execution, tagged
-/// with its run-unique id and the requirement it rolls up into.
-struct PlannedCheck {
-    id: CheckId,
-    req_index: usize,
-    check: Check,
-}
-
-/// Convenience wrapper used by the pipeline orchestrator: build the sandbox from
-/// configuration (DI) and run [`execute`] with the injected executor.
-pub async fn execution_phase(
-    cfg: &Config,
-    executor: BoxedExecutor,
-    working_dir: &Path,
-    requirements: &[Requirement],
-) -> Result<Vec<RequirementOutcome>> {
-    let executor: Arc<dyn CheckExecutor + Send + Sync> = Arc::from(executor);
-    let sandbox: Arc<dyn Sandbox + Send + Sync> =
-        Arc::from(crate::checks::sandbox::select_sandbox());
-    execute(cfg, executor, sandbox, working_dir, requirements).await
-}
-
-/// Run all checks and produce per-requirement outcomes.
-///
-/// `executor` and `sandbox` are injected so tests can substitute fakes.
-pub async fn execute(
-    cfg: &Config,
+/// The execution actor: turns a stream of discovered checks into a stream of
+/// completed checks, fanning agent runs out onto bounded background tasks.
+pub(crate) struct ExecutionActor {
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    working_dir: &Path,
-    requirements: &[Requirement],
-) -> Result<Vec<RequirementOutcome>> {
-    // Flatten checks, assigning each a run-unique id.
-    let mut planned: Vec<PlannedCheck> = Vec::new();
-    for (req_index, req) in requirements.iter().enumerate() {
-        for check in &req.checks {
-            planned.push(PlannedCheck {
-                id: planned.len(),
-                req_index,
-                check: check.clone(),
-            });
+    working_dir: PathBuf,
+    /// The concurrency cap, shared into every spawned task.
+    semaphore: Arc<Semaphore>,
+    /// How many times to (re)run a check whose agent fails to report (≥1).
+    max_attempts: usize,
+    /// The downstream reporting actor.
+    reporting: ActorRef<ReportingActor>,
+}
+
+impl Actor for ExecutionActor {
+    type Args = Self;
+    type Error = std::convert::Infallible;
+
+    async fn on_start(
+        args: Self::Args,
+        _actor_ref: ActorRef<Self>,
+    ) -> std::result::Result<Self, Self::Error> {
+        Ok(args)
+    }
+}
+
+impl ExecutionActor {
+    /// Build the actor. `concurrency` and `max_attempts` are clamped to ≥1.
+    pub(crate) fn new(
+        executor: Arc<dyn CheckExecutor + Send + Sync>,
+        sandbox: Arc<dyn Sandbox + Send + Sync>,
+        working_dir: PathBuf,
+        concurrency: usize,
+        max_attempts: usize,
+        reporting: ActorRef<ReportingActor>,
+    ) -> Self {
+        Self {
+            executor,
+            sandbox,
+            working_dir,
+            semaphore: Arc::new(Semaphore::new(concurrency.max(1))),
+            max_attempts: max_attempts.max(1),
+            reporting,
         }
     }
 
-    // Nothing to run: every requirement trivially aggregates (empty AND = true,
-    // though validation guarantees ≥1 check in practice).
-    if planned.is_empty() {
-        return Ok(aggregate(requirements, HashMap::new()));
+    /// Offload one attempt of `job` onto a background task. Returns immediately,
+    /// keeping the actor mailbox responsive; the permit is acquired *inside* the
+    /// task so the semaphore — not the mailbox — is the concurrency cap.
+    fn dispatch(&self, ctx: &mut Context<Self, ()>, job: CheckJob, attempt: usize) {
+        let executor = self.executor.clone();
+        let sandbox = self.sandbox.clone();
+        let semaphore = self.semaphore.clone();
+        let working_dir = self.working_dir.clone();
+        let reporting = self.reporting.clone();
+        let me = ctx.actor_ref().clone();
+
+        tokio::spawn(async move {
+            // Acquire the permit inside the task. If the semaphore was closed the
+            // pipeline is tearing down, so just drop the work.
+            let Ok(_permit) = semaphore.acquire_owned().await else {
+                return;
+            };
+
+            let result = run_one(executor, sandbox, job.id, job.check.clone(), &working_dir).await;
+
+            if has_verdict(Some(&result)) {
+                // The agent reported: reconcile and forward straight to reporting.
+                let outcome = reconcile(Some(&result), &job.check.title);
+                if let Err(err) = reporting.tell(CheckCompleted { job, outcome }).await {
+                    tracing::debug!(?err, "reporting actor unavailable for completed check");
+                }
+            } else if let Err(err) = me
+                .tell(RetryCheck {
+                    job,
+                    attempt,
+                    last: result,
+                })
+                .await
+            {
+                tracing::debug!(?err, "execution actor unavailable for retry");
+            }
+        });
     }
 
-    // The most recent agent outcome per check. The reported verdict lives in
-    // `AgentOutcome::verdict`.
-    let mut last_outcome: HashMap<CheckId, Result<AgentOutcome>> = HashMap::new();
-
-    // Re-run any check whose agent fails to report a verdict, up to
-    // `max_attempts`. Agents are nondeterministic and occasionally hit the turn
-    // cap, error, or time out without reporting; a fresh attempt usually
-    // succeeds.
-    let mut pending: Vec<&PlannedCheck> = planned.iter().collect();
-    let attempts = cfg.max_attempts.max(1);
-    for attempt in 1..=attempts {
-        if pending.is_empty() {
-            break;
+    /// Forward a terminal (attempts-exhausted, no-verdict) check to reporting as
+    /// an errored outcome.
+    async fn finish_errored(&self, job: CheckJob, last: Result<AgentOutcome>) {
+        let outcome = reconcile(Some(&last), &job.check.title);
+        if let Err(err) = self.reporting.tell(CheckCompleted { job, outcome }).await {
+            tracing::debug!(?err, "reporting actor unavailable for errored check");
         }
-        if attempt > 1 {
+    }
+}
+
+impl Message<CheckDiscovered> for ExecutionActor {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: CheckDiscovered, ctx: &mut Context<Self, ()>) -> Self::Reply {
+        self.dispatch(ctx, msg.job, 1);
+    }
+}
+
+impl Message<RetryCheck> for ExecutionActor {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: RetryCheck, ctx: &mut Context<Self, ()>) -> Self::Reply {
+        let RetryCheck { job, attempt, last } = msg;
+        if attempt < self.max_attempts {
             tracing::info!(
-                attempt,
-                checks = pending.len(),
-                "retrying checks whose agent did not report"
+                check = job.id,
+                attempt = attempt + 1,
+                "retrying check whose agent did not report"
             );
+            self.dispatch(ctx, job, attempt + 1);
+        } else {
+            self.finish_errored(job, last).await;
         }
-
-        // Dispatch the pending checks concurrently, bounded by the limit.
-        let permits = Arc::new(Semaphore::new(cfg.concurrency.max(1)));
-        let mut set: JoinSet<(CheckId, Result<AgentOutcome>)> = JoinSet::new();
-        for p in &pending {
-            let permit = permits.clone().acquire_owned().await.into_diagnostic()?;
-            let executor = executor.clone();
-            let sandbox = sandbox.clone();
-            let id = p.id;
-            let check = p.check.clone();
-            let working_dir = working_dir.to_path_buf();
-            set.spawn(async move {
-                let _permit = permit;
-                let outcome = run_one(executor, sandbox, id, check, &working_dir).await;
-                (id, outcome)
-            });
-        }
-        while let Some(joined) = set.join_next().await {
-            let (id, outcome) = joined.into_diagnostic()?;
-            last_outcome.insert(id, outcome);
-        }
-
-        // Whatever still has no reported verdict is retried in the next round.
-        pending = planned
-            .iter()
-            .filter(|p| !has_verdict(last_outcome.get(&p.id)))
-            .collect();
     }
+}
 
-    // Reconcile each check, then aggregate per requirement.
-    let mut outcomes: HashMap<CheckId, CheckOutcome> = HashMap::new();
-    for p in &planned {
-        let outcome = reconcile(last_outcome.get(&p.id), &p.check.title);
-        outcomes.insert(p.id, outcome);
+impl Message<DiscoveryComplete> for ExecutionActor {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: DiscoveryComplete,
+        _ctx: &mut Context<Self, ()>,
+    ) -> Self::Reply {
+        // Tell reporting how many completed checks to expect. Reporting gates
+        // finalization on its own count, so this is race-free regardless of
+        // whether agents have settled yet.
+        if let Err(err) = self
+            .reporting
+            .tell(ExecutionComplete {
+                total_checks: msg.total_checks,
+            })
+            .await
+        {
+            tracing::debug!(?err, "reporting actor unavailable for execution-complete");
+        }
     }
-    Ok(aggregate_planned(requirements, &planned, outcomes))
 }
 
 /// Whether an agent outcome carries a reported verdict.
@@ -149,7 +193,7 @@ async fn run_one(
 ) -> Result<AgentOutcome> {
     let handle = sandbox.create(working_dir).await?;
 
-    let request = AgentRunRequest {
+    let request = crate::checks::executor::AgentRunRequest {
         check_id: id,
         check,
         working_dir: handle.path().to_path_buf(),
@@ -219,47 +263,15 @@ fn turns_suffix(turns: u32) -> String {
     }
 }
 
-/// Aggregate when there are reconciled per-check outcomes.
-fn aggregate_planned(
-    requirements: &[Requirement],
-    planned: &[PlannedCheck],
-    mut outcomes: HashMap<CheckId, CheckOutcome>,
-) -> Vec<RequirementOutcome> {
-    let mut buckets: Vec<Vec<CheckOutcome>> = vec![Vec::new(); requirements.len()];
-    for p in planned {
-        if let Some(outcome) = outcomes.remove(&p.id) {
-            buckets[p.req_index].push(outcome);
-        }
-    }
-    requirements
-        .iter()
-        .zip(buckets)
-        .map(|(req, checks)| {
-            RequirementOutcome::aggregate(req.title.clone(), req.filepath.clone(), checks)
-        })
-        .collect()
-}
-
-/// Aggregate when there are no checks to run (degenerate suites).
-fn aggregate(
-    requirements: &[Requirement],
-    _outcomes: HashMap<CheckId, CheckOutcome>,
-) -> Vec<RequirementOutcome> {
-    requirements
-        .iter()
-        .map(|req| {
-            RequirementOutcome::aggregate(req.title.clone(), req.filepath.clone(), Vec::new())
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::checks::config::configuration;
     use crate::checks::executor::FakeExecutor;
+    use crate::checks::model::{Check, Requirement, Verdict};
+    use crate::checks::run_to_outcomes;
     use crate::checks::sandbox::NoopSandbox;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     fn req(title: &str, checks: Vec<(&str, &str)>) -> Requirement {
         Requirement {
@@ -290,7 +302,7 @@ mod tests {
                 .with_report(2, false, Some("c failed")),
         );
         let cfg = configuration();
-        let out = execute(
+        let out = run_to_outcomes(
             &cfg,
             executor.clone(),
             Arc::new(NoopSandbox),
@@ -318,7 +330,7 @@ mod tests {
         let executor = FakeExecutor::new().with_silent(0);
         let mut cfg = configuration();
         cfg.max_attempts = 1;
-        let out = execute(
+        let out = run_to_outcomes(
             &cfg,
             Arc::new(executor),
             Arc::new(NoopSandbox),
@@ -329,5 +341,26 @@ mod tests {
         .unwrap();
         assert!(!out[0].satisfied);
         assert_eq!(out[0].check_outcomes[0].verdict, Verdict::Errored);
+    }
+
+    #[tokio::test]
+    async fn check_is_retried_until_it_reports() {
+        // A check that is silent on its first attempt but reports on a later one
+        // must end up satisfied — exercising the retry self-message path.
+        let reqs = vec![req("Eventually", vec![("c", "prompt")])];
+        let executor = Arc::new(FakeExecutor::new().with_silent_until(0, 2, true, Some("ok now")));
+        let cfg = configuration(); // max_attempts = 3
+        let out = run_to_outcomes(
+            &cfg,
+            executor.clone(),
+            Arc::new(NoopSandbox),
+            &PathBuf::from("."),
+            &reqs,
+        )
+        .await
+        .unwrap();
+        assert!(out[0].satisfied);
+        // Ran twice: one silent attempt, then one reporting attempt.
+        assert_eq!(executor.seen().len(), 2);
     }
 }

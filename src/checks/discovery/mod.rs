@@ -10,12 +10,18 @@
 mod parse;
 mod walk;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use kameo::Actor;
+use kameo::actor::ActorRef;
+use kameo::message::{Context, Message};
 use miette::{IntoDiagnostic, Result};
 use multi_core::ManyError;
 
+use crate::checks::execution::ExecutionActor;
+use crate::checks::messages::{BeginDiscovery, DiscoveryFailed};
 use crate::checks::model::Requirement;
+use crate::checks::reporting::ReportingActor;
 
 /// Run the full discovery phase rooted at `root`.
 ///
@@ -45,6 +51,73 @@ pub async fn discover(root: &Path) -> Result<Vec<Requirement>> {
         return Err(errors.into());
     }
     Ok(requirements)
+}
+
+/// The discovery actor: on a [`BeginDiscovery`] kick it runs the whole-suite
+/// parse + validation gate ([`discover`]) and then **streams** the validated
+/// checks downstream — assigning each a run-unique [`CheckId`] and `tell`ing one
+/// [`CheckDiscovered`] per check, followed by a [`DiscoveryComplete`] sentinel.
+///
+/// If the suite is invalid it streams **nothing** and instead tells reporting to
+/// abort the whole run (strict whole-run abort, decision #3), so no agents are
+/// ever spawned for a suite that will not run.
+///
+/// [`CheckId`]: crate::checks::model::CheckId
+/// [`CheckDiscovered`]: crate::checks::messages::CheckDiscovered
+/// [`DiscoveryComplete`]: crate::checks::messages::DiscoveryComplete
+pub(crate) struct DiscoveryActor {
+    root: PathBuf,
+    execution: ActorRef<ExecutionActor>,
+    reporting: ActorRef<ReportingActor>,
+}
+
+impl Actor for DiscoveryActor {
+    type Args = Self;
+    type Error = std::convert::Infallible;
+
+    async fn on_start(
+        args: Self::Args,
+        _actor_ref: ActorRef<Self>,
+    ) -> std::result::Result<Self, Self::Error> {
+        Ok(args)
+    }
+}
+
+impl DiscoveryActor {
+    pub(crate) fn new(
+        root: PathBuf,
+        execution: ActorRef<ExecutionActor>,
+        reporting: ActorRef<ReportingActor>,
+    ) -> Self {
+        Self {
+            root,
+            execution,
+            reporting,
+        }
+    }
+}
+
+impl Message<BeginDiscovery> for DiscoveryActor {
+    type Reply = ();
+
+    async fn handle(&mut self, _msg: BeginDiscovery, _ctx: &mut Context<Self, ()>) -> Self::Reply {
+        match discover(&self.root).await {
+            Ok(requirements) => {
+                if let Err(err) =
+                    crate::checks::stream_requirements(&self.execution, &requirements).await
+                {
+                    tracing::error!(?err, "failed to stream discovered checks to execution");
+                }
+            }
+            Err(report) => {
+                // Strict whole-run abort: no `CheckDiscovered` is emitted, so no
+                // agents run; reporting turns this into the run's `Err`.
+                if let Err(err) = self.reporting.tell(DiscoveryFailed { report }).await {
+                    tracing::error!(?err, "reporting actor unavailable for discovery failure");
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

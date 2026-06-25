@@ -18,6 +18,10 @@ pub struct FakeExecutor {
     scripted: HashMap<CheckId, CheckReport>,
     /// Check ids that should simulate an agent finishing without reporting.
     silent: HashSet<CheckId>,
+    /// Check ids that stay silent until the Nth attempt, then report. Keyed by
+    /// id to `(report_on_attempt, report)`. Exercises the retry path: the same
+    /// `CheckId` is re-run, so the fake counts attempts per id.
+    silent_until: HashMap<CheckId, (usize, CheckReport)>,
     seen: Mutex<Vec<CheckId>>,
 }
 
@@ -44,6 +48,28 @@ impl FakeExecutor {
         self
     }
 
+    /// Make `id` stay silent until its `report_on_attempt`-th run (1-based), then
+    /// report `success`/`evidence`. Used to drive the retry path deterministically.
+    pub fn with_silent_until(
+        mut self,
+        id: CheckId,
+        report_on_attempt: usize,
+        success: bool,
+        evidence: Option<&str>,
+    ) -> Self {
+        self.silent_until.insert(
+            id,
+            (
+                report_on_attempt,
+                CheckReport {
+                    success,
+                    evidence: evidence.map(str::to_string),
+                },
+            ),
+        );
+        self
+    }
+
     /// The check ids the fake was asked to run, in call order.
     pub fn seen(&self) -> Vec<CheckId> {
         self.seen.lock().unwrap().clone()
@@ -53,7 +79,12 @@ impl FakeExecutor {
 #[async_trait]
 impl CheckExecutor for FakeExecutor {
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
-        self.seen.lock().unwrap().push(req.check_id);
+        let attempt = {
+            let mut seen = self.seen.lock().unwrap();
+            seen.push(req.check_id);
+            seen.iter().filter(|id| **id == req.check_id).count()
+        };
+
         if self.silent.contains(&req.check_id) {
             return Ok(AgentOutcome {
                 verdict: None,
@@ -62,6 +93,18 @@ impl CheckExecutor for FakeExecutor {
                 error: None,
             });
         }
+
+        // Silent until the configured attempt, then report.
+        if let Some((report_on, report)) = self.silent_until.get(&req.check_id) {
+            let verdict = (attempt >= *report_on).then(|| report.clone());
+            return Ok(AgentOutcome {
+                verdict,
+                stop_reason: Some("fake: silent-until".into()),
+                turns: 1,
+                error: None,
+            });
+        }
+
         Ok(AgentOutcome {
             verdict: self.scripted.get(&req.check_id).cloned(),
             stop_reason: Some("fake: reported".into()),
