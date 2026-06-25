@@ -10,6 +10,12 @@
 //! either forwards a [`CheckCompleted`] to reporting or — if the agent did not
 //! report — asks the actor to [`RetryCheck`] it.
 //!
+//! Each worker is **supervised** (not fire-and-forget): a second task joins its
+//! handle and, if the worker panicked or was cancelled before delivering a
+//! result, synthesizes a terminal *errored* [`CheckCompleted`]. Without this a
+//! single panicked agent run would silently never report, leaving reporting's
+//! expected-count one short forever and hanging the whole run.
+//!
 //! Bounded concurrency is enforced by a shared [`Semaphore`] acquired *inside*
 //! each task (the semaphore is the cap, not the mailbox depth — decision #5).
 //! Retries (`cfg.max_attempts`) are reframed as self-messages.
@@ -88,7 +94,18 @@ impl ExecutionActor {
         let reporting = self.reporting.clone();
         let me = ctx.actor_ref().clone();
 
-        tokio::spawn(async move {
+        // Enough to synthesize a terminal verdict if the worker dies *without*
+        // delivering one. Reporting finalizes only once it has folded exactly
+        // `total_checks` outcomes, so a check that is counted but never reports
+        // back leaves it one short forever — the run hangs and no actor shuts
+        // down. A panic in `run_one` (sandbox clone, the agent, a poisoned judge
+        // mutex, …) does exactly that: tokio swallows the panic of a detached
+        // task, so the worker just vanishes. We therefore *supervise* the worker
+        // below rather than fire-and-forget it.
+        let guard_job = job.clone();
+        let guard_reporting = reporting.clone();
+
+        let worker = tokio::spawn(async move {
             // Acquire the permit inside the task. If the semaphore was closed the
             // pipeline is tearing down, so just drop the work.
             let Ok(_permit) = semaphore.acquire_owned().await else {
@@ -112,6 +129,30 @@ impl ExecutionActor {
                 .await
             {
                 tracing::debug!(?err, "execution actor unavailable for retry");
+            }
+        });
+
+        // Supervise the worker: if it panicked or was cancelled before delivering
+        // a `CheckCompleted`/`RetryCheck`, turn that into a terminal *errored*
+        // verdict so the requirement still resolves and reporting's count can
+        // never stall. A clean finish (`Ok`) already delivered its own signal, so
+        // the guard stays silent — it cannot double-count.
+        tokio::spawn(async move {
+            if let Err(join_err) = worker.await {
+                let outcome = CheckOutcome {
+                    title: guard_job.check.title.clone(),
+                    verdict: Verdict::Errored,
+                    evidence: Some(format!("agent task terminated abnormally: {join_err}")),
+                };
+                if let Err(err) = guard_reporting
+                    .tell(CheckCompleted {
+                        job: guard_job,
+                        outcome,
+                    })
+                    .await
+                {
+                    tracing::debug!(?err, "reporting actor unavailable for crashed check");
+                }
             }
         });
     }
@@ -341,6 +382,44 @@ mod tests {
         .unwrap();
         assert!(!out[0].satisfied);
         assert_eq!(out[0].check_outcomes[0].verdict, Verdict::Errored);
+    }
+
+    #[tokio::test]
+    async fn panicking_check_errors_without_hanging_the_run() {
+        // A check whose agent run panics must not wedge the pipeline: reporting
+        // gates finalization on an exact count, and a panicked detached task is
+        // swallowed by tokio, so without worker supervision `received` would stay
+        // one short forever and the run would never produce a result. The other
+        // requirement must still pass, and the crashed check must come back
+        // errored. The timeout converts a regression (a hang) into a failure.
+        let reqs = vec![
+            req("Healthy", vec![("ok", "p-ok")]),
+            req("Crashes", vec![("boom", "p-boom")]),
+        ];
+        let executor = Arc::new(
+            FakeExecutor::new()
+                .with_report(0, true, Some("fine"))
+                .with_panic(1),
+        );
+        let cfg = configuration();
+        let out = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            run_to_outcomes(
+                &cfg,
+                executor,
+                Arc::new(NoopSandbox),
+                &PathBuf::from("."),
+                &reqs,
+            ),
+        )
+        .await
+        .expect("a crashed check must not hang the run")
+        .unwrap();
+
+        assert_eq!(out.len(), 2);
+        assert!(out[0].satisfied, "the healthy requirement should pass");
+        assert!(!out[1].satisfied, "the crashed requirement should not pass");
+        assert_eq!(out[1].check_outcomes[0].verdict, Verdict::Errored);
     }
 
     #[tokio::test]

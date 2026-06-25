@@ -18,6 +18,10 @@ pub struct FakeExecutor {
     scripted: HashMap<CheckId, CheckReport>,
     /// Check ids that should simulate an agent finishing without reporting.
     silent: HashSet<CheckId>,
+    /// Check ids whose run should panic, simulating a crash mid-run (e.g. a
+    /// poisoned mutex or an agent bug). The worker task must still deliver a
+    /// terminal outcome despite the panic.
+    panic_on: HashSet<CheckId>,
     /// Check ids that stay silent until the Nth attempt, then report. Keyed by
     /// id to `(report_on_attempt, report)`. Exercises the retry path: the same
     /// `CheckId` is re-run, so the fake counts attempts per id.
@@ -45,6 +49,14 @@ impl FakeExecutor {
     /// Make `id` simulate an agent that finishes without reporting a verdict.
     pub fn with_silent(mut self, id: CheckId) -> Self {
         self.silent.insert(id);
+        self
+    }
+
+    /// Make `id`'s run panic, simulating an agent task that crashes before it can
+    /// report. Exercises the worker-supervision path (a crashed check must still
+    /// resolve to an errored verdict rather than hang the run).
+    pub fn with_panic(mut self, id: CheckId) -> Self {
+        self.panic_on.insert(id);
         self
     }
 
@@ -84,6 +96,10 @@ impl CheckExecutor for FakeExecutor {
             seen.push(req.check_id);
             seen.iter().filter(|id| **id == req.check_id).count()
         };
+
+        if self.panic_on.contains(&req.check_id) {
+            panic!("fake: simulated agent crash for check {}", req.check_id);
+        }
 
         if self.silent.contains(&req.check_id) {
             return Ok(AgentOutcome {
