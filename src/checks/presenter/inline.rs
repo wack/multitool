@@ -13,7 +13,25 @@
 //! The flushed record reuses the reporting actor's exact text (the requirement
 //! line + [`failing_check_text`]) and the same AND-aggregation, so the TTY
 //! scrollback and the non-TTY stdout report differ only in inter-requirement
-//! order (completion vs declaration), never in per-requirement content.
+//! order (completion vs declaration), never in per-requirement content. Unlike
+//! [`report`], which prints through the real terminal and so gets its line
+//! wrapping for free, a `ratatui` [`Buffer`] is a fixed-size grid: any row wider
+//! than the buffer is silently clipped rather than wrapped. Because
+//! `insert_before` renders into such a buffer, long evidence text (which
+//! [`report`] never truncates) is word-wrapped to the terminal width *before*
+//! it becomes [`Line`]s, so every wrapped row is reserved height and nothing is
+//! lost.
+//!
+//! [`report`]: crate::checks::reporting::report
+//! [`Buffer`]: ratatui::buffer::Buffer
+//!
+//! [`UiEvent::Log`]s get the same durable treatment: each one is flushed to
+//! scrollback the instant it arrives ([`InlineTuiBackend::flush_log_line`]), via
+//! the identical `insert_before` mechanism, so a `tracing::info!` mid-run can
+//! never write raw bytes over the live region. The live region *also* keeps the
+//! last few lines in a small pane below the tree — separate from it, never
+//! interleaved into a check's row — purely as an ephemeral "what just happened"
+//! glance; the scrollback copy is the permanent record.
 //!
 //! [`Terminal::insert_before`]: ratatui::Terminal::insert_before
 //! [`failing_check_text`]: crate::checks::reporting::failing_check_text
@@ -38,9 +56,10 @@ use super::backend::RenderBackend;
 use super::format::{clock_elapsed, gauge_bar, human_elapsed, spinner_frame};
 use super::state::{CheckState, PresenterState};
 
-/// Reserved height for the live region. Completed requirements flush out, so this
-/// only ever needs to hold the in-flight tree + the gauge header.
-const VIEWPORT_HEIGHT: u16 = 12;
+/// Reserved height for the live region. Completed requirements flush out, so
+/// this only ever needs to hold the in-flight tree + the gauge header, plus a
+/// few rows for the recent-log pane (header + up to `RECENT_LOGS_CAP` lines).
+const VIEWPORT_HEIGHT: u16 = 16;
 /// Width of the textual gauge bar.
 const GAUGE_WIDTH: usize = 12;
 /// Redraw cadence: ~20fps keeps the spinner and elapsed timers fluid.
@@ -82,6 +101,14 @@ impl InlineTuiBackend {
         })
     }
 
+    /// The terminal's current column count — the exact width `insert_before`
+    /// renders into (see the module docs), so this is what callers wrap text to
+    /// before reserving height for it. Falls back to a sane default if the
+    /// terminal can't report its size (never observed in practice).
+    fn terminal_width(&self) -> u16 {
+        self.terminal.size().map(|s| s.width).unwrap_or(80)
+    }
+
     /// Flush every requirement that has fully settled (and isn't already flushed)
     /// into scrollback, in `req_index` order. Only runs once discovery is complete
     /// so a requirement's check count is final.
@@ -96,7 +123,11 @@ impl InlineTuiBackend {
             let Some(outcome) = state.requirement_outcome(req_index) else {
                 continue;
             };
-            let lines = requirement_record_lines(&outcome, self.color);
+            // Word-wrap to the render width now: each wrapped row becomes its own
+            // `Line`, which makes `lines.len()` the correct height to reserve —
+            // no row gets clipped.
+            let width = self.terminal_width();
+            let lines = requirement_record_lines(&outcome, self.color, width);
             let height = lines.len() as u16;
             let _ = self.terminal.insert_before(height, move |buf| {
                 let area = buf.area;
@@ -104,6 +135,23 @@ impl InlineTuiBackend {
             });
             self.flushed.insert(req_index);
         }
+    }
+
+    /// Flush a single routed log line into scrollback immediately, the same way
+    /// a completed requirement is flushed — so it never fights the live region
+    /// for control of the cursor, and (per the module docs) is word-wrapped
+    /// rather than clipped. This is the *permanent* record of the line; the live
+    /// region separately keeps the last few for at-a-glance context (see
+    /// [`live_lines`]).
+    fn flush_log_line(&mut self, line: &str) {
+        let width = self.terminal_width();
+        let style = self.color.then(|| Style::new().add_modifier(Modifier::DIM));
+        let lines = styled_wrapped_lines(line, width, style);
+        let height = lines.len() as u16;
+        let _ = self.terminal.insert_before(height, move |buf| {
+            let area = buf.area;
+            Paragraph::new(lines).render(area, buf);
+        });
     }
 
     /// Redraw the live region (gauge header + in-flight tree).
@@ -121,13 +169,15 @@ impl RenderBackend for InlineTuiBackend {
         if self.torn_down {
             return;
         }
-        // A settle (or the discovery-complete gate opening) can complete a
-        // requirement; flush it to scrollback immediately so the record is durable.
-        if matches!(
-            event,
-            UiEvent::CheckSettled { .. } | UiEvent::DiscoveryComplete { .. }
-        ) {
-            self.flush_completed(state);
+        match event {
+            // A settle (or the discovery-complete gate opening) can complete a
+            // requirement; flush it to scrollback immediately so the record is
+            // durable.
+            UiEvent::CheckSettled { .. } | UiEvent::DiscoveryComplete { .. } => {
+                self.flush_completed(state);
+            }
+            UiEvent::Log(line) => self.flush_log_line(line),
+            _ => {}
         }
     }
 
@@ -210,34 +260,63 @@ extern "C" fn restore_on_sigint(_sig: libc::c_int) {
     }
 }
 
-/// The persistent record for one completed requirement — byte-identical in text
-/// to the reporting actor's output, only styled for the terminal.
-fn requirement_record_lines(outcome: &RequirementOutcome, color: bool) -> Vec<Line<'static>> {
+/// The persistent record for one completed requirement — same text content as
+/// the reporting actor's output (just spread across more rows when a line is
+/// word-wrapped to `width`), styled for the terminal.
+fn requirement_record_lines(
+    outcome: &RequirementOutcome,
+    color: bool,
+    width: u16,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let title = outcome.title.clone();
-    lines.push(if color {
-        let mut style = Style::new().add_modifier(Modifier::BOLD);
-        style = style.fg(if outcome.satisfied {
-            Color::Green
-        } else {
-            Color::Red
-        });
-        Line::styled(title, style)
+    let title_style = color.then(|| {
+        Style::new()
+            .add_modifier(Modifier::BOLD)
+            .fg(if outcome.satisfied {
+                Color::Green
+            } else {
+                Color::Red
+            })
+    });
+    let title_text = if color {
+        outcome.title.clone()
     } else {
         let mark = if outcome.satisfied { "PASS" } else { "FAIL" };
-        Line::raw(format!("[{mark}] {title}"))
-    });
+        format!("[{mark}] {}", outcome.title)
+    };
+    lines.extend(styled_wrapped_lines(&title_text, width, title_style));
+
     if !outcome.satisfied {
+        let evidence_style = color.then(|| Style::new().fg(Color::Red));
         for check in outcome.failing_checks() {
             let text = failing_check_text(check);
-            lines.push(if color {
-                Line::styled(text, Style::new().fg(Color::Red))
-            } else {
-                Line::raw(text)
-            });
+            lines.extend(styled_wrapped_lines(&text, width, evidence_style));
         }
     }
     lines
+}
+
+/// Word-wrap `text` to `width` columns and render each resulting row as its own
+/// `Line`, uniformly styled. Wrapping (rather than clipping) is what keeps long
+/// evidence text from being lost off the edge of the fixed-size `Buffer` that
+/// [`InlineTuiBackend::flush_completed`] renders into.
+fn styled_wrapped_lines(text: &str, width: u16, style: Option<Style>) -> Vec<Line<'static>> {
+    // A degenerate width (terminal not yet sized) can't wrap meaningfully;
+    // fall back to a single unwrapped row rather than looping or dividing by it.
+    if width == 0 {
+        return vec![raw_or_styled(text.to_string(), style)];
+    }
+    textwrap::wrap(text, width as usize)
+        .into_iter()
+        .map(|row| raw_or_styled(row.into_owned(), style))
+        .collect()
+}
+
+fn raw_or_styled(text: String, style: Option<Style>) -> Line<'static> {
+    match style {
+        Some(style) => Line::styled(text, style),
+        None => Line::raw(text),
+    }
 }
 
 /// Build the live region: the gauge/tally header, then the in-flight tree grouped
@@ -311,6 +390,18 @@ fn live_lines(
         }
     }
 
+    // A small, separate pane for the most recent log lines — kept apart from
+    // the tree above so a mid-run `tracing::info!` never reads as one of its
+    // rows. The full history of every line already sits in scrollback (each is
+    // flushed there the instant it arrives; see `flush_log_line`), so this is
+    // just an ephemeral "what just happened" glance, not the record of truth.
+    if !state.recent_logs.is_empty() {
+        lines.push(Line::raw("logs"));
+        for entry in &state.recent_logs {
+            lines.push(Line::raw(format!("  {entry}")));
+        }
+    }
+
     lines
 }
 
@@ -341,7 +432,8 @@ mod tests {
     }
 
     /// The flushed record's plain text must match the reporting actor's output —
-    /// one record, never divergent.
+    /// one record, never divergent — as long as the width is generous enough
+    /// that nothing wraps.
     #[test]
     fn flushed_record_text_matches_reporting() {
         let failing = CheckOutcome {
@@ -351,7 +443,7 @@ mod tests {
         };
         let out = outcome("R", false, vec![failing.clone()]);
 
-        let lines = requirement_record_lines(&out, false);
+        let lines = requirement_record_lines(&out, false, 80);
         let rendered: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -364,7 +456,49 @@ mod tests {
     #[test]
     fn satisfied_record_is_single_line() {
         let out = outcome("OK", true, vec![]);
-        let lines = requirement_record_lines(&out, false);
+        let lines = requirement_record_lines(&out, false, 80);
         assert_eq!(lines.len(), 1);
+    }
+
+    /// Evidence text longer than the terminal is word-wrapped into multiple
+    /// rows rather than being clipped by the fixed-width `Buffer` — the fix for
+    /// long error messages getting cut off once the TUI hands off to scrollback.
+    #[test]
+    fn long_evidence_wraps_instead_of_clipping() {
+        // Every word is short enough to fit within `width` on its own, so
+        // wrapping only ever splits *between* words, never inside one — which
+        // keeps the "every word survives" assertion below unambiguous.
+        let evidence = "this evidence line is much longer than the width so it wraps across several rows instead of clipping";
+        let failing = CheckOutcome {
+            title: "c".into(),
+            verdict: Verdict::Failed,
+            evidence: Some(evidence.into()),
+        };
+        let out = outcome("R", false, vec![failing]);
+
+        let width = 10;
+        let lines = requirement_record_lines(&out, false, width);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        // No row exceeds the reserved width...
+        assert!(
+            rendered
+                .iter()
+                .all(|row| row.chars().count() <= width as usize)
+        );
+        // ...and every word of the original evidence survives somewhere in the
+        // wrapped output, so nothing was silently dropped.
+        let joined = rendered.join(" ");
+        for word in evidence.split_whitespace() {
+            assert!(joined.contains(word), "lost {word:?} from wrapped evidence");
+        }
     }
 }

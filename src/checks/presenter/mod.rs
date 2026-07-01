@@ -19,6 +19,13 @@
 //! periodic [`Tick`] drives `backend.tick()` so spinners and elapsed timers keep
 //! moving between events — the liveness signal that proves a slow run isn't hung.
 //!
+//! The presenter also owns `tracing` output for the run's duration: `on_start`
+//! registers itself via [`crate::terminal::route_logs`] and pumps every routed
+//! line in as a [`UiEvent::Log`], so a `tracing::info!` fired mid-run reaches the
+//! same backend instead of writing raw bytes straight to stdout — which, for
+//! [`InlineTuiBackend`], would corrupt its cursor-managed viewport. `on_stop`
+//! drops the registration, restoring direct stdout logging.
+//!
 //! [`InlineTuiBackend`]: inline::InlineTuiBackend
 //! [`HeartbeatBackend`]: heartbeat::HeartbeatBackend
 //! [`NullBackend`]: recording::NullBackend
@@ -39,6 +46,7 @@ use kameo::error::ActorStopReason;
 use kameo::message::{Context, Message};
 
 use crate::checks::model::{CheckId, CheckOutcome};
+use crate::terminal::{LogRouteGuard, route_logs};
 
 pub(crate) use backend::RenderBackend;
 use heartbeat::HeartbeatBackend;
@@ -72,6 +80,11 @@ pub(crate) enum UiEvent {
     /// The check reached a terminal verdict. Carries the reconciled outcome so the
     /// presenter can render the same record the reporting actor would.
     CheckSettled { id: CheckId, outcome: CheckOutcome },
+    /// A `tracing` log line fired somewhere in the run, already formatted.
+    /// Routed through the presenter (via [`crate::terminal::route_logs`]) so it
+    /// never writes raw bytes over a live backend's cursor-managed display; each
+    /// backend decides for itself where a log line belongs.
+    Log(String),
 }
 
 /// The periodic redraw nudge. Decoupled from [`UiEvent`] so rendering is
@@ -84,6 +97,12 @@ pub(crate) struct PresenterActor {
     backend: Box<dyn RenderBackend>,
     /// The redraw ticker task, joined on stop so it never outlives the actor.
     ticker: Option<tokio::task::JoinHandle<()>>,
+    /// The task pumping routed log lines into `self` as [`UiEvent::Log`]s.
+    /// Joined on stop, after `log_route` is dropped closes its channel.
+    log_pump: Option<tokio::task::JoinHandle<()>>,
+    /// Keeps this actor registered as `tracing`'s active sink; dropping it (in
+    /// `on_stop`) restores direct stdout logging and closes `log_pump`'s channel.
+    log_route: Option<LogRouteGuard>,
 }
 
 impl PresenterActor {
@@ -93,6 +112,8 @@ impl PresenterActor {
             state: PresenterState::new(),
             backend,
             ticker: None,
+            log_pump: None,
+            log_route: None,
         }
     }
 }
@@ -128,8 +149,28 @@ impl Actor for PresenterActor {
                 }
             }
         });
+
+        // Become tracing's active sink for the run's duration and pump routed
+        // lines in as `UiEvent::Log`s, mirroring the ticker's weak-ref pattern so
+        // this task can't keep the actor alive and exits the instant it's gone.
+        let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel();
+        let log_route = route_logs(log_tx);
+        let weak_log = actor_ref.downgrade();
+        let log_handle = tokio::spawn(async move {
+            while let Some(line) = log_rx.recv().await {
+                let Some(actor) = weak_log.upgrade() else {
+                    break;
+                };
+                if actor.tell(UiEvent::Log(line)).await.is_err() {
+                    break;
+                }
+            }
+        });
+
         let mut me = args;
         me.ticker = Some(handle);
+        me.log_pump = Some(log_handle);
+        me.log_route = Some(log_route);
         Ok(me)
     }
 
@@ -142,6 +183,13 @@ impl Actor for PresenterActor {
         // outlives the actor (which would read as a leaked task in tests).
         if let Some(handle) = self.ticker.take() {
             handle.abort();
+            let _ = handle.await;
+        }
+        // Unregister first so tracing falls back to stdout again, which closes
+        // the pump's channel; then wait for it to drain whatever was already
+        // queued and exit on its own rather than aborting it mid-line.
+        self.log_route.take();
+        if let Some(handle) = self.log_pump.take() {
             let _ = handle.await;
         }
         // The authoritative restore: runs on graceful stop, kill, *and* panic

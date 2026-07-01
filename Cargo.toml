@@ -84,8 +84,10 @@ comrak = { version = "0.52", default-features = false }
 libc = "0.2.186"
 tempfile = "3"
 cersei-agent = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
+cersei-memory = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 cersei-tools = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 cersei-types = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
+textwrap = "0.16"
 
 [workspace.dependencies]
 pretty_assertions = "1.4"

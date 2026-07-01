@@ -2,10 +2,12 @@
 //! `cersei_agent::Agent` in its CoW sandbox, capturing the verdict through a
 //! per-check judge tool — no `claude -p` subprocess, no MCP endpoints.
 
+use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cersei_agent::Agent;
+use cersei_memory::claudemd;
 use cersei_tools::permissions::AllowReadOnly;
 use cersei_tools::{Tool, clear_session_shell_state};
 use cersei_types::CerseiError;
@@ -64,6 +66,21 @@ fn read_only_tools() -> Vec<Box<dyn Tool>> {
     ]
 }
 
+/// Load the project's `CLAUDE.md` hierarchy (managed `~/.claude/rules/*.md`,
+/// user `~/.claude/CLAUDE.md`, project `{root}/CLAUDE.md`, local
+/// `{root}/.claude/CLAUDE.md`, with `@include` expansion) as a single system
+/// prompt string, or `None` if no instruction files were found.
+///
+/// Calls `claudemd` directly rather than going through
+/// `cersei_memory::manager::MemoryManager` so this stays a stateless
+/// filesystem read — no session storage, no graph memory, no multi-session
+/// persistence gets pulled in as a side effect.
+fn project_instructions(project_root: &Path) -> Option<String> {
+    let files = claudemd::load_all_memory_files(project_root);
+    let prompt = claudemd::build_memory_prompt(&files);
+    (!prompt.trim().is_empty()).then_some(prompt)
+}
+
 /// Map our coarse [`Effort`] onto a sampling temperature.
 ///
 /// Extended thinking would be the natural effort vehicle, but cersei-provider
@@ -109,7 +126,7 @@ impl CheckExecutor for CerseiExecutor {
 
         let instructions = assemble_instructions(&req.check, &judge_tool_directive());
 
-        let agent = Agent::builder()
+        let mut agent_builder = Agent::builder()
             .provider_boxed(provider)
             .model(self.model.clone())
             .working_dir(req.working_dir.clone())
@@ -122,7 +139,19 @@ impl CheckExecutor for CerseiExecutor {
             // Thinking is intentionally left disabled (see `effort_temperature`).
             .temperature(effort_temperature(self.effort))
             .max_turns(MAX_TURNS)
-            .cancel_token(cancel.clone())
+            .cancel_token(cancel.clone());
+
+        // `.system_prompt()`, not `.append_system_prompt()`: cersei's agent
+        // runner only ever reads `Agent.system_prompt` when building each
+        // completion request (`append_system_prompt` is exclusively consumed
+        // by the separate `cersei_agent::system_prompt::build_system_prompt`
+        // composer, which this executor doesn't use), and we don't set a base
+        // system prompt anywhere else here.
+        if let Some(project_prompt) = project_instructions(&req.working_dir) {
+            agent_builder = agent_builder.system_prompt(project_prompt);
+        }
+
+        let agent = agent_builder
             .build()
             .map_err(|e| miette!("building check agent: {e}"))?;
 

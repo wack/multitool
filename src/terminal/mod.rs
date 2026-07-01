@@ -10,6 +10,8 @@ mod dest;
 mod logging;
 mod theme;
 
+pub(crate) use logging::{LogRouteGuard, route_logs};
+
 pub struct Terminal {
     stdout: TermDestination,
     stderr: TermDestination,
