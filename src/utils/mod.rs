@@ -18,7 +18,7 @@ pub async fn load_default_aws_config() -> &'static SdkConfig {
 async fn load_config() -> SdkConfig {
     // We don't need a particular version, but we pin to one to ensure
     // it doesn't accidently slip if `latest` gets updated without our knowledge.
-    let behavior = BehaviorVersion::v2025_08_07();
+    let behavior = BehaviorVersion::v2026_01_12();
     aws_config::load_defaults(behavior).await
 }
 
