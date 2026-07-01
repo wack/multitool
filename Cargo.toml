@@ -14,15 +14,6 @@ path = "src/bin/main.rs"
 [workspace]
 members = ["crates/multi-core"]
 
-# MultiTool local patch (MULTI-1367). cersei-provider 0.1.9 unconditionally sends
-# a stale `anthropic-beta: interleaved-thinking-2025-04-14` header that the
-# current Anthropic API rejects with HTTP 400, breaking every in-process check.
-# Vendor the crate with that header corrected until upstream releases a fix.
-# See third_party/cersei-provider/PATCH.md and
-# https://github.com/pacifio/cersei/issues/20.
-[patch.crates-io]
-cersei-provider = { path = "third_party/cersei-provider" }
-
 [workspace.package]
 authors = ["The MultiTool Team"]
 edition = "2024"
@@ -39,7 +30,7 @@ aws-smithy-runtime-api = "1.7.4"
 aws-smithy-types = "1.2.9"
 bigdecimal = { version = "0.4.7", features = ["serde-json"] }
 bon = "3.3.2"
-cersei-provider = "0.1.9"
+cersei-provider = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 chrono = "0.4.38"
 clap = { version = "4.3", features = ["derive", "env"] }
 console = "0.15.8"
@@ -91,9 +82,9 @@ tokio-util.workspace = true
 comrak = { version = "0.52", default-features = false }
 libc = "0.2.186"
 tempfile = "3"
-cersei-agent = "0.1.9"
-cersei-tools = "0.1.9"
-cersei-types = "0.1.9"
+cersei-agent = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
+cersei-tools = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
+cersei-types = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 
 [workspace.dependencies]
 pretty_assertions = "1.4"
