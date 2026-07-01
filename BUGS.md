@@ -1,8 +1,6 @@
 # Bugs
 
-These are bugs I've observed while working with `multi checks`.
-
-- [ ] Concurrency still not respected.
+These are bugs (or missing features) I've observed while working with `multi checks`.
 
 - [ ] No use of Cersei workflows to chain multiple prompts together.
 
@@ -20,11 +18,15 @@ These are bugs I've observed while working with `multi checks`.
 
 - [ ] Not sure if prompt caching is enabled at all.
 
+- [ ] No trace capture. We need a way to record all session traces so that we can analyze why they failed.
+
 - CERSEI: `append_system_prompt()` function is dead unless routed through the separate build_system_prompt() composer.
 
 ## Fixes
 
 - [x] No loading of CLAUDE.md files
+
+- [x] Concurrency still not respected.
 
 - [x] Full error text got cut off at the end of the terminal screen instead of wrapping. Turned out to
 live in the *presenter* (`src/checks/presenter/inline.rs`), not the `Reporter` — the inline TUI is the
