@@ -64,6 +64,14 @@ Confirm that the execution phase creates a sandbox for each check and runs the a
 
 Inspect the execution phase. Confirm that checks are dispatched concurrently — for example via a `JoinSet`, `FuturesUnordered`, or per-check `tokio::spawn` — and awaited together, rather than run inside a blocking loop that starts and awaits one check before beginning the next. The check fails if check execution is strictly sequential.
 
+# Requirement Concurrency Defaults To The Host's Core Count
+
+The concurrency cap is user-configurable (a `--concurrency` flag, layered the same way as `--provider`/`--model`/`--effort`/`--executor`), but absent any override its default must equal the number of CPU cores available on the machine running `multi check` — not a hardcoded constant. A fixed default either strands cores on big machines or overcommits small ones.
+
+## Check Default Concurrency Equals Available Parallelism
+
+Inspect how the default check concurrency is computed. Confirm that, with no `--concurrency` flag, no `MULTI_CHECKS_CONCURRENCY` environment variable, and no `checks.concurrency` config-file value set, the resolved concurrency is derived from the host's available parallelism (for example via `std::thread::available_parallelism`) rather than a fixed literal such as `2`. The check fails if the default concurrency is a hardcoded number instead of a value computed from the running machine's core count.
+
 # Requirement Authoring Errors Are Actionable
 
 When a `CHECKS.md` file is malformed, the tool must tell the author exactly what is wrong and where, instead of failing opaquely. Clear diagnostics are what make the format usable.

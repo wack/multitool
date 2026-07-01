@@ -17,6 +17,7 @@ mod models;
 mod providers;
 mod schema;
 
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use figment::{
@@ -32,14 +33,21 @@ use crate::checks::executor::claude::ClaudeExecutor;
 pub use providers::{ProviderFactory, ProviderRegistry};
 pub use schema::{CliOverrides, Effort, ExecutorKind, ProviderKind};
 
-/// Maximum number of checks executed concurrently. A small fan-out gives each
-/// (CPU-heavy) reasoning agent enough cores to finish promptly.
-const DEFAULT_CONCURRENCY: usize = 2;
 /// Per-agent wall-clock timeout. Generous: the heaviest reasoning checks can
 /// take a few minutes under contention before they report.
 const DEFAULT_AGENT_TIMEOUT: Duration = Duration::from_secs(240);
 /// How many times to (re)run a check whose agent fails to report.
 const DEFAULT_MAX_ATTEMPTS: usize = 3;
+
+/// Default number of checks executed concurrently: one per available CPU core,
+/// so a check suite fans out to use the whole machine rather than leaving cores
+/// idle. Falls back to `1` on the rare platform where the count can't be
+/// determined.
+fn default_concurrency() -> usize {
+    std::thread::available_parallelism()
+        .map(NonZeroUsize::get)
+        .unwrap_or(1)
+}
 
 /// The resolved configuration for a `multi check` run.
 #[derive(Debug, Clone)]
@@ -56,7 +64,8 @@ pub struct Config {
     pub effort: Effort,
     /// Which execution engine runs each check (default: in-process cersei).
     pub executor: ExecutorKind,
-    /// Maximum number of checks executed concurrently.
+    /// Maximum number of checks executed concurrently (default: the number of
+    /// available CPU cores; see [`default_concurrency`]).
     pub concurrency: usize,
     /// Per-agent wall-clock timeout (reaps an agent that hangs before reporting).
     pub agent_timeout: Duration,
@@ -148,6 +157,7 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         .unwrap_or_else(|| models::default_model(provider).to_string());
     let effort = checks.effort.unwrap_or(Effort::Low);
     let executor = checks.executor.unwrap_or(ExecutorKind::Cersei);
+    let concurrency = checks.concurrency.unwrap_or_else(default_concurrency);
 
     if !models::is_valid_model(provider, &model) {
         return Err(miette!(
@@ -155,6 +165,10 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
             provider.as_str(),
             models::models_for(provider).join(", "),
         ));
+    }
+
+    if concurrency == 0 {
+        return Err(miette!("checks.concurrency must be greater than 0"));
     }
 
     // Build one handle per provider whose credential is present, then require
@@ -181,7 +195,7 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         model,
         effort,
         executor,
-        concurrency: DEFAULT_CONCURRENCY,
+        concurrency,
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
     };
@@ -207,7 +221,7 @@ pub fn configuration() -> Config {
         model: models::default_model(provider).to_string(),
         effort: Effort::Low,
         executor: ExecutorKind::Cersei,
-        concurrency: DEFAULT_CONCURRENCY,
+        concurrency: default_concurrency(),
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
     }
@@ -230,6 +244,7 @@ mod tests {
                 model: Some(model.to_string()),
                 effort: Some(Effort::Low),
                 executor: None,
+                concurrency: None,
                 providers: ProvidersSection::default(),
             },
         }
@@ -242,6 +257,8 @@ mod tests {
         assert_eq!(cfg.model, "claude-sonnet-4-6");
         assert_eq!(cfg.executor, ExecutorKind::Cersei);
         assert!(cfg.concurrency >= 1);
+        // The default must track the machine's core count, not a hardcoded value.
+        assert_eq!(cfg.concurrency, default_concurrency());
         // The fallback executor is constructible from config alone (DI seam works).
         let _exec = cfg.build_claude_executor();
     }
@@ -253,6 +270,7 @@ mod tests {
             let overrides = CliOverrides::new(
                 Some(ProviderKind::OpenAi),
                 Some("gpt-4o".into()),
+                None,
                 None,
                 None,
             );
@@ -288,7 +306,8 @@ mod tests {
             assert_eq!(checks.model.as_deref(), Some("claude-haiku-4-5"));
 
             // ...and a flag outranks env.
-            let overrides = CliOverrides::new(None, Some("claude-opus-4-8".into()), None, None);
+            let overrides =
+                CliOverrides::new(None, Some("claude-opus-4-8".into()), None, None, None);
             let checks = resolve_layers(file, overrides).unwrap();
             assert_eq!(checks.model.as_deref(), Some("claude-opus-4-8"));
             Ok(())
