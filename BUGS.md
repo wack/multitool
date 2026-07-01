@@ -5,9 +5,13 @@ These are bugs (or missing features) I've observed while working with `multi che
 - [ ] Output is now hanging. I suspect this is recent (within the last few commits) and it started
 happening after implement the changes to the `Presenter` actor to fix writing text off-screen without wrapping.
 
-- [ ] No limit on max turns.
-
 - [ ] Remove the `Claude -p` executor.
+
+- [ ] Running 16 agents seems to nearly freeze the computer. Use an OTel profile to determine if this is true.
+
+- [ ] Temperature not configured.
+
+- [ ] No limit on max turns.
 
 - [ ] Logs no longer report the id of the check that failed (or the number of attempted retries)
 

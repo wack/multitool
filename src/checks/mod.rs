@@ -42,6 +42,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
+use kameo::Actor;
 use kameo::actor::{ActorRef, Spawn};
 use miette::{IntoDiagnostic, Result, miette};
 use tokio::sync::oneshot;
@@ -170,12 +171,24 @@ fn spawn_core(
     (execution, reporting, presenter, rx)
 }
 
-/// Stop the presenter and wait for its teardown to finish. `stop_gracefully`
-/// drains any `UiEvent`s still in its mailbox first, so the terminal restore /
-/// final scrollback flush sees a complete state.
-async fn shutdown_presenter(presenter: &ActorRef<PresenterActor>) {
-    let _ = presenter.stop_gracefully().await;
-    presenter.wait_for_shutdown().await;
+/// Stop `actor` and wait for its teardown to finish. `stop_gracefully` drains
+/// any messages still in its mailbox first, so an actor's `on_stop` (the
+/// presenter's terminal restore / final scrollback flush, in particular) sees a
+/// complete state.
+///
+/// Every pipeline actor is stopped this way rather than merely having its
+/// `ActorRef` dropped: an actor's mailbox only closes once *every* clone of its
+/// `ActorRef` is gone, and [`ExecutionActor`]'s per-check background tasks each
+/// hold clones of `execution`/`reporting`/`presenter` for their own lifetime
+/// (see `execution::dispatch`). Relying on that implicit ref-counting to close
+/// the mailbox — instead of sending an explicit `Signal::Stop`, which the actor
+/// loop honors regardless of how many `ActorRef` clones are still outstanding —
+/// makes teardown a race against those tasks actually finishing, rather than a
+/// deterministic signal. An explicit stop is what let the presenter's shutdown
+/// stay reliable; the other three actors need the same treatment.
+async fn shutdown_actor<A: Actor>(actor: &ActorRef<A>) {
+    let _ = actor.stop_gracefully().await;
+    actor.wait_for_shutdown().await;
 }
 
 /// Stream a (validated) requirement set into the execution actor: one
@@ -303,12 +316,15 @@ async fn run_pipeline(
         .map_err(|e| miette!("failed to start discovery: {e}"))?;
 
     let outcomes = await_result(rx).await;
-    // The run is over: drain the presenter's mailbox and run its teardown
-    // (terminal restore / final scrollback flush) before returning.
-    shutdown_presenter(&presenter).await;
-    // Keep refs alive across the await; dropping them earlier would stop the
-    // actors mid-run.
-    drop((discovery, execution, reporting, presenter));
+    // The run is over: stop every actor explicitly rather than merely dropping
+    // its `ActorRef` (see `shutdown_actor`). Presenter goes last so it's
+    // guaranteed to have drained every `UiEvent` the other actors' own
+    // shutdown might still emit (e.g. a final log line) before its terminal
+    // restore / scrollback flush runs.
+    shutdown_actor(&discovery).await;
+    shutdown_actor(&execution).await;
+    shutdown_actor(&reporting).await;
+    shutdown_actor(&presenter).await;
     outcomes
 }
 
@@ -329,7 +345,8 @@ async fn run_to_outcomes(
         spawn_core(cfg, executor, sandbox, working_dir, backend, None);
     stream_requirements(&execution, &presenter, requirements).await?;
     let outcomes = await_result(rx).await;
-    shutdown_presenter(&presenter).await;
-    drop((execution, reporting, presenter));
+    shutdown_actor(&execution).await;
+    shutdown_actor(&reporting).await;
+    shutdown_actor(&presenter).await;
     outcomes
 }
