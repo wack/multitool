@@ -14,6 +14,7 @@ pub mod claude;
 #[cfg(test)]
 mod fake;
 pub mod judge;
+mod trace;
 
 use std::path::PathBuf;
 
@@ -58,6 +59,12 @@ pub struct AgentOutcome {
     /// An execution-level error distinct from a check merely *failing* (stream
     /// error, agent-build error, or timeout). `None` on a clean finish.
     pub error: Option<String>,
+    /// The self-contained NDJSON session trace for this one execution, when
+    /// trace capture is enabled (`multi check --trace-archive`). `None` when
+    /// capture is off and for executors that don't produce traces (the `claude`
+    /// fallback and the test fake). The execution layer moves these into the
+    /// per-run [`crate::checks::trace_archive`] bundle.
+    pub trace_jsonl: Option<Vec<u8>>,
 }
 
 impl AgentOutcome {

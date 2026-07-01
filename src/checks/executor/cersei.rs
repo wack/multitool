@@ -3,6 +3,7 @@
 //! per-check judge tool — no `claude -p` subprocess, no MCP endpoints.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -15,6 +16,7 @@ use miette::{Result, miette};
 use tokio_util::sync::CancellationToken;
 
 use super::judge::{JudgeTool, VerdictSink};
+use super::trace::{TraceHeader, TraceRecorder, serialize_trace};
 use super::{
     AgentOutcome, AgentRunRequest, CheckExecutor, assemble_instructions, judge_tool_directive,
 };
@@ -42,15 +44,25 @@ pub struct CerseiExecutor {
     /// Per-agent wall-clock timeout; on expiry the run is dropped (which stops
     /// the in-process agent) and the check resolves as errored.
     timeout: Duration,
+    /// Whether to capture each execution's agent session as a trace (returned in
+    /// [`AgentOutcome::trace_jsonl`]). Driven by `multi check --trace-archive`.
+    capture_traces: bool,
 }
 
 impl CerseiExecutor {
-    pub fn new(factory: ProviderFactory, model: String, effort: Effort, timeout: Duration) -> Self {
+    pub fn new(
+        factory: ProviderFactory,
+        model: String,
+        effort: Effort,
+        timeout: Duration,
+        capture_traces: bool,
+    ) -> Self {
         Self {
             factory,
             model,
             effort,
             timeout,
+            capture_traces,
         }
     }
 }
@@ -151,6 +163,17 @@ impl CheckExecutor for CerseiExecutor {
             agent_builder = agent_builder.system_prompt(project_prompt);
         }
 
+        // When trace capture is on, tee every agent event into a recorder.
+        // `emit` invokes this synchronously for each event *before* the loop's
+        // early returns, so the trace survives post-verdict cancellation and the
+        // drop-on-timeout below (which cersei's own session persistence would
+        // miss). The executor owns a clone, so a dropped agent doesn't lose it.
+        let recorder = self.capture_traces.then(|| Arc::new(TraceRecorder::new()));
+        if let Some(recorder) = &recorder {
+            let recorder = Arc::clone(recorder);
+            agent_builder = agent_builder.on_event(move |event| recorder.record(event));
+        }
+
         let agent = agent_builder
             .build()
             .map_err(|e| miette!("building check agent: {e}"))?;
@@ -166,12 +189,13 @@ impl CheckExecutor for CerseiExecutor {
         // which surfaces as `CerseiError::Cancelled`).
         let verdict = sink.verdict();
 
-        let outcome = match result {
+        let mut outcome = match result {
             Ok(Ok(output)) => AgentOutcome {
                 verdict,
                 stop_reason: Some(format!("{:?}", output.stop_reason)),
                 turns: output.turns,
                 error: None,
+                trace_jsonl: None,
             },
             Ok(Err(err)) => {
                 let reported = verdict.is_some();
@@ -182,6 +206,7 @@ impl CheckExecutor for CerseiExecutor {
                         .then(|| "cancelled".to_string()),
                     turns: 0,
                     error: (!reported).then(|| err.to_string()),
+                    trace_jsonl: None,
                 }
             }
             Err(_elapsed) => AgentOutcome {
@@ -190,8 +215,24 @@ impl CheckExecutor for CerseiExecutor {
                 stop_reason: None,
                 turns: 0,
                 error: Some(format!("agent timed out after {:?}", self.timeout)),
+                trace_jsonl: None,
             },
         };
+
+        // Render the captured session (if any) now that the outcome is known, so
+        // the trace's footer carries the authoritative verdict/stop/error.
+        if let Some(recorder) = &recorder {
+            let header = TraceHeader {
+                check_id: req.check_id,
+                check_title: &req.check.title,
+                model: &self.model,
+                effort: self.effort,
+                working_dir: &req.working_dir,
+                session_id: &session_id,
+            };
+            let bytes = serialize_trace(recorder, &header, &outcome);
+            outcome.trace_jsonl = Some(bytes);
+        }
 
         Ok(outcome)
     }

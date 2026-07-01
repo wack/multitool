@@ -31,6 +31,7 @@ use crate::checks::model::{Check, CheckId, CheckOutcome, Verdict};
 use crate::checks::presenter::{PresenterActor, UiEvent};
 use crate::checks::reporting::ReportingActor;
 use crate::checks::sandbox::Sandbox;
+use crate::checks::trace_archive::{TraceCollector, TraceEntry};
 
 /// The execution actor: turns a stream of discovered checks into a stream of
 /// completed checks, fanning agent runs out onto bounded background tasks.
@@ -46,6 +47,11 @@ pub(crate) struct ExecutionActor {
     reporting: ActorRef<ReportingActor>,
     /// The display-only presenter, told of each check's lifecycle milestones.
     presenter: ActorRef<PresenterActor>,
+    /// Opt-in sink for per-execution session traces (`multi check
+    /// --trace-archive`). `None` disables capture. Shared across the spawned
+    /// per-attempt tasks; every attempt (including retries) pushes its trace
+    /// here before signalling completion downstream.
+    trace_collector: Option<Arc<TraceCollector>>,
 }
 
 impl Actor for ExecutionActor {
@@ -62,6 +68,7 @@ impl Actor for ExecutionActor {
 
 impl ExecutionActor {
     /// Build the actor. `concurrency` and `max_attempts` are clamped to ≥1.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         executor: Arc<dyn CheckExecutor + Send + Sync>,
         sandbox: Arc<dyn Sandbox + Send + Sync>,
@@ -70,6 +77,7 @@ impl ExecutionActor {
         max_attempts: usize,
         reporting: ActorRef<ReportingActor>,
         presenter: ActorRef<PresenterActor>,
+        trace_collector: Option<Arc<TraceCollector>>,
     ) -> Self {
         Self {
             executor,
@@ -79,6 +87,7 @@ impl ExecutionActor {
             max_attempts: max_attempts.max(1),
             reporting,
             presenter,
+            trace_collector,
         }
     }
 
@@ -92,6 +101,7 @@ impl ExecutionActor {
         let working_dir = self.working_dir.clone();
         let reporting = self.reporting.clone();
         let presenter = self.presenter.clone();
+        let trace_collector = self.trace_collector.clone();
         let me = ctx.actor_ref().clone();
         let id = job.id;
 
@@ -105,7 +115,25 @@ impl ExecutionActor {
             // Permit acquired ⇒ the agent is about to run: mark the check Running.
             let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
 
-            let result = run_one(executor, sandbox, job.id, job.check.clone(), &working_dir).await;
+            let mut result =
+                run_one(executor, sandbox, job.id, job.check.clone(), &working_dir).await;
+
+            // Harvest this attempt's trace *before* signalling completion, so it
+            // is collected even for retried attempts (whose outcome never reaches
+            // reporting) and is race-free with run finalization (the collector is
+            // populated before the `tell` that could trigger it).
+            if let Some(collector) = &trace_collector
+                && let Some(bytes) = result.as_mut().ok().and_then(|o| o.trace_jsonl.take())
+            {
+                collector.push(TraceEntry {
+                    req_index: job.req_index,
+                    req_title: job.req_title.clone(),
+                    check_id: job.id,
+                    check_title: job.check.title.clone(),
+                    attempt,
+                    bytes,
+                });
+            }
 
             if has_verdict(Some(&result)) {
                 // The agent reported: reconcile, surface the verdict to the

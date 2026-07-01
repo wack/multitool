@@ -39,6 +39,13 @@ pub struct CheckSubcommand {
     /// available CPU cores.
     #[arg(long)]
     concurrency: Option<NonZeroUsize>,
+
+    /// Capture every agent check session and bundle the traces into this
+    /// `.tar.gz` archive (off by default). One directory per requirement, one
+    /// file per check execution named by check title and numbered by retry.
+    /// Overrides `checks.trace_archive` from env/file.
+    #[arg(long, value_name = "PATH")]
+    trace_archive: Option<PathBuf>,
 }
 
 impl CheckSubcommand {
@@ -56,6 +63,7 @@ impl CheckSubcommand {
             self.effort,
             self.executor,
             self.concurrency.map(NonZeroUsize::get),
+            self.trace_archive.clone(),
         )
     }
 }

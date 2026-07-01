@@ -138,6 +138,7 @@ impl CheckExecutor for ClaudeExecutor {
                     stop_reason: Some(format!("exit {:?}", output.status.code())),
                     turns: 0,
                     error,
+                    trace_jsonl: None,
                 })
             }
             Err(_elapsed) => {
@@ -148,6 +149,7 @@ impl CheckExecutor for ClaudeExecutor {
                     stop_reason: None,
                     turns: 0,
                     error: Some(format!("agent timed out after {:?}", self.timeout)),
+                    trace_jsonl: None,
                 })
             }
         }
