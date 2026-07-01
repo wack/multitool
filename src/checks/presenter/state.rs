@@ -12,13 +12,19 @@
 //! [`Message<UiEvent>`]: super::PresenterActor
 //! [`Message<Tick>`]: super::PresenterActor
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::checks::model::{CheckId, CheckOutcome, RequirementOutcome, Verdict};
 
 use super::UiEvent;
+
+/// How many recent log lines the live view keeps for at-a-glance context. Full
+/// history is never lost — every line is *also* flushed straight to permanent
+/// scrollback (see `InlineTuiBackend::flush_log_line`) — so this only bounds the
+/// ephemeral in-viewport pane.
+const RECENT_LOGS_CAP: usize = 3;
 
 /// Where a single check is in its lifecycle, as seen by the presenter.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +76,8 @@ pub(crate) struct PresenterState {
     /// Every check, keyed by id. A `BTreeMap` so iteration is in id order, which
     /// is `(req_index, declaration)` order — matching the canonical report.
     pub rows: BTreeMap<CheckId, CheckRow>,
+    /// The last [`RECENT_LOGS_CAP`] routed log lines, oldest first.
+    pub recent_logs: VecDeque<String>,
 }
 
 impl PresenterState {
@@ -80,6 +88,7 @@ impl PresenterState {
             total: None,
             discovery_complete: false,
             rows: BTreeMap::new(),
+            recent_logs: VecDeque::new(),
         }
     }
 
@@ -123,6 +132,12 @@ impl PresenterState {
                 if let Some(row) = self.rows.get_mut(id) {
                     row.state = CheckState::Settled(outcome.verdict);
                     row.outcome = Some(outcome.clone());
+                }
+            }
+            UiEvent::Log(line) => {
+                self.recent_logs.push_back(line.clone());
+                if self.recent_logs.len() > RECENT_LOGS_CAP {
+                    self.recent_logs.pop_front();
                 }
             }
         }

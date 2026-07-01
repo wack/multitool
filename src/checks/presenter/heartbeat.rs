@@ -73,8 +73,18 @@ impl HeartbeatBackend {
 }
 
 impl RenderBackend for HeartbeatBackend {
-    fn apply(&mut self, _state: &PresenterState, _event: &UiEvent) {
-        // Heartbeat is purely time-driven; events only update shared state.
+    fn apply(&mut self, _state: &PresenterState, event: &UiEvent) {
+        // Heartbeat is otherwise purely time-driven; events only update shared
+        // state. Routed log lines are the exception: the presenter is now
+        // `tracing`'s sole sink for the run (see the module docs), so if we
+        // don't re-emit them here they simply vanish. Stderr, not stdout, to
+        // honor this backend's own invariant that stdout stays reserved for the
+        // reporting actor's byte-for-byte report.
+        if let UiEvent::Log(line) = event {
+            let mut err = std::io::stderr().lock();
+            let _ = writeln!(err, "{line}");
+            let _ = err.flush();
+        }
     }
 
     fn tick(&mut self, state: &PresenterState) {
