@@ -30,6 +30,7 @@ mod execution;
 pub mod executor;
 mod messages;
 pub mod model;
+mod presenter;
 mod reporting;
 pub mod sandbox;
 
@@ -50,6 +51,7 @@ use crate::checks::execution::ExecutionActor;
 use crate::checks::executor::CheckExecutor;
 use crate::checks::messages::{BeginDiscovery, CheckDiscovered, CheckJob, DiscoveryComplete};
 use crate::checks::model::{Requirement, RequirementOutcome};
+use crate::checks::presenter::{PresenterActor, RenderBackend, UiEvent, select_backend};
 use crate::checks::reporting::{ReportingActor, RunResult};
 use crate::checks::sandbox::Sandbox;
 
@@ -77,25 +79,52 @@ pub async fn run(terminal: &Terminal, working_dir: &Path, overrides: CliOverride
     let executor: Arc<dyn CheckExecutor + Send + Sync> = Arc::from(resolved.build_executor()?);
     let sandbox: Arc<dyn Sandbox + Send + Sync> = Arc::from(sandbox::select_sandbox());
 
-    // Phases 2–4: drive the actor pipeline to its terminal result, then render.
-    let outcomes = run_pipeline(&resolved.config, executor, sandbox, working_dir).await?;
-    reporting::report(terminal, &outcomes)
+    // Spawn the live presenter's backend up front (the inline viewport reserves
+    // its terminal region immediately): inline TUI in a TTY, stderr heartbeat
+    // otherwise. `owns_record` (true only for the inline TUI) routes the final
+    // record below.
+    let presenter::Backend {
+        backend,
+        owns_record,
+    } = select_backend(terminal.stdout_allows_color());
+
+    // Phases 2–5: drive the actor pipeline (with the presenter) to its terminal
+    // result, then render the record.
+    let outcomes = run_pipeline(&resolved.config, executor, sandbox, working_dir, backend).await?;
+
+    if owns_record {
+        // The inline TUI was the sole terminal writer and has already flushed the
+        // full record into scrollback; writing it again would double-print. Just
+        // compute the exit code.
+        Ok(reporting::exit_code(&outcomes))
+    } else {
+        // Heartbeat / no TTY: the reporting actor owns stdout — byte-for-byte as
+        // MULTI-1368.
+        reporting::report(terminal, &outcomes)
+    }
 }
 
-/// Spawn the reporting + execution actors and return their refs plus the channel
-/// the terminal result arrives on. Refs must be kept alive by the caller until
-/// the result is received (dropping the last ref stops the actor).
+/// Spawn the presenter + reporting + execution actors and return their refs plus
+/// the channel the terminal result arrives on. Refs must be kept alive by the
+/// caller until the result is received (dropping the last ref stops the actor).
+///
+/// The presenter is display-only: it isn't in the `tell` pipeline, but execution
+/// holds its ref to fire-and-forget [`UiEvent`]s. The `backend` chooses where
+/// those events surface (inline TUI / heartbeat / no-op).
 fn spawn_core(
     cfg: &Config,
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     working_dir: &Path,
+    backend: Box<dyn RenderBackend>,
 ) -> (
     ActorRef<ExecutionActor>,
     ActorRef<ReportingActor>,
+    ActorRef<PresenterActor>,
     oneshot::Receiver<RunResult>,
 ) {
     let (tx, rx) = oneshot::channel();
+    let presenter = PresenterActor::spawn(PresenterActor::new(backend));
     let reporting = ReportingActor::spawn(ReportingActor::new(tx));
     let execution = ExecutionActor::spawn(ExecutionActor::new(
         executor,
@@ -104,8 +133,17 @@ fn spawn_core(
         cfg.concurrency,
         cfg.max_attempts,
         reporting.clone(),
+        presenter.clone(),
     ));
-    (execution, reporting, rx)
+    (execution, reporting, presenter, rx)
+}
+
+/// Stop the presenter and wait for its teardown to finish. `stop_gracefully`
+/// drains any `UiEvent`s still in its mailbox first, so the terminal restore /
+/// final scrollback flush sees a complete state.
+async fn shutdown_presenter(presenter: &ActorRef<PresenterActor>) {
+    let _ = presenter.stop_gracefully().await;
+    presenter.wait_for_shutdown().await;
 }
 
 /// Stream a (validated) requirement set into the execution actor: one
@@ -118,12 +156,23 @@ fn spawn_core(
 /// [`CheckId`]: crate::checks::model::CheckId
 async fn stream_requirements(
     execution: &ActorRef<ExecutionActor>,
+    presenter: &ActorRef<PresenterActor>,
     requirements: &[Requirement],
 ) -> Result<()> {
     let mut id = 0;
     let mut total = 0;
     for (req_index, req) in requirements.iter().enumerate() {
         for check in &req.checks {
+            // Tell the presenter about the check first so its tree row exists
+            // before execution can emit `CheckStarted` for it.
+            let _ = presenter
+                .tell(UiEvent::CheckQueued {
+                    id,
+                    req_index,
+                    req_title: req.title.clone(),
+                    check_title: check.title.clone(),
+                })
+                .await;
             let job = CheckJob {
                 id,
                 req_index,
@@ -139,6 +188,11 @@ async fn stream_requirements(
             total += 1;
         }
     }
+    let _ = presenter
+        .tell(UiEvent::DiscoveryComplete {
+            total_checks: total,
+        })
+        .await;
     execution
         .tell(DiscoveryComplete {
             total_checks: total,
@@ -168,12 +222,15 @@ async fn run_pipeline(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     working_dir: &Path,
+    backend: Box<dyn RenderBackend>,
 ) -> Result<Vec<RequirementOutcome>> {
-    let (execution, reporting, rx) = spawn_core(cfg, executor, sandbox, working_dir);
+    let (execution, reporting, presenter, rx) =
+        spawn_core(cfg, executor, sandbox, working_dir, backend);
     let discovery = DiscoveryActor::spawn(DiscoveryActor::new(
         working_dir.to_path_buf(),
         execution.clone(),
         reporting.clone(),
+        presenter.clone(),
     ));
     discovery
         .tell(BeginDiscovery)
@@ -182,9 +239,12 @@ async fn run_pipeline(
         .map_err(|e| miette!("failed to start discovery: {e}"))?;
 
     let outcomes = await_result(rx).await;
+    // The run is over: drain the presenter's mailbox and run its teardown
+    // (terminal restore / final scrollback flush) before returning.
+    shutdown_presenter(&presenter).await;
     // Keep refs alive across the await; dropping them earlier would stop the
     // actors mid-run.
-    drop((discovery, execution, reporting));
+    drop((discovery, execution, reporting, presenter));
     outcomes
 }
 
@@ -199,10 +259,13 @@ async fn run_to_outcomes(
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     working_dir: &Path,
     requirements: &[Requirement],
+    backend: Box<dyn RenderBackend>,
 ) -> Result<Vec<RequirementOutcome>> {
-    let (execution, reporting, rx) = spawn_core(cfg, executor, sandbox, working_dir);
-    stream_requirements(&execution, requirements).await?;
+    let (execution, reporting, presenter, rx) =
+        spawn_core(cfg, executor, sandbox, working_dir, backend);
+    stream_requirements(&execution, &presenter, requirements).await?;
     let outcomes = await_result(rx).await;
-    drop((execution, reporting));
+    shutdown_presenter(&presenter).await;
+    drop((execution, reporting, presenter));
     outcomes
 }

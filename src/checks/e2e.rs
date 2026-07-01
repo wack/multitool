@@ -21,6 +21,7 @@ use crate::checks::discovery::discover;
 use crate::checks::executor::{
     AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, FakeExecutor,
 };
+use crate::checks::presenter::null_backend;
 use crate::checks::reporting::report;
 use crate::checks::sandbox::NoopSandbox;
 use crate::checks::{run_pipeline, run_to_outcomes};
@@ -91,9 +92,16 @@ async fn pipeline_satisfied_failed_multi_and_anonymous() {
     let fake = Arc::new(fake);
 
     let cfg = configuration();
-    let outcomes = run_to_outcomes(&cfg, fake.clone(), Arc::new(NoopSandbox), dir.path(), &reqs)
-        .await
-        .unwrap();
+    let outcomes = run_to_outcomes(
+        &cfg,
+        fake.clone(),
+        Arc::new(NoopSandbox),
+        dir.path(),
+        &reqs,
+        null_backend(),
+    )
+    .await
+    .unwrap();
 
     // Aggregated verdicts: satisfied / satisfied(AND) / failed.
     assert!(
@@ -127,9 +135,16 @@ async fn all_satisfied_exits_zero() {
 
     let fake = Arc::new(FakeExecutor::new().with_report(0, true, None));
     let cfg = configuration();
-    let outcomes = run_to_outcomes(&cfg, fake, Arc::new(NoopSandbox), dir.path(), &reqs)
-        .await
-        .unwrap();
+    let outcomes = run_to_outcomes(
+        &cfg,
+        fake,
+        Arc::new(NoopSandbox),
+        dir.path(),
+        &reqs,
+        null_backend(),
+    )
+    .await
+    .unwrap();
     assert!(outcomes[0].satisfied);
 
     let code = report(&plain_terminal(), &outcomes).unwrap();
@@ -149,6 +164,7 @@ async fn empty_tree_exits_zero() {
         Arc::new(NoopSandbox),
         dir.path(),
         &reqs,
+        null_backend(),
     )
     .await
     .unwrap();
@@ -211,9 +227,16 @@ async fn checks_execute_concurrently_not_in_a_barrier() {
         ..configuration()
     };
 
-    let outcomes = run_to_outcomes(&cfg, executor, Arc::new(NoopSandbox), dir.path(), &reqs)
-        .await
-        .unwrap();
+    let outcomes = run_to_outcomes(
+        &cfg,
+        executor,
+        Arc::new(NoopSandbox),
+        dir.path(),
+        &reqs,
+        null_backend(),
+    )
+    .await
+    .unwrap();
 
     // Both satisfied ⇒ both ran simultaneously (the barrier tripped).
     assert!(
@@ -238,7 +261,14 @@ async fn invalid_suite_aborts_run_without_spawning_agents() {
     // whole-run abort path is exercised end-to-end.
     let fake = Arc::new(FakeExecutor::new());
     let cfg = configuration();
-    let result = run_pipeline(&cfg, fake.clone(), Arc::new(NoopSandbox), dir.path()).await;
+    let result = run_pipeline(
+        &cfg,
+        fake.clone(),
+        Arc::new(NoopSandbox),
+        dir.path(),
+        null_backend(),
+    )
+    .await;
 
     // The run aborts as an `Err` diagnostic (so CI distinguishes "tool errored"
     // from "checks failed"), and — crucially — no agent was ever spawned.
