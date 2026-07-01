@@ -159,22 +159,25 @@ Glob, plus the judge tool) — a verification agent observes, it does not mutate
 
 ## ⚙️ Configuration
 
-The default **provider**, **model**, **effort**, and **executor** are resolved
-from three sources, in order of precedence (highest wins):
+The default **provider**, **model**, **effort**, **executor**, and
+**concurrency** are resolved from three sources, in order of precedence
+(highest wins):
 
-1. **Flags** — `--provider`, `--model`, `--effort`, `--executor` on `multi check`.
+1. **Flags** — `--provider`, `--model`, `--effort`, `--executor`,
+   `--concurrency` on `multi check`.
 2. **Environment** — `MULTI_`-prefixed vars mapped into the `checks` namespace,
    e.g. `MULTI_CHECKS_MODEL`, `MULTI_CHECKS_PROVIDER`, `MULTI_CHECKS_EFFORT`,
-   `MULTI_CHECKS_EXECUTOR`.
+   `MULTI_CHECKS_EXECUTOR`, `MULTI_CHECKS_CONCURRENCY`.
 3. **Config file** — the `[checks]` table of `MultiTool.toml` (or `.json` /
    `.jsonc`), discovered up the directory tree like any MultiTool manifest.
 
 ```toml
 [checks]
-provider = "anthropic"          # anthropic | openai | gemini
-model    = "claude-sonnet-4-6"  # must be a known model ID for the provider
-effort   = "low"                # low | medium | high  → thinking-token budget
-executor = "cersei"             # cersei (in-process, default) | claude (fallback)
+provider    = "anthropic"          # anthropic | openai | gemini
+model       = "claude-sonnet-4-6"  # must be a known model ID for the provider
+effort      = "low"                # low | medium | high  → thinking-token budget
+executor    = "cersei"             # cersei (in-process, default) | claude (fallback)
+concurrency = 8                    # checks run at once; must be > 0 (default: CPU core count)
 
 # optional, non-secret base-URL overrides per provider
 [checks.providers.anthropic]
@@ -193,6 +196,11 @@ check as an in-process agent (native multi-provider model swapping, no external
 CLI). `claude` is the legacy `claude -p` shell-out fallback, kept selectable for
 migration while the in-process path is validated; it requires the `claude` CLI on
 your `PATH` and will be removed once cersei is proven out.
+
+The **`concurrency`** flag caps how many checks run at once; it must be a
+positive integer (`0` is rejected with a clear error). Its default matches the
+number of CPU cores available on the machine running `multi check`, so a suite
+fans out to use the whole machine rather than leaving cores idle.
 
 **Credentials are environment-only.** API keys are read directly from each
 provider's native variable and never live in the config file or under the

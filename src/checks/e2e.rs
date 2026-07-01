@@ -16,7 +16,7 @@ use miette::Result;
 use tempfile::TempDir;
 use tokio::sync::Barrier;
 
-use crate::checks::config::configuration;
+use crate::checks::config::{Config, configuration};
 use crate::checks::discovery::discover;
 use crate::checks::executor::{
     AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, FakeExecutor,
@@ -207,8 +207,9 @@ impl CheckExecutor for InterleavingExecutor {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn checks_execute_concurrently_not_in_a_barrier() {
-    // Two independent requirements (two checks total). The default concurrency
-    // is 2, so both should run at once.
+    // Two independent requirements (two checks total). Pin concurrency to 2
+    // explicitly so both run at once regardless of the host's core count (the
+    // default now tracks available parallelism, not a fixed value).
     let dir = TempDir::new().unwrap();
     fs::write(
         dir.path().join("CHECKS.md"),
@@ -221,8 +222,10 @@ async fn checks_execute_concurrently_not_in_a_barrier() {
     let executor = Arc::new(InterleavingExecutor {
         barrier: Arc::new(Barrier::new(2)),
     });
-    let cfg = configuration();
-    assert_eq!(cfg.concurrency, 2, "test assumes a concurrency of 2");
+    let cfg = Config {
+        concurrency: 2,
+        ..configuration()
+    };
 
     let outcomes = run_to_outcomes(
         &cfg,

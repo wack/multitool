@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
@@ -32,6 +33,12 @@ pub struct CheckSubcommand {
     /// legacy `claude -p` fallback). Overrides `checks.executor` from env/file.
     #[arg(long, value_enum)]
     executor: Option<ExecutorKind>,
+
+    /// Maximum number of checks to run concurrently. Must be greater than 0.
+    /// Overrides `checks.concurrency` from env/file. Defaults to the number of
+    /// available CPU cores.
+    #[arg(long)]
+    concurrency: Option<NonZeroUsize>,
 }
 
 impl CheckSubcommand {
@@ -48,6 +55,7 @@ impl CheckSubcommand {
             self.model.clone(),
             self.effort,
             self.executor,
+            self.concurrency.map(NonZeroUsize::get),
         )
     }
 }

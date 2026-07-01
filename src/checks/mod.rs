@@ -70,6 +70,7 @@ pub async fn run(terminal: &Terminal, working_dir: &Path, overrides: CliOverride
         provider = resolved.config.provider.as_str(),
         model = %resolved.config.model,
         executor = ?resolved.config.executor,
+        concurrency = resolved.config.concurrency,
         available_providers = ?resolved.providers.keys().collect::<Vec<_>>(),
         "resolved checks configuration and provider registry",
     );

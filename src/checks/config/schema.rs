@@ -77,6 +77,10 @@ pub struct ChecksSection {
     /// Which execution engine runs each check (`cersei` by default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<ExecutorKind>,
+    /// Maximum number of checks executed concurrently (default: the number of
+    /// available CPU cores).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<usize>,
     /// Optional, non-secret per-provider base-URL overrides.
     #[serde(default)]
     pub providers: ProvidersSection,
@@ -134,6 +138,8 @@ pub struct CliChecksOverrides {
     pub effort: Option<Effort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executor: Option<ExecutorKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<usize>,
 }
 
 impl CliOverrides {
@@ -143,6 +149,7 @@ impl CliOverrides {
         model: Option<String>,
         effort: Option<Effort>,
         executor: Option<ExecutorKind>,
+        concurrency: Option<usize>,
     ) -> Self {
         Self {
             checks: CliChecksOverrides {
@@ -150,6 +157,7 @@ impl CliOverrides {
                 model,
                 effort,
                 executor,
+                concurrency,
             },
         }
     }
