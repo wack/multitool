@@ -187,9 +187,10 @@ base_url = "https://..."
 An unset flag contributes nothing — it never overrides a value from the
 environment or file. The `model` is validated against a hardcoded allowlist of
 known IDs for the selected provider; an unknown ID is a clear error. `effort`
-currently maps to the in-process agent's sampling temperature (`low` → most
-deterministic, `high` → most exploratory); mapping it to an extended-thinking
-budget is pending an upstream provider fix.
+maps to the in-process agent's extended-thinking budget: `medium` and `high`
+enable extended thinking (4096- and 8192-token budgets respectively), while
+`low` — the default — keeps thinking off for speed and cost, running the agent
+deterministically instead.
 
 The **`executor`** selects the execution engine. The default `cersei` runs each
 check as an in-process agent (native multi-provider model swapping, no external

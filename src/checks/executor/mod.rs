@@ -40,10 +40,11 @@ pub struct AgentRunRequest {
     /// The sandbox directory to run the agent in (its working directory).
     pub working_dir: PathBuf,
     /// Which attempt this is, 1-based. Retries must not replay the failed
-    /// attempt verbatim: executors use this to raise the sampling temperature
-    /// and to tell the agent a previous attempt went unreported (the 2026-07-01
-    /// timeout postmortem showed temperature-0 retries reproducing the same
-    /// fatal trajectory three times in a row).
+    /// attempt verbatim: executors use this to tell the agent a previous
+    /// attempt went unreported and — on thinking-free runs — to raise the
+    /// sampling temperature (the 2026-07-01 timeout postmortem showed
+    /// temperature-0 retries reproducing the same fatal trajectory three
+    /// times in a row).
     pub attempt: u32,
 }
 
