@@ -2,15 +2,12 @@
 //! abstracts "run one check's agent → verdict/outcome". cersei-agent absorbs the
 //! *provider-abstraction* rationale the seam originally carried, but not its
 //! *test-seam* rationale: `cersei_agent::Agent` is a concrete struct, so the
-//! execution-phase tests still need a fake. The trait keeps one method with three
-//! impls — the real in-process [`cersei::CerseiExecutor`], the soon-to-retire
-//! shell-out [`claude::ClaudeExecutor`] fallback (selectable for migration), and
-//! the test [`FakeExecutor`]. It is a boxed trait object for dynamic dispatch,
-//! mirroring the repo's `BoxedIngress` / `BoxedMonitor` / `BoxedPlatform`
-//! convention.
+//! execution-phase tests still need a fake. The trait keeps one method with two
+//! impls — the real in-process [`cersei::CerseiExecutor`] and the test
+//! [`FakeExecutor`]. It is a boxed trait object for dynamic dispatch, mirroring
+//! the repo's `BoxedIngress` / `BoxedMonitor` / `BoxedPlatform` convention.
 
 pub mod cersei;
-pub mod claude;
 #[cfg(test)]
 mod fake;
 mod jail;
@@ -69,9 +66,9 @@ pub struct AgentOutcome {
     pub error: Option<String>,
     /// The self-contained NDJSON session trace for this one execution, when
     /// trace capture is enabled (`multi check --trace-archive`). `None` when
-    /// capture is off and for executors that don't produce traces (the `claude`
-    /// fallback and the test fake). The execution layer moves these into the
-    /// per-run [`crate::checks::trace_archive`] bundle.
+    /// capture is off and for executors that don't produce traces (the test
+    /// fake). The execution layer moves these into the per-run
+    /// [`crate::checks::trace_archive`] bundle.
     pub trace_jsonl: Option<Vec<u8>>,
 }
 
@@ -93,8 +90,8 @@ pub trait CheckExecutor: Send + Sync {
 pub type BoxedExecutor = Box<dyn CheckExecutor + Send + Sync>;
 
 /// The reporting directive for the default (in-process) executor: call the judge
-/// tool exactly once. Kept separate from [`assemble_instructions`] so the legacy
-/// shell-out fallback can substitute its own reporting channel.
+/// tool exactly once. Kept separate from [`assemble_instructions`] so other
+/// executors can substitute their own reporting channel.
 pub fn judge_tool_directive() -> String {
     format!(
         "Carry out the check described below. When — and only when — you have reached a conclusion, \

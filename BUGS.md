@@ -2,9 +2,9 @@
 
 These are bugs (or missing features) I've observed while working with `multi checks`.
 
-- [ ] Remove the `Claude -p` executor.
-
 - [ ] No use of Cersei workflows to chain multiple prompts together.
+
+- [ ] No GitHub Action available.
 
 - [ ] Logs no longer report the id of the check that failed (or the number of attempted retries)
 
@@ -17,10 +17,6 @@ These are bugs (or missing features) I've observed while working with `multi che
 - [ ] Running 16 agents seems to nearly freeze the computer. Use an OTel profile to determine if this is true.
 
 - [ ] No limit on max turns.
-
-- [ ] No support for Fireworks AI.
-
-- [ ] No GitHub Action available.
 
 - [ ] No loading of skills.
 
@@ -42,6 +38,10 @@ cancellation covering SIGINT/SIGTERM and Windows Ctrl-C/Ctrl-Break) while still
 guaranteeing the terminal is restored on the way out.
 
 ## Fixes
+
+- [x] No support for Fireworks AI.
+
+- [x] Remove the `Claude -p` executor.
 
 - [x] No trace capture. We need a way to record all session traces so that we can analyze why they failed.
 

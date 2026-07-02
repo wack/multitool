@@ -15,11 +15,9 @@ requirement is satisfied only if **all** of its checks pass (logical AND).
 ## ✅ Prerequisites
 
 - [ ] An API key for your chosen provider in the environment (e.g.
-      `ANTHROPIC_API_KEY`) — see [Configuration](#️-configuration). The default
+      `ANTHROPIC_API_KEY`) — see [Configuration](#️-configuration). The
       in-process executor talks to the provider directly; **no `claude` CLI is
-      required**. (The optional `claude -p` fallback — `--executor claude` — does
-      need the [`claude`](https://docs.claude.com/en/docs/claude-code) CLI on your
-      `PATH`.)
+      required**.
 - [ ] **macOS** — the MVP sandboxes each check with an APFS copy-on-write clone.
       Other operating systems are not yet supported.
 
@@ -159,15 +157,14 @@ Glob, plus the judge tool) — a verification agent observes, it does not mutate
 
 ## ⚙️ Configuration
 
-The default **provider**, **model**, **effort**, **executor**, and
-**concurrency** are resolved from three sources, in order of precedence
-(highest wins):
+The default **provider**, **model**, **effort**, and **concurrency** are
+resolved from three sources, in order of precedence (highest wins):
 
-1. **Flags** — `--provider`, `--model`, `--effort`, `--executor`,
-   `--concurrency` on `multi check`.
+1. **Flags** — `--provider`, `--model`, `--effort`, `--concurrency` on
+   `multi check`.
 2. **Environment** — `MULTI_`-prefixed vars mapped into the `checks` namespace,
    e.g. `MULTI_CHECKS_MODEL`, `MULTI_CHECKS_PROVIDER`, `MULTI_CHECKS_EFFORT`,
-   `MULTI_CHECKS_EXECUTOR`, `MULTI_CHECKS_CONCURRENCY`.
+   `MULTI_CHECKS_CONCURRENCY`.
 3. **Config file** — the `[checks]` table of `MultiTool.toml` (or `.json` /
    `.jsonc`), discovered up the directory tree like any MultiTool manifest.
 
@@ -176,7 +173,6 @@ The default **provider**, **model**, **effort**, **executor**, and
 provider    = "anthropic"          # anthropic | openai | gemini
 model       = "claude-sonnet-4-6"  # must be a known model ID for the provider
 effort      = "low"                # low | medium | high  → thinking-token budget
-executor    = "cersei"             # cersei (in-process, default) | claude (fallback)
 concurrency = 8                    # checks run at once; must be > 0 (default: CPU core count)
 
 # optional, non-secret base-URL overrides per provider
@@ -192,11 +188,8 @@ enable extended thinking (4096- and 8192-token budgets respectively), while
 `low` — the default — keeps thinking off for speed and cost, running the agent
 deterministically instead.
 
-The **`executor`** selects the execution engine. The default `cersei` runs each
-check as an in-process agent (native multi-provider model swapping, no external
-CLI). `claude` is the legacy `claude -p` shell-out fallback, kept selectable for
-migration while the in-process path is validated; it requires the `claude` CLI on
-your `PATH` and will be removed once cersei is proven out.
+Each check runs as an in-process agent (native multi-provider model swapping,
+no external CLI or subprocess).
 
 The **`concurrency`** flag caps how many checks run at once; it must be a
 positive integer (`0` is rejected with a clear error). Its default matches the

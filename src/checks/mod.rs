@@ -67,14 +67,13 @@ use crate::checks::sandbox::Sandbox;
 /// Operational errors (e.g. an invalid `CHECKS.md`) surface as `Err` diagnostics
 /// rather than an exit code, so CI can tell "checks failed" from "tool errored".
 pub async fn run(terminal: &Terminal, working_dir: &Path, overrides: CliOverrides) -> Result<i32> {
-    // Phase 1: configuration — resolve provider/model/effort/executor
+    // Phase 1: configuration — resolve provider/model/effort
     // (flag > env > file) and construct the provider registry, injected forward.
     let resolved = config::load(overrides)?;
 
     tracing::debug!(
         provider = resolved.config.provider.as_str(),
         model = %resolved.config.model,
-        executor = ?resolved.config.executor,
         concurrency = resolved.config.concurrency,
         available_providers = ?resolved.providers.keys().collect::<Vec<_>>(),
         "resolved checks configuration and provider registry",
