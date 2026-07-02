@@ -115,8 +115,15 @@ impl ExecutionActor {
             // Permit acquired ⇒ the agent is about to run: mark the check Running.
             let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
 
-            let mut result =
-                run_one(executor, sandbox, job.id, job.check.clone(), &working_dir).await;
+            let mut result = run_one(
+                executor,
+                sandbox,
+                job.id,
+                job.check.clone(),
+                &working_dir,
+                attempt,
+            )
+            .await;
 
             // Harvest this attempt's trace *before* signalling completion, so it
             // is collected even for retried attempts (whose outcome never reaches
@@ -249,6 +256,7 @@ async fn run_one(
     id: CheckId,
     check: Check,
     working_dir: &Path,
+    attempt: usize,
 ) -> Result<AgentOutcome> {
     let handle = sandbox.create(working_dir).await?;
 
@@ -256,6 +264,7 @@ async fn run_one(
         check_id: id,
         check,
         working_dir: handle.path().to_path_buf(),
+        attempt: u32::try_from(attempt).unwrap_or(u32::MAX),
     };
 
     let outcome = executor.run_check(request).await;
@@ -422,7 +431,9 @@ mod tests {
         .await
         .unwrap();
         assert!(out[0].satisfied);
-        // Ran twice: one silent attempt, then one reporting attempt.
-        assert_eq!(executor.seen().len(), 2);
+        // Ran twice: one silent attempt, then one reporting attempt — and the
+        // executor was told which attempt each was (retries must be able to
+        // vary temperature/instructions rather than replaying attempt 1).
+        assert_eq!(executor.seen_attempts(), vec![(0, 1), (0, 2)]);
     }
 }

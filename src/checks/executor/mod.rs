@@ -13,10 +13,11 @@ pub mod cersei;
 pub mod claude;
 #[cfg(test)]
 mod fake;
+mod jail;
 pub mod judge;
 mod trace;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use miette::Result;
@@ -38,6 +39,12 @@ pub struct AgentRunRequest {
     pub check: Check,
     /// The sandbox directory to run the agent in (its working directory).
     pub working_dir: PathBuf,
+    /// Which attempt this is, 1-based. Retries must not replay the failed
+    /// attempt verbatim: executors use this to raise the sampling temperature
+    /// and to tell the agent a previous attempt went unreported (the 2026-07-01
+    /// timeout postmortem showed temperature-0 retries reproducing the same
+    /// fatal trajectory three times in a row).
+    pub attempt: u32,
 }
 
 /// The result of running one check's agent in-process.
@@ -102,16 +109,41 @@ the check is treated as a FAILURE.",
 /// Assemble the instruction text handed to an agent: standing operating
 /// instructions, the executor-supplied `reporting` directive, then the check
 /// prompt verbatim. (MULTI-1350, parametrized in MULTI-1367.)
-pub fn assemble_instructions(check: &Check, reporting: &str) -> String {
+///
+/// The sandbox path is stated explicitly. Agents that weren't told it (pre
+/// 2026-07-01 postmortem) went hunting for the repository across the host
+/// filesystem — guessing paths out of the loaded CLAUDE.md — and timed out
+/// inside unbounded directory walks. On a retry (`attempt > 1`) the agent is
+/// also told a previous attempt went unreported, so the new trajectory has a
+/// reason to differ from the failed one.
+pub fn assemble_instructions(
+    check: &Check,
+    reporting: &str,
+    working_dir: &Path,
+    attempt: u32,
+) -> String {
+    let retry_note = if attempt > 1 {
+        format!(
+            "\nNOTE: this is attempt {attempt} for this check; a previous attempt finished \
+without reporting a verdict (it may have timed out while exploring). Stay inside the \
+working directory and report as soon as the evidence supports a conclusion.\n"
+        )
+    } else {
+        String::new()
+    };
     format!(
         "You are validating a single requirement for the MultiTool Checks tool.\n\
-Your current working directory is a sandboxed, throwaway copy of the user's repository; \
-you may read it and run commands against it freely.\n\
+Your working directory is `{working_dir}` — a sandboxed, throwaway copy of the user's \
+repository that you may inspect freely. Every file relevant to this check lives under \
+that path: do not read or search outside it. Tool calls that take an optional `path` \
+default to it when omitted.\n\
+{retry_note}\
 \n\
 {reporting}\n\
 \n\
 --- CHECK: {title} ---\n\
 {prompt}\n",
+        working_dir = working_dir.display(),
         title = check.title,
         prompt = check.prompt,
     )
@@ -124,16 +156,50 @@ mod tests {
 
     assert_obj_safe!(CheckExecutor);
 
-    #[test]
-    fn instructions_embed_prompt_and_demand_single_report() {
-        let check = Check {
+    fn check() -> Check {
+        Check {
             title: "No yellow".into(),
             prompt: "scan for yellow text".into(),
-        };
-        let text = assemble_instructions(&check, &judge_tool_directive());
+        }
+    }
+
+    #[test]
+    fn instructions_embed_prompt_and_demand_single_report() {
+        let text = assemble_instructions(
+            &check(),
+            &judge_tool_directive(),
+            Path::new("/tmp/sandbox-copy"),
+            1,
+        );
         assert!(text.contains("scan for yellow text"));
         assert!(text.contains(JUDGE_TOOL));
         assert!(text.contains("EXACTLY ONCE"));
         assert!(text.contains("No yellow"));
+    }
+
+    #[test]
+    fn instructions_state_the_working_directory_path() {
+        let text = assemble_instructions(
+            &check(),
+            &judge_tool_directive(),
+            Path::new("/tmp/sandbox-copy"),
+            1,
+        );
+        assert!(text.contains("`/tmp/sandbox-copy`"));
+        assert!(text.contains("do not read or search outside it"));
+        // First attempts carry no retry note.
+        assert!(!text.contains("previous attempt"));
+    }
+
+    #[test]
+    fn retries_carry_a_note_about_the_unreported_attempt() {
+        let text = assemble_instructions(
+            &check(),
+            &judge_tool_directive(),
+            Path::new("/tmp/sandbox-copy"),
+            2,
+        );
+        assert!(text.contains("attempt 2"));
+        assert!(text.contains("previous attempt finished without reporting"));
     }
 }
