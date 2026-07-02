@@ -29,9 +29,18 @@ impl Check {
             self.args.directory(),
             self.args.overrides(),
         ))?;
-        if code != 0 {
-            std::process::exit(code);
-        }
-        Ok(())
+        // Exit directly rather than returning and letting `rt` drop: dropping a
+        // `Runtime` blocks the calling thread until every task it ever spawned
+        // has fully unwound (`Runtime::drop`'s docs: "The thread initiating the
+        // shutdown blocks until all spawned work has been stopped. This can
+        // take an indefinite amount of time."). By this point the check pipeline
+        // has already produced its result and, for a TTY run, the presenter has
+        // already flushed the terminal record — there is nothing further for
+        // this process to do, so it should not be held hostage by a stray task
+        // (ours or a dependency's) that is slow, or fails, to wind down. This
+        // used to only apply on the `code != 0` path, which papered over the
+        // asymmetry: an all-checks-pass run had no hard exit and could hang
+        // instead of returning control to the shell.
+        std::process::exit(code);
     }
 }
