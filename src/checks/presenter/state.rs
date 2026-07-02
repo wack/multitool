@@ -67,6 +67,10 @@ pub(crate) struct CheckRow {
 ///
 /// [`PresenterState::apply`]: PresenterState::apply
 pub(crate) struct PresenterState {
+    /// The model running this suite's checks, shown in the header so a run
+    /// against a non-default provider/model doesn't look identical to one
+    /// against the default.
+    pub model: String,
     /// When the run began (for the total-elapsed header counter).
     pub run_started: Instant,
     /// Total checks to expect; `None` until `DiscoveryComplete`.
@@ -82,8 +86,9 @@ pub(crate) struct PresenterState {
 
 impl PresenterState {
     /// A fresh state stamped with the run's start instant.
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(model: String) -> Self {
         Self {
+            model,
             run_started: Instant::now(),
             total: None,
             discovery_complete: false,
@@ -240,7 +245,7 @@ mod tests {
 
     #[test]
     fn tallies_recompute_from_rows_across_a_retry() {
-        let mut s = PresenterState::new();
+        let mut s = PresenterState::new("test-model".into());
         s.apply(&UiEvent::CheckQueued {
             id: 0,
             req_index: 0,
@@ -274,7 +279,7 @@ mod tests {
 
     #[test]
     fn requirement_completion_and_outcome_use_shared_aggregation() {
-        let mut s = PresenterState::new();
+        let mut s = PresenterState::new("test-model".into());
         for (id, title) in [(0, "a"), (1, "b")] {
             s.apply(&UiEvent::CheckQueued {
                 id,

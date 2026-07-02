@@ -216,6 +216,26 @@ provider's native variable and never live in the config file or under the
 A provider is only selectable when its API key is present; selecting a provider
 whose key is missing is an error.
 
+### Routing through Fireworks
+
+Fireworks exposes an Anthropic-compatible Messages endpoint, so it slots into
+the `anthropic` provider rather than needing its own provider kind: override
+`base_url` to Fireworks and set `ANTHROPIC_API_KEY` to a Fireworks key
+(`fw_...`). A repo-root `MultiTool.toml` doing this:
+
+```toml
+[checks]
+provider = "anthropic"
+model    = "accounts/fireworks/routers/glm-5p1-fast"
+
+[checks.providers.anthropic]
+base_url = "https://api.fireworks.ai/inference"
+```
+
+The `model` must still be a known ID in `ANTHROPIC_MODELS`
+(`src/checks/config/models.rs`) — add the Fireworks model ID you want there
+before pointing `base_url` at it.
+
 ## ⚠️ MVP constraints
 
 - **macOS only** — copy-on-write sandboxing uses APFS `clonefile`. Linux and

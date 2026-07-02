@@ -340,8 +340,9 @@ fn live_lines(
         .unwrap_or_else(|| "?".to_string());
     let elapsed = human_elapsed(state.run_started.elapsed());
     lines.push(Line::raw(format!(
-        "checks  {bar} {done}/{total_str}   ✓{sat}  ✗{failed}  ⚠{errored}   · {} running · {elapsed}",
+        "checks  {bar} {done}/{total_str}   ✓{sat}  ✗{failed}  ⚠{errored}   · {} running · {elapsed} · {}",
         state.running(),
+        state.model,
     )));
 
     // Order: requirements with any running/retrying check first (liveness), then
@@ -451,6 +452,16 @@ mod tests {
 
         assert_eq!(rendered[0], format_requirement_plain(&out));
         assert_eq!(rendered[1], report_text(&failing));
+    }
+
+    /// The live header names the model in use, so a run against a non-default
+    /// provider/model is visibly distinguishable from one against the default.
+    #[test]
+    fn header_shows_the_model() {
+        let state = PresenterState::new("claude-sonnet-4-6".into());
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
+        let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(header.ends_with("claude-sonnet-4-6"), "{header}");
     }
 
     #[test]
