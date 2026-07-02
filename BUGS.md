@@ -2,20 +2,21 @@
 
 These are bugs (or missing features) I've observed while working with `multi checks`.
 
-- [ ] Output is now hanging. I suspect this is recent (within the last few commits) and it started
-happening after implement the changes to the `Presenter` actor to fix writing text off-screen without wrapping.
-
 - [ ] Remove the `Claude -p` executor.
 
-- [ ] Running 16 agents seems to nearly freeze the computer. Use an OTel profile to determine if this is true.
-
-- [ ] Temperature not configured.
-
-- [ ] No limit on max turns.
+- [ ] No use of Cersei workflows to chain multiple prompts together.
 
 - [ ] Logs no longer report the id of the check that failed (or the number of attempted retries)
 
-- [ ] No use of Cersei workflows to chain multiple prompts together.
+- [ ] Assemble_instructions is hard-coded: src/checks/executor/mod.rs:98 (definition), called from src/checks/executor/cersei.rs:110
+
+- [ ] No system prompt provided.
+
+- [ ] Not sure if prompt caching is enabled at all.
+
+- [ ] Running 16 agents seems to nearly freeze the computer. Use an OTel profile to determine if this is true.
+
+- [ ] No limit on max turns.
 
 - [ ] No support for Fireworks AI.
 
@@ -24,14 +25,6 @@ happening after implement the changes to the `Presenter` actor to fix writing te
 - [ ] No loading of skills.
 
 - [ ] No loading of RULES.md files from the .claude directory.
-
-- [ ] Assemble_instructions is hard-coded: src/checks/executor/mod.rs:98 (definition), called from src/checks/executor/cersei.rs:110
-
-- [ ] No system prompt provided.
-
-- [ ] Not sure if prompt caching is enabled at all.
-
-- [ ] No trace capture. We need a way to record all session traces so that we can analyze why they failed.
 
 - CERSEI: `append_system_prompt()` function is dead unless routed through the separate build_system_prompt() composer.
 
@@ -49,6 +42,13 @@ cancellation covering SIGINT/SIGTERM and Windows Ctrl-C/Ctrl-Break) while still
 guaranteeing the terminal is restored on the way out.
 
 ## Fixes
+
+- [x] No trace capture. We need a way to record all session traces so that we can analyze why they failed.
+
+- [x] Output is now hanging. I suspect this is recent (within the last few commits) and it started
+happening after implement the changes to the `Presenter` actor to fix writing text off-screen without wrapping.
+
+- [x] Temperature not configured.
 
 - [x] No loading of CLAUDE.md files
 

@@ -4,10 +4,12 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cersei_agent::Agent;
+use cersei_agent::events::AgentEvent;
 use cersei_memory::claudemd;
 use cersei_tools::permissions::AllowReadOnly;
 use cersei_tools::{Tool, clear_session_shell_state};
@@ -39,8 +41,8 @@ pub struct CerseiExecutor {
     factory: ProviderFactory,
     /// The concrete model ID to run (e.g. `claude-sonnet-4-6`).
     model: String,
-    /// The effort level, mapped to a sampling temperature (see
-    /// [`effort_temperature`]).
+    /// The effort level, mapped to an extended-thinking budget (medium/high)
+    /// or a sampling temperature (low) — see [`thinking_budget`].
     effort: Effort,
     /// Per-agent wall-clock timeout; on expiry the run is dropped (which stops
     /// the in-process agent) and the check resolves as errored.
@@ -110,32 +112,36 @@ fn project_instructions(project_root: &Path) -> Option<String> {
     (!prompt.trim().is_empty()).then_some(prompt)
 }
 
-/// Map our coarse [`Effort`] onto a sampling temperature.
+/// Map our coarse [`Effort`] onto an extended-thinking budget.
 ///
-/// Extended thinking would be the natural effort vehicle, but cersei-provider
-/// 0.1.9 cannot round-trip Anthropic *thinking-block signatures*: its SSE parser
-/// drops `signature_delta`, so the thinking block it sends back on the second
-/// turn carries an empty signature and the API rejects it
-/// (`Invalid signature in thinking block`). Until that is fixed upstream
-/// (https://github.com/pacifio/cersei/issues/21) we leave thinking disabled and
-/// apply effort as temperature instead — lower effort is more deterministic,
-/// higher effort more exploratory.
-fn effort_temperature(effort: Effort) -> f32 {
+/// Medium and high effort buy real extended thinking: `wack/cersei` carries
+/// the provider fixes for round-tripping thinking blocks (`signature_delta`
+/// accumulation in 94f18b2, `redacted_thinking` preservation in 5bd06db), so
+/// the temperature-as-effort workaround that previously lived here is retired.
+/// Low effort — the default — keeps thinking off to stay fast and cheap, and
+/// steers with temperature instead (see [`attempt_temperature`]).
+///
+/// Budgets follow cersei's own `EffortLevel` scale (medium 4096, high 8192)
+/// and sit comfortably under the agent's default 16k `max_tokens` (the API
+/// requires `budget_tokens < max_tokens`).
+fn thinking_budget(effort: Effort) -> Option<u32> {
     match effort {
-        Effort::Low => 0.0,
-        Effort::Medium => 0.5,
-        Effort::High => 1.0,
+        Effort::Low => None,
+        Effort::Medium => Some(4_096),
+        Effort::High => Some(8_192),
     }
 }
 
-/// The sampling temperature for a given attempt: the effort base, raised by
-/// 0.5 per retry and capped at 1.0. At effort=low the base is 0.0, and a
-/// temperature-0 retry is a replay: the 2026-07-01 postmortem caught one check
-/// reproducing its fatal trajectory near-verbatim on all three attempts. A
-/// retry has to sample differently to be worth its wall-clock.
-fn attempt_temperature(effort: Effort, attempt: u32) -> f32 {
-    let base = effort_temperature(effort);
-    (base + 0.5 * attempt.saturating_sub(1) as f32).min(1.0)
+/// The sampling temperature for a thinking-free (low-effort) attempt:
+/// deterministic (0.0) on the first attempt, raised by 0.5 per retry and
+/// capped at 1.0. A temperature-0 retry is a replay: the 2026-07-01 postmortem
+/// caught one check reproducing its fatal trajectory near-verbatim on all
+/// three attempts — a retry has to sample differently to be worth its
+/// wall-clock. Thinking runs take no temperature at all (the API requires it
+/// unset when thinking is enabled, and thinking samples at 1.0), which gives
+/// their retries natural diversity.
+fn attempt_temperature(attempt: u32) -> f32 {
+    (0.5 * attempt.saturating_sub(1) as f32).min(1.0)
 }
 
 #[async_trait]
@@ -180,10 +186,15 @@ impl CheckExecutor for CerseiExecutor {
             .permission_policy(AllowReadOnly)
             .tools(read_only_tools())
             .tool(judge)
-            // Thinking is intentionally left disabled (see `effort_temperature`).
-            .temperature(attempt_temperature(self.effort, req.attempt))
             .max_turns(MAX_TURNS)
             .cancel_token(cancel.clone());
+
+        // Exactly one reasoning control applies: the API rejects a temperature
+        // when extended thinking is enabled (see [`thinking_budget`]).
+        agent_builder = match thinking_budget(self.effort) {
+            Some(budget) => agent_builder.thinking_budget(budget),
+            None => agent_builder.temperature(attempt_temperature(req.attempt)),
+        };
 
         // `.system_prompt()`, not `.append_system_prompt()`: cersei's agent
         // runner only ever reads `Agent.system_prompt` when building each
@@ -195,15 +206,29 @@ impl CheckExecutor for CerseiExecutor {
             agent_builder = agent_builder.system_prompt(project_prompt);
         }
 
-        // When trace capture is on, tee every agent event into a recorder.
-        // `emit` invokes this synchronously for each event *before* the loop's
-        // early returns, so the trace survives post-verdict cancellation and the
-        // drop-on-timeout below (which cersei's own session persistence would
-        // miss). The executor owns a clone, so a dropped agent doesn't lose it.
+        // Observe agent events for two purposes sharing the builder's single
+        // `on_event` slot. The turn counter runs unconditionally: the success
+        // path cancels the agent the instant it reports, which makes `run`
+        // return `Err(Cancelled)` and discards cersei's own turn count — so
+        // without it every successful check would report 0 turns. The trace
+        // recorder is opt-in; `emit` invokes this synchronously for each event
+        // *before* the loop's early returns, so the trace survives post-verdict
+        // cancellation and the drop-on-timeout below (which cersei's own
+        // session persistence would miss). The executor owns clones, so a
+        // dropped agent loses neither.
         let recorder = self.capture_traces.then(|| Arc::new(TraceRecorder::new()));
-        if let Some(recorder) = &recorder {
-            let recorder = Arc::clone(recorder);
-            agent_builder = agent_builder.on_event(move |event| recorder.record(event));
+        let turns_seen = Arc::new(AtomicU32::new(0));
+        {
+            let recorder = recorder.clone();
+            let turns_seen = Arc::clone(&turns_seen);
+            agent_builder = agent_builder.on_event(move |event| {
+                if let AgentEvent::TurnStart { turn } = event {
+                    turns_seen.fetch_max(*turn, Ordering::Relaxed);
+                }
+                if let Some(recorder) = &recorder {
+                    recorder.record(event);
+                }
+            });
         }
 
         let agent = agent_builder
@@ -236,7 +261,7 @@ impl CheckExecutor for CerseiExecutor {
                     // Our own post-report cancellation is not an error.
                     stop_reason: matches!(err, CerseiError::Cancelled)
                         .then(|| "cancelled".to_string()),
-                    turns: 0,
+                    turns: turns_seen.load(Ordering::Relaxed),
                     error: (!reported).then(|| err.to_string()),
                     trace_jsonl: None,
                 }
@@ -245,7 +270,7 @@ impl CheckExecutor for CerseiExecutor {
                 // A verdict may have landed in the instant before the timeout.
                 verdict,
                 stop_reason: None,
-                turns: 0,
+                turns: turns_seen.load(Ordering::Relaxed),
                 error: Some(format!("agent timed out after {:?}", self.timeout)),
                 trace_jsonl: None,
             },
@@ -276,11 +301,22 @@ mod tests {
 
     #[test]
     fn retries_raise_the_temperature_up_to_the_cap() {
-        assert_eq!(attempt_temperature(Effort::Low, 1), 0.0);
-        assert_eq!(attempt_temperature(Effort::Low, 2), 0.5);
-        assert_eq!(attempt_temperature(Effort::Low, 3), 1.0);
-        assert_eq!(attempt_temperature(Effort::Medium, 2), 1.0);
+        assert_eq!(attempt_temperature(1), 0.0);
+        assert_eq!(attempt_temperature(2), 0.5);
+        assert_eq!(attempt_temperature(3), 1.0);
         // Already at the cap: retries must not push past valid API range.
-        assert_eq!(attempt_temperature(Effort::High, 3), 1.0);
+        assert_eq!(attempt_temperature(4), 1.0);
+    }
+
+    #[test]
+    fn only_low_effort_runs_without_thinking() {
+        assert_eq!(thinking_budget(Effort::Low), None);
+        let medium = thinking_budget(Effort::Medium).unwrap();
+        let high = thinking_budget(Effort::High).unwrap();
+        assert!(medium < high);
+        // The Anthropic minimum thinking budget is 1024; the agent's default
+        // max_tokens is 16384 and budgets must stay strictly below it.
+        assert!(medium >= 1024);
+        assert!(high < 16384);
     }
 }
