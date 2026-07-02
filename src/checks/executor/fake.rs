@@ -22,7 +22,8 @@ pub struct FakeExecutor {
     /// id to `(report_on_attempt, report)`. Exercises the retry path: the same
     /// `CheckId` is re-run, so the fake counts attempts per id.
     silent_until: HashMap<CheckId, (usize, CheckReport)>,
-    seen: Mutex<Vec<CheckId>>,
+    /// Every `(check_id, attempt)` the fake was asked to run, in call order.
+    seen: Mutex<Vec<(CheckId, u32)>>,
 }
 
 impl FakeExecutor {
@@ -72,6 +73,18 @@ impl FakeExecutor {
 
     /// The check ids the fake was asked to run, in call order.
     pub fn seen(&self) -> Vec<CheckId> {
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// The `(check_id, attempt)` pairs the fake was asked to run, in call
+    /// order — lets tests assert the retry plumbing threads attempt numbers
+    /// through to the executor.
+    pub fn seen_attempts(&self) -> Vec<(CheckId, u32)> {
         self.seen.lock().unwrap().clone()
     }
 }
@@ -81,8 +94,8 @@ impl CheckExecutor for FakeExecutor {
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
         let attempt = {
             let mut seen = self.seen.lock().unwrap();
-            seen.push(req.check_id);
-            seen.iter().filter(|id| **id == req.check_id).count()
+            seen.push((req.check_id, req.attempt));
+            seen.iter().filter(|(id, _)| *id == req.check_id).count()
         };
 
         if self.silent.contains(&req.check_id) {

@@ -97,7 +97,12 @@ impl CheckExecutor for ClaudeExecutor {
             "dispatching claude -p check (fallback)",
         );
 
-        let instructions = assemble_instructions(&req.check, &file_report_directive());
+        let instructions = assemble_instructions(
+            &req.check,
+            &file_report_directive(),
+            &req.working_dir,
+            req.attempt,
+        );
 
         let mut cmd = Command::new(&self.program);
         cmd.arg("-p")

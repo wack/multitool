@@ -15,6 +15,7 @@ use cersei_types::CerseiError;
 use miette::{Result, miette};
 use tokio_util::sync::CancellationToken;
 
+use super::jail::Jailed;
 use super::judge::{JudgeTool, VerdictSink};
 use super::trace::{TraceHeader, TraceRecorder, serialize_trace};
 use super::{
@@ -70,11 +71,27 @@ impl CerseiExecutor {
 /// The read-only tool set a verification agent gets by default: observe, do not
 /// mutate. Execution-requiring checks (which would need Bash/Write) are gated
 /// separately and are future work — the default is least privilege.
+///
+/// Each tool is [`Jailed`] to the agent's working directory: "read-only" alone
+/// still allowed reading anywhere the user can, which let lost agents launch
+/// unbounded globs over the host filesystem (timeouts) and grade the live
+/// repository instead of the sandbox (postmortem C5). The jail turns an
+/// out-of-sandbox path into an immediate tool error that steers the agent back.
 fn read_only_tools() -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(cersei_tools::file_read::FileReadTool),
-        Box::new(cersei_tools::grep_tool::GrepTool),
-        Box::new(cersei_tools::glob_tool::GlobTool),
+        Box::new(Jailed::path_keys(
+            cersei_tools::file_read::FileReadTool,
+            &["file_path"],
+        )),
+        Box::new(Jailed::path_keys(
+            cersei_tools::grep_tool::GrepTool,
+            &["path"],
+        )),
+        Box::new(Jailed::glob(
+            cersei_tools::glob_tool::GlobTool,
+            &["path"],
+            "pattern",
+        )),
     ]
 }
 
@@ -111,6 +128,16 @@ fn effort_temperature(effort: Effort) -> f32 {
     }
 }
 
+/// The sampling temperature for a given attempt: the effort base, raised by
+/// 0.5 per retry and capped at 1.0. At effort=low the base is 0.0, and a
+/// temperature-0 retry is a replay: the 2026-07-01 postmortem caught one check
+/// reproducing its fatal trajectory near-verbatim on all three attempts. A
+/// retry has to sample differently to be worth its wall-clock.
+fn attempt_temperature(effort: Effort, attempt: u32) -> f32 {
+    let base = effort_temperature(effort);
+    (base + 0.5 * attempt.saturating_sub(1) as f32).min(1.0)
+}
+
 #[async_trait]
 impl CheckExecutor for CerseiExecutor {
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
@@ -136,7 +163,12 @@ impl CheckExecutor for CerseiExecutor {
         let cancel = CancellationToken::new();
         let judge = JudgeTool::new(sink.clone(), cancel.clone());
 
-        let instructions = assemble_instructions(&req.check, &judge_tool_directive());
+        let instructions = assemble_instructions(
+            &req.check,
+            &judge_tool_directive(),
+            &req.working_dir,
+            req.attempt,
+        );
 
         let mut agent_builder = Agent::builder()
             .provider_boxed(provider)
@@ -149,7 +181,7 @@ impl CheckExecutor for CerseiExecutor {
             .tools(read_only_tools())
             .tool(judge)
             // Thinking is intentionally left disabled (see `effort_temperature`).
-            .temperature(effort_temperature(self.effort))
+            .temperature(attempt_temperature(self.effort, req.attempt))
             .max_turns(MAX_TURNS)
             .cancel_token(cancel.clone());
 
@@ -235,5 +267,20 @@ impl CheckExecutor for CerseiExecutor {
         }
 
         Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retries_raise_the_temperature_up_to_the_cap() {
+        assert_eq!(attempt_temperature(Effort::Low, 1), 0.0);
+        assert_eq!(attempt_temperature(Effort::Low, 2), 0.5);
+        assert_eq!(attempt_temperature(Effort::Low, 3), 1.0);
+        assert_eq!(attempt_temperature(Effort::Medium, 2), 1.0);
+        // Already at the cap: retries must not push past valid API range.
+        assert_eq!(attempt_temperature(Effort::High, 3), 1.0);
     }
 }
