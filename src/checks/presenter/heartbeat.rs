@@ -40,7 +40,8 @@ impl HeartbeatBackend {
         }
     }
 
-    /// The heartbeat text, e.g. `[multi] 7/12 checks complete · 4 running · 3m12s`.
+    /// The heartbeat text, e.g.
+    /// `[multi] 7/12 checks complete · 4 running · 3m12s · claude-sonnet-4-6`.
     /// Returns `None` before there's anything meaningful to report.
     fn line(&self, state: &PresenterState) -> Option<String> {
         let total = state.total?;
@@ -49,9 +50,10 @@ impl HeartbeatBackend {
         }
         let elapsed = human_elapsed(state.run_started.elapsed());
         Some(format!(
-            "[multi] {}/{total} checks complete · {} running · {elapsed}",
+            "[multi] {}/{total} checks complete · {} running · {elapsed} · {}",
             state.done(),
             state.running(),
+            state.model,
         ))
     }
 
@@ -123,7 +125,7 @@ mod tests {
     #[test]
     fn no_line_until_total_is_known() {
         let backend = HeartbeatBackend::new(false);
-        let mut state = PresenterState::new();
+        let mut state = PresenterState::new("test-model".into());
         queued(&mut state, 0);
         // Total unknown ⇒ nothing to print yet.
         assert!(backend.line(&state).is_none());
@@ -131,12 +133,13 @@ mod tests {
         state.apply(&UiEvent::DiscoveryComplete { total_checks: 2 });
         let line = backend.line(&state).expect("line once total is known");
         assert!(line.starts_with("[multi] 0/2 checks complete"), "{line}");
+        assert!(line.ends_with("test-model"), "{line}");
     }
 
     #[test]
     fn line_reflects_done_and_running_counts() {
         let backend = HeartbeatBackend::new(false);
-        let mut state = PresenterState::new();
+        let mut state = PresenterState::new("test-model".into());
         queued(&mut state, 0);
         queued(&mut state, 1);
         state.apply(&UiEvent::DiscoveryComplete { total_checks: 2 });
@@ -157,7 +160,7 @@ mod tests {
     #[test]
     fn empty_suite_emits_nothing() {
         let backend = HeartbeatBackend::new(true);
-        let mut state = PresenterState::new();
+        let mut state = PresenterState::new("test-model".into());
         state.apply(&UiEvent::DiscoveryComplete { total_checks: 0 });
         assert!(backend.line(&state).is_none());
     }

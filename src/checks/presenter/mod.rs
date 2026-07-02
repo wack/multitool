@@ -106,10 +106,10 @@ pub(crate) struct PresenterActor {
 }
 
 impl PresenterActor {
-    /// Build the actor over a chosen backend.
-    pub(crate) fn new(backend: Box<dyn RenderBackend>) -> Self {
+    /// Build the actor over a chosen backend, for a run against `model`.
+    pub(crate) fn new(backend: Box<dyn RenderBackend>, model: String) -> Self {
         Self {
-            state: PresenterState::new(),
+            state: PresenterState::new(model),
             backend,
             ticker: None,
             log_pump: None,
@@ -265,7 +265,8 @@ mod tests {
     #[tokio::test]
     async fn actor_folds_events_and_records_them() {
         let (backend, events) = RecordingBackend::new();
-        let presenter = PresenterActor::spawn(PresenterActor::new(Box::new(backend)));
+        let presenter =
+            PresenterActor::spawn(PresenterActor::new(Box::new(backend), "test-model".into()));
 
         presenter
             .tell(UiEvent::CheckQueued {

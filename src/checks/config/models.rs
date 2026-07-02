@@ -8,8 +8,17 @@
 
 use super::schema::ProviderKind;
 
-/// Valid Anthropic model IDs.
-pub const ANTHROPIC_MODELS: &[&str] = &["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"];
+/// Valid Anthropic model IDs. Also includes Fireworks model IDs usable via
+/// Fireworks' Anthropic-compatible Messages endpoint (`[checks.providers.anthropic].base_url`
+/// pointed at `https://api.fireworks.ai/inference`) — Fireworks speaks the same
+/// wire format, so it slots into the `anthropic` provider rather than needing
+/// its own [`ProviderKind`].
+pub const ANTHROPIC_MODELS: &[&str] = &[
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "accounts/fireworks/routers/glm-5p1-fast",
+];
 
 /// Valid OpenAI model IDs.
 pub const OPENAI_MODELS: &[&str] = &["gpt-4o", "gpt-4o-mini"];

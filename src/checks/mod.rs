@@ -156,7 +156,7 @@ fn spawn_core(
     oneshot::Receiver<RunResult>,
 ) {
     let (tx, rx) = oneshot::channel();
-    let presenter = PresenterActor::spawn(PresenterActor::new(backend));
+    let presenter = PresenterActor::spawn(PresenterActor::new(backend, cfg.model.clone()));
     let reporting = ReportingActor::spawn(ReportingActor::new(tx));
     let execution = ExecutionActor::spawn(ExecutionActor::new(
         executor,
