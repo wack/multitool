@@ -5,6 +5,8 @@
 //! overrides, so figment can merge them by key path with `flag > env > file`
 //! precedence. See [`super::load`].
 
+use std::path::PathBuf;
+
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +83,12 @@ pub struct ChecksSection {
     /// available CPU cores).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<usize>,
+    /// Where to write the opt-in session-trace archive. When set, every check
+    /// execution's agent session is captured and bundled into this `.tar.gz`
+    /// (see [`crate::checks::trace_archive`]); unset (the default) disables
+    /// capture entirely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_archive: Option<PathBuf>,
     /// Optional, non-secret per-provider base-URL overrides.
     #[serde(default)]
     pub providers: ProvidersSection,
@@ -140,6 +148,8 @@ pub struct CliChecksOverrides {
     pub executor: Option<ExecutorKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_archive: Option<PathBuf>,
 }
 
 impl CliOverrides {
@@ -150,6 +160,7 @@ impl CliOverrides {
         effort: Option<Effort>,
         executor: Option<ExecutorKind>,
         concurrency: Option<usize>,
+        trace_archive: Option<PathBuf>,
     ) -> Self {
         Self {
             checks: CliChecksOverrides {
@@ -158,6 +169,7 @@ impl CliOverrides {
                 effort,
                 executor,
                 concurrency,
+                trace_archive,
             },
         }
     }

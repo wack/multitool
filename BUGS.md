@@ -2,6 +2,15 @@
 
 These are bugs (or missing features) I've observed while working with `multi checks`.
 
+- [ ] Output is now hanging. I suspect this is recent (within the last few commits) and it started
+happening after implement the changes to the `Presenter` actor to fix writing text off-screen without wrapping.
+
+- [ ] No limit on max turns.
+
+- [ ] Remove the `Claude -p` executor.
+
+- [ ] Logs no longer report the id of the check that failed (or the number of attempted retries)
+
 - [ ] No use of Cersei workflows to chain multiple prompts together.
 
 - [ ] No support for Fireworks AI.
@@ -21,6 +30,19 @@ These are bugs (or missing features) I've observed while working with `multi che
 - [ ] No trace capture. We need a way to record all session traces so that we can analyze why they failed.
 
 - CERSEI: `append_system_prompt()` function is dead unless routed through the separate build_system_prompt() composer.
+
+- [ ] `Ctrl-C` (shutdown signals) needs to be handled gracefully and cross-platform.
+The `multi check` presenter installs a raw `libc::signal(SIGINT, …)` handler
+(`install_terminal_guards`, src/checks/presenter/inline.rs:224) that is Unix-only
+(won't build/run on Windows) and hard-`_exit(130)`s: it restores the cursor but
+skips graceful teardown, so in-flight agent sessions, the MCP result server, and
+spawned Cersei subprocesses are killed without cleanup and no partial
+results/traces get flushed. Contrast `multi run`, which already does this
+correctly and cross-platform via `tokio_graceful_shutdown::Toplevel::catch_signals()`
++ `handle_shutdown_requests()` (src/cmd/run/canary_mode.rs:63). `check` should adopt
+the same graceful-shutdown path (or an equivalent `tokio::signal::ctrl_c` + coordinated
+cancellation covering SIGINT/SIGTERM and Windows Ctrl-C/Ctrl-Break) while still
+guaranteeing the terminal is restored on the way out.
 
 ## Fixes
 

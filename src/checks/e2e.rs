@@ -201,6 +201,7 @@ impl CheckExecutor for InterleavingExecutor {
             stop_reason: Some("interleaving probe".into()),
             turns: 1,
             error: None,
+            trace_jsonl: None,
         })
     }
 }
@@ -267,6 +268,7 @@ async fn invalid_suite_aborts_run_without_spawning_agents() {
         Arc::new(NoopSandbox),
         dir.path(),
         null_backend(),
+        None,
     )
     .await;
 

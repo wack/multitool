@@ -18,6 +18,7 @@ mod providers;
 mod schema;
 
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use figment::{
@@ -74,6 +75,9 @@ pub struct Config {
     /// calling the judge tool; a fresh attempt usually succeeds. A check only
     /// resolves as errored after all attempts are exhausted.
     pub max_attempts: usize,
+    /// Where to bundle the opt-in session-trace archive, or `None` (default) to
+    /// disable trace capture. See [`crate::checks::trace_archive`].
+    pub trace_archive: Option<PathBuf>,
 }
 
 impl Config {
@@ -135,6 +139,9 @@ impl Resolved {
                 cfg.model.clone(),
                 cfg.effort,
                 cfg.agent_timeout,
+                // The archive path lives at the orchestration layer; the executor
+                // only needs to know whether to capture a per-execution trace.
+                cfg.trace_archive.is_some(),
             )),
             ExecutorKind::Claude => cfg.build_claude_executor(),
         };
@@ -198,6 +205,7 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         concurrency,
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
+        trace_archive: checks.trace_archive,
     };
 
     Ok(Resolved {
@@ -224,6 +232,7 @@ pub fn configuration() -> Config {
         concurrency: default_concurrency(),
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
+        trace_archive: None,
     }
 }
 
@@ -245,6 +254,7 @@ mod tests {
                 effort: Some(Effort::Low),
                 executor: None,
                 concurrency: None,
+                trace_archive: None,
                 providers: ProvidersSection::default(),
             },
         }
@@ -270,6 +280,7 @@ mod tests {
             let overrides = CliOverrides::new(
                 Some(ProviderKind::OpenAi),
                 Some("gpt-4o".into()),
+                None,
                 None,
                 None,
                 None,
@@ -307,7 +318,7 @@ mod tests {
 
             // ...and a flag outranks env.
             let overrides =
-                CliOverrides::new(None, Some("claude-opus-4-8".into()), None, None, None);
+                CliOverrides::new(None, Some("claude-opus-4-8".into()), None, None, None, None);
             let checks = resolve_layers(file, overrides).unwrap();
             assert_eq!(checks.model.as_deref(), Some("claude-opus-4-8"));
             Ok(())

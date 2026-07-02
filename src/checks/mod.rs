@@ -33,16 +33,20 @@ pub mod model;
 mod presenter;
 mod reporting;
 pub mod sandbox;
+mod trace_archive;
 
 #[cfg(test)]
 mod e2e;
 
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
 use kameo::actor::{ActorRef, Spawn};
 use miette::{IntoDiagnostic, Result, miette};
 use tokio::sync::oneshot;
+
+use crate::checks::trace_archive::TraceCollector;
 
 use crate::Terminal;
 use crate::checks::config::{CliOverrides, Config};
@@ -88,9 +92,35 @@ pub async fn run(terminal: &Terminal, working_dir: &Path, overrides: CliOverride
         owns_record,
     } = select_backend(terminal.stdout_allows_color());
 
+    // If trace capture is enabled, create the shared collector now and hand a
+    // clone to the pipeline: the executor fills each execution's trace and the
+    // execution actor routes every attempt (retries included) here.
+    let trace_collector = resolved
+        .config
+        .trace_archive
+        .as_ref()
+        .map(|_| Arc::new(TraceCollector::new()));
+
     // Phases 2–5: drive the actor pipeline (with the presenter) to its terminal
     // result, then render the record.
-    let outcomes = run_pipeline(&resolved.config, executor, sandbox, working_dir, backend).await?;
+    let outcomes = run_pipeline(
+        &resolved.config,
+        executor,
+        sandbox,
+        working_dir,
+        backend,
+        trace_collector.clone(),
+    )
+    .await?;
+
+    // Bundle the captured traces. Best-effort: a trace-archiving failure must not
+    // fail an otherwise-successful check run. `run_pipeline` has already torn the
+    // presenter down, so stderr is free for the notice.
+    if let (Some(collector), Some(path)) =
+        (&trace_collector, resolved.config.trace_archive.as_deref())
+    {
+        write_trace_archive(collector, path);
+    }
 
     if owns_record {
         // The inline TUI was the sole terminal writer and has already flushed the
@@ -117,6 +147,7 @@ fn spawn_core(
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     working_dir: &Path,
     backend: Box<dyn RenderBackend>,
+    trace_collector: Option<Arc<TraceCollector>>,
 ) -> (
     ActorRef<ExecutionActor>,
     ActorRef<ReportingActor>,
@@ -134,6 +165,7 @@ fn spawn_core(
         cfg.max_attempts,
         reporting.clone(),
         presenter.clone(),
+        trace_collector,
     ));
     (execution, reporting, presenter, rx)
 }
@@ -202,6 +234,31 @@ async fn stream_requirements(
     Ok(())
 }
 
+/// Build and write the opt-in session-trace archive. Best-effort: on failure it
+/// logs and returns rather than failing an otherwise-successful check run. Only
+/// called when `--trace-archive` is set.
+fn write_trace_archive(collector: &TraceCollector, path: &Path) {
+    if collector.is_empty() {
+        tracing::info!("trace capture enabled but no check executions ran; no archive written");
+        return;
+    }
+    match trace_archive::write_archive(collector, path) {
+        Ok(count) => {
+            tracing::info!(count, path = %path.display(), "wrote check session-trace archive");
+            let _ = writeln!(
+                std::io::stderr(),
+                "Wrote {count} check session trace(s) to {}",
+                path.display()
+            );
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            path = %path.display(),
+            "failed to write check session-trace archive",
+        ),
+    }
+}
+
 /// Await the pipeline's terminal result, mapping a dropped channel (a dead
 /// reporting actor) to a diagnostic so a crashed actor fails the run rather than
 /// hanging it.
@@ -223,9 +280,16 @@ async fn run_pipeline(
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     working_dir: &Path,
     backend: Box<dyn RenderBackend>,
+    trace_collector: Option<Arc<TraceCollector>>,
 ) -> Result<Vec<RequirementOutcome>> {
-    let (execution, reporting, presenter, rx) =
-        spawn_core(cfg, executor, sandbox, working_dir, backend);
+    let (execution, reporting, presenter, rx) = spawn_core(
+        cfg,
+        executor,
+        sandbox,
+        working_dir,
+        backend,
+        trace_collector,
+    );
     let discovery = DiscoveryActor::spawn(DiscoveryActor::new(
         working_dir.to_path_buf(),
         execution.clone(),
@@ -262,7 +326,7 @@ async fn run_to_outcomes(
     backend: Box<dyn RenderBackend>,
 ) -> Result<Vec<RequirementOutcome>> {
     let (execution, reporting, presenter, rx) =
-        spawn_core(cfg, executor, sandbox, working_dir, backend);
+        spawn_core(cfg, executor, sandbox, working_dir, backend, None);
     stream_requirements(&execution, &presenter, requirements).await?;
     let outcomes = await_result(rx).await;
     shutdown_presenter(&presenter).await;

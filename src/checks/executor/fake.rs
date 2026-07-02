@@ -91,6 +91,7 @@ impl CheckExecutor for FakeExecutor {
                 stop_reason: Some("fake: finished without reporting".into()),
                 turns: 1,
                 error: None,
+                trace_jsonl: None,
             });
         }
 
@@ -102,6 +103,7 @@ impl CheckExecutor for FakeExecutor {
                 stop_reason: Some("fake: silent-until".into()),
                 turns: 1,
                 error: None,
+                trace_jsonl: None,
             });
         }
 
@@ -110,6 +112,7 @@ impl CheckExecutor for FakeExecutor {
             stop_reason: Some("fake: reported".into()),
             turns: 1,
             error: None,
+            trace_jsonl: None,
         })
     }
 }
