@@ -4,8 +4,9 @@
 //! and modify files freely without corrupting the real working directory. The
 //! abstraction is a boxed trait object (mirroring `BoxedIngress` etc.); the
 //! concrete implementation is selected per platform via `cfg`. macOS ships an
-//! APFS `clonefile` implementation; other targets get a stub that errors, so the
-//! crate still builds everywhere.
+//! APFS `clonefile` implementation and Linux a reflink (`FICLONE`)
+//! implementation; any remaining target gets a stub that errors, so the crate
+//! still builds everywhere.
 
 use std::path::{Path, PathBuf};
 
@@ -15,7 +16,10 @@ use miette::Result;
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod fallback;
 
 /// A copy-on-write sandbox factory.
@@ -47,15 +51,19 @@ impl SandboxHandle {
 
 /// Select the platform sandbox implementation.
 ///
-/// macOS → the real APFS CoW sandbox. Other platforms → an unsupported stub
-/// that fails with a clear diagnostic (CoW support for Linux/Windows is tracked
-/// under *Future work*).
+/// macOS → the APFS `clonefile` CoW sandbox. Linux → the reflink (`FICLONE`) CoW
+/// sandbox. Any other platform → an unsupported stub that fails with a clear
+/// diagnostic (Windows CoW support is tracked under *Future work*).
 pub fn select_sandbox() -> BoxedSandbox {
     #[cfg(target_os = "macos")]
     {
         Box::new(macos::ApfsSandbox::new())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(linux::ReflinkSandbox::new())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Box::new(fallback::UnsupportedSandbox)
     }
@@ -85,7 +93,7 @@ mod tests {
     assert_obj_safe!(Sandbox);
 
     #[tokio::test]
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     async fn clone_is_independent_of_source() {
         use std::fs;
         let src = tempfile::TempDir::new().unwrap();
