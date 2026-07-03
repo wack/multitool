@@ -92,6 +92,7 @@ cersei-agent = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 cersei-memory = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 cersei-tools = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 cersei-types = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
+cersei-workflows = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 textwrap = "0.16"
 
 [workspace.dependencies]

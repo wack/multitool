@@ -1,31 +1,37 @@
 //! The execution phase (M5; in-process rework in MULTI-1367; actor rework in
-//! MULTI-1368).
+//! MULTI-1368; cersei-workflows fan-out in MULTI-1372).
 //!
-//! [`ExecutionActor`] receives one [`CheckDiscovered`] per validated check and
-//! **immediately** offloads the (long-running) agent run onto a spawned task —
-//! never `await`-ing it inline, since a Kameo actor processes one message at a
-//! time to completion and awaiting here would serialize the pipeline. Each task
+//! [`ExecutionActor`] **buffers** each [`CheckDiscovered`] job as discovery
+//! streams it in, then — on the [`DiscoveryComplete`] sentinel — dispatches every
+//! buffered check through a cersei **`foreach` workflow** whose bounded
+//! concurrency is `cfg.concurrency`. The workflow replaces the hand-rolled
+//! semaphore + per-check `tokio::spawn` + retry-self-message machinery: the engine
+//! runs one `run-check` step per check, caps how many run at once, and each step
 //! creates a CoW sandbox, runs the check's agent via the injected
-//! [`CheckExecutor`] (which returns the verdict inline), drops the sandbox, and
-//! either forwards a [`CheckCompleted`] to reporting or — if the agent did not
-//! report — asks the actor to [`RetryCheck`] it.
+//! [`CheckExecutor`] (which returns the verdict inline), drops the sandbox,
+//! harvests the attempt's trace, and forwards a [`CheckCompleted`] to reporting.
 //!
-//! Bounded concurrency is enforced by a shared [`Semaphore`] acquired *inside*
-//! each task (the semaphore is the cap, not the mailbox depth — decision #5).
-//! Retries (`cfg.max_attempts`) are reframed as self-messages.
+//! A check whose agent never reports a verdict is retried **in place** (up to
+//! `cfg.max_attempts`) inside the step, escalating the attempt number so the
+//! executor can vary temperature/instructions — the same retry policy the old
+//! `RetryCheck` self-message implemented, now a plain loop. Buffering until the
+//! sentinel is behaviorally equivalent to the old burst dispatch: discovery
+//! parse-gates the whole suite before streaming a single check, so all jobs are
+//! always known by the time the workflow starts.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use cersei_workflows::{FnStep, RunStatus, StepRegistry, Workflow, WorkflowBuilder};
 use kameo::Actor;
 use kameo::actor::ActorRef;
 use kameo::message::{Context, Message};
 use miette::Result;
-use tokio::sync::Semaphore;
+use serde_json::{Value, json};
 
 use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport};
 use crate::checks::messages::{
-    CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete, RetryCheck,
+    CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete,
 };
 use crate::checks::model::{Check, CheckId, CheckOutcome, Verdict};
 use crate::checks::presenter::{PresenterActor, UiEvent};
@@ -33,14 +39,14 @@ use crate::checks::reporting::ReportingActor;
 use crate::checks::sandbox::Sandbox;
 use crate::checks::trace_archive::{TraceCollector, TraceEntry};
 
-/// The execution actor: turns a stream of discovered checks into a stream of
-/// completed checks, fanning agent runs out onto bounded background tasks.
+/// The execution actor: buffers the discovered checks, then fans them out
+/// through a bounded-concurrency cersei `foreach` workflow.
 pub(crate) struct ExecutionActor {
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     working_dir: PathBuf,
-    /// The concurrency cap, shared into every spawned task.
-    semaphore: Arc<Semaphore>,
+    /// The bounded-concurrency cap handed to the `foreach` workflow (≥1).
+    concurrency: usize,
     /// How many times to (re)run a check whose agent fails to report (≥1).
     max_attempts: usize,
     /// The downstream reporting actor.
@@ -48,10 +54,13 @@ pub(crate) struct ExecutionActor {
     /// The display-only presenter, told of each check's lifecycle milestones.
     presenter: ActorRef<PresenterActor>,
     /// Opt-in sink for per-execution session traces (`multi check
-    /// --trace-archive`). `None` disables capture. Shared across the spawned
-    /// per-attempt tasks; every attempt (including retries) pushes its trace
-    /// here before signalling completion downstream.
+    /// --trace-archive`). `None` disables capture. Shared across the concurrent
+    /// `run-check` steps; every attempt (including retries) pushes its trace here
+    /// before signalling completion downstream.
     trace_collector: Option<Arc<TraceCollector>>,
+    /// Checks buffered as discovery streams them, drained into the workflow when
+    /// the [`DiscoveryComplete`] sentinel arrives.
+    jobs: Vec<CheckJob>,
 }
 
 impl Actor for ExecutionActor {
@@ -83,104 +92,84 @@ impl ExecutionActor {
             executor,
             sandbox,
             working_dir,
-            semaphore: Arc::new(Semaphore::new(concurrency.max(1))),
+            concurrency: concurrency.max(1),
             max_attempts: max_attempts.max(1),
             reporting,
             presenter,
             trace_collector,
+            jobs: Vec::new(),
         }
     }
 
-    /// Offload one attempt of `job` onto a background task. Returns immediately,
-    /// keeping the actor mailbox responsive; the permit is acquired *inside* the
-    /// task so the semaphore — not the mailbox — is the concurrency cap.
-    fn dispatch(&self, ctx: &mut Context<Self, ()>, job: CheckJob, attempt: usize) {
+    /// Run every buffered check through a single-node `foreach` workflow whose
+    /// bounded concurrency is `self.concurrency`. Each array element is a `{ id }`
+    /// pointer into `jobs`; the `run-check` step looks the job up, drives its
+    /// (possibly retried) agent run, and `tell`s reporting directly — so no domain
+    /// type ever has to cross the workflow's JSON boundary. Awaited inline: this
+    /// is the actor's last message, so blocking its handler until every check
+    /// settles is exactly the intended barrier and needs no detached tasks.
+    async fn run_checks(&self, jobs: Vec<CheckJob>) {
+        let count = jobs.len();
+        let jobs = Arc::new(jobs);
+
         let executor = self.executor.clone();
         let sandbox = self.sandbox.clone();
-        let semaphore = self.semaphore.clone();
         let working_dir = self.working_dir.clone();
         let reporting = self.reporting.clone();
         let presenter = self.presenter.clone();
         let trace_collector = self.trace_collector.clone();
-        let me = ctx.actor_ref().clone();
-        let id = job.id;
+        let max_attempts = self.max_attempts;
 
-        tokio::spawn(async move {
-            // Acquire the permit inside the task. If the semaphore was closed the
-            // pipeline is tearing down, so just drop the work.
-            let Ok(_permit) = semaphore.acquire_owned().await else {
-                return;
-            };
-
-            // Permit acquired ⇒ the agent is about to run: mark the check Running.
-            let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
-
-            let mut result = run_one(
-                executor,
-                sandbox,
-                job.id,
-                job.check.clone(),
-                &working_dir,
-                attempt,
-            )
-            .await;
-
-            // Harvest this attempt's trace *before* signalling completion, so it
-            // is collected even for retried attempts (whose outcome never reaches
-            // reporting) and is race-free with run finalization (the collector is
-            // populated before the `tell` that could trigger it).
-            if let Some(collector) = &trace_collector
-                && let Some(bytes) = result.as_mut().ok().and_then(|o| o.trace_jsonl.take())
-            {
-                collector.push(TraceEntry {
-                    req_index: job.req_index,
-                    req_title: job.req_title.clone(),
-                    check_id: job.id,
-                    check_title: job.check.title.clone(),
-                    attempt,
-                    bytes,
-                });
-            }
-
-            if has_verdict(Some(&result)) {
-                // The agent reported: reconcile, surface the verdict to the
-                // presenter, and forward straight to reporting.
-                let outcome = reconcile(Some(&result), &job.check.title);
-                let _ = presenter
-                    .tell(UiEvent::CheckSettled {
-                        id,
-                        outcome: outcome.clone(),
-                    })
+        let registry = StepRegistry::new();
+        registry.register(Arc::new(FnStep::new(
+            "run-check",
+            move |input: Value, _ctx| {
+                let executor = executor.clone();
+                let sandbox = sandbox.clone();
+                let working_dir = working_dir.clone();
+                let reporting = reporting.clone();
+                let presenter = presenter.clone();
+                let trace_collector = trace_collector.clone();
+                let jobs = jobs.clone();
+                async move {
+                    let id = input.get("id").and_then(Value::as_u64).unwrap_or(0) as usize;
+                    let job = jobs[id].clone();
+                    execute_check_job(
+                        executor,
+                        sandbox,
+                        &working_dir,
+                        &presenter,
+                        &reporting,
+                        trace_collector.as_ref(),
+                        max_attempts,
+                        job,
+                    )
                     .await;
-                if let Err(err) = reporting.tell(CheckCompleted { job, outcome }).await {
-                    tracing::debug!(?err, "reporting actor unavailable for completed check");
+                    Ok(json!({ "id": id }))
                 }
-            } else if let Err(err) = me
-                .tell(RetryCheck {
-                    job,
-                    attempt,
-                    last: result,
-                })
-                .await
-            {
-                tracing::debug!(?err, "execution actor unavailable for retry");
-            }
-        });
-    }
+            },
+        )));
 
-    /// Forward a terminal (attempts-exhausted, no-verdict) check to reporting as
-    /// an errored outcome.
-    async fn finish_errored(&self, job: CheckJob, last: Result<AgentOutcome>) {
-        let outcome = reconcile(Some(&last), &job.check.title);
-        let _ = self
-            .presenter
-            .tell(UiEvent::CheckSettled {
-                id: job.id,
-                outcome: outcome.clone(),
-            })
-            .await;
-        if let Err(err) = self.reporting.tell(CheckCompleted { job, outcome }).await {
-            tracing::debug!(?err, "reporting actor unavailable for errored check");
+        let def = WorkflowBuilder::new("checks")
+            .foreach("run-check", self.concurrency)
+            .commit();
+        let wf = match Workflow::compile(def, &registry) {
+            Ok(wf) => wf,
+            Err(err) => {
+                tracing::error!(?err, "failed to compile the checks workflow");
+                return;
+            }
+        };
+
+        let items: Vec<Value> = (0..count).map(|id| json!({ "id": id })).collect();
+        match wf.start(Value::Array(items)).await {
+            Ok(result) if result.status == RunStatus::Success => {}
+            Ok(result) => tracing::warn!(
+                status = ?result.status,
+                error = ?result.error,
+                "checks workflow did not run to success"
+            ),
+            Err(err) => tracing::error!(?err, "checks workflow failed to run"),
         }
     }
 }
@@ -188,33 +177,9 @@ impl ExecutionActor {
 impl Message<CheckDiscovered> for ExecutionActor {
     type Reply = ();
 
-    async fn handle(&mut self, msg: CheckDiscovered, ctx: &mut Context<Self, ()>) -> Self::Reply {
-        self.dispatch(ctx, msg.job, 1);
-    }
-}
-
-impl Message<RetryCheck> for ExecutionActor {
-    type Reply = ();
-
-    async fn handle(&mut self, msg: RetryCheck, ctx: &mut Context<Self, ()>) -> Self::Reply {
-        let RetryCheck { job, attempt, last } = msg;
-        if attempt < self.max_attempts {
-            tracing::info!(
-                check = job.id,
-                attempt = attempt + 1,
-                "retrying check whose agent did not report"
-            );
-            let _ = self
-                .presenter
-                .tell(UiEvent::CheckRetrying {
-                    id: job.id,
-                    attempt: attempt as u32,
-                })
-                .await;
-            self.dispatch(ctx, job, attempt + 1);
-        } else {
-            self.finish_errored(job, last).await;
-        }
+    async fn handle(&mut self, msg: CheckDiscovered, _ctx: &mut Context<Self, ()>) -> Self::Reply {
+        // Buffer; the whole set is dispatched at once on `DiscoveryComplete`.
+        self.jobs.push(msg.job);
     }
 }
 
@@ -223,21 +188,111 @@ impl Message<DiscoveryComplete> for ExecutionActor {
 
     async fn handle(
         &mut self,
-        msg: DiscoveryComplete,
+        _msg: DiscoveryComplete,
         _ctx: &mut Context<Self, ()>,
     ) -> Self::Reply {
+        // Drain the buffer and fan every check out through the workflow (awaited
+        // inline). Its `run-check` steps `tell` reporting one `CheckCompleted`
+        // each as they settle.
+        let jobs = std::mem::take(&mut self.jobs);
+        let total = jobs.len();
+        if !jobs.is_empty() {
+            self.run_checks(jobs).await;
+        }
+
         // Tell reporting how many completed checks to expect. Reporting gates
-        // finalization on its own count, so this is race-free regardless of
-        // whether agents have settled yet.
+        // finalization on its own fold count, so sending this after the workflow
+        // (every `CheckCompleted` already delivered) still finalizes correctly.
         if let Err(err) = self
             .reporting
             .tell(ExecutionComplete {
-                total_checks: msg.total_checks,
+                total_checks: total,
             })
             .await
         {
             tracing::debug!(?err, "reporting actor unavailable for execution-complete");
         }
+    }
+}
+
+/// Drive one check to a terminal outcome: run its agent, retrying in place (up to
+/// `max_attempts`) while the agent fails to report, then `tell` reporting the
+/// reconciled [`CheckCompleted`]. Fires the presenter's lifecycle events in the
+/// same order the old spawn+self-message path did:
+/// `CheckStarted, [CheckRetrying, CheckStarted]*, CheckSettled`.
+#[allow(clippy::too_many_arguments)]
+async fn execute_check_job(
+    executor: Arc<dyn CheckExecutor + Send + Sync>,
+    sandbox: Arc<dyn Sandbox + Send + Sync>,
+    working_dir: &Path,
+    presenter: &ActorRef<PresenterActor>,
+    reporting: &ActorRef<ReportingActor>,
+    trace_collector: Option<&Arc<TraceCollector>>,
+    max_attempts: usize,
+    job: CheckJob,
+) {
+    let id = job.id;
+    let mut attempt = 1;
+    loop {
+        // The agent is about to run: mark the check Running.
+        let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
+
+        let mut result = run_one(
+            executor.clone(),
+            sandbox.clone(),
+            job.id,
+            job.check.clone(),
+            working_dir,
+            attempt,
+        )
+        .await;
+
+        // Harvest this attempt's trace *before* signalling completion, so it is
+        // collected even for retried attempts (whose outcome never reaches
+        // reporting) and is race-free with run finalization.
+        if let Some(collector) = trace_collector
+            && let Some(bytes) = result.as_mut().ok().and_then(|o| o.trace_jsonl.take())
+        {
+            collector.push(TraceEntry {
+                req_index: job.req_index,
+                req_title: job.req_title.clone(),
+                check_id: job.id,
+                check_title: job.check.title.clone(),
+                attempt,
+                bytes,
+            });
+        }
+
+        // Reported a verdict, or attempts exhausted: reconcile, surface to the
+        // presenter, and forward the terminal outcome to reporting.
+        if has_verdict(Some(&result)) || attempt >= max_attempts {
+            let outcome = reconcile(Some(&result), &job.check.title);
+            let _ = presenter
+                .tell(UiEvent::CheckSettled {
+                    id,
+                    outcome: outcome.clone(),
+                })
+                .await;
+            if let Err(err) = reporting.tell(CheckCompleted { job, outcome }).await {
+                tracing::debug!(?err, "reporting actor unavailable for settled check");
+            }
+            return;
+        }
+
+        // No verdict and attempts remain: retry with an escalated attempt number
+        // (so the executor can vary temperature/instructions).
+        tracing::info!(
+            check = id,
+            attempt = attempt + 1,
+            "retrying check whose agent did not report"
+        );
+        let _ = presenter
+            .tell(UiEvent::CheckRetrying {
+                id,
+                attempt: attempt as u32,
+            })
+            .await;
+        attempt += 1;
     }
 }
 

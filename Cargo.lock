@@ -1005,7 +1005,7 @@ checksum = "4f4c707c6a209cbe82d10abd08e1ea8995e9ea937d2550646e02798948992be0"
 [[package]]
 name = "cersei-agent"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1032,7 +1032,7 @@ dependencies = [
 [[package]]
 name = "cersei-compression"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -1046,7 +1046,7 @@ dependencies = [
 [[package]]
 name = "cersei-embeddings"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "async-trait",
  "futures",
@@ -1062,7 +1062,7 @@ dependencies = [
 [[package]]
 name = "cersei-hooks"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "async-trait",
  "cersei-types",
@@ -1074,7 +1074,7 @@ dependencies = [
 [[package]]
 name = "cersei-lsp"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "dashmap",
  "serde",
@@ -1088,7 +1088,7 @@ dependencies = [
 [[package]]
 name = "cersei-mcp"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "async-trait",
  "cersei-types",
@@ -1102,7 +1102,7 @@ dependencies = [
 [[package]]
 name = "cersei-memory"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "async-trait",
  "cersei-types",
@@ -1120,7 +1120,7 @@ dependencies = [
 [[package]]
 name = "cersei-provider"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1140,7 +1140,7 @@ dependencies = [
 [[package]]
 name = "cersei-tools"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1184,7 +1184,7 @@ dependencies = [
 [[package]]
 name = "cersei-types"
 version = "0.2.6"
-source = "git+https://github.com/wack/cersei.git?branch=trunk#1045e58a0a127ef798453adcc87c2a6f667170b9"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1193,6 +1193,27 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "cersei-workflows"
+version = "0.2.6"
+source = "git+https://github.com/wack/cersei.git?branch=trunk#e75278d2d22d67674c154512de6d43c4161139bf"
+dependencies = [
+ "async-trait",
+ "cersei-agent",
+ "cersei-tools",
+ "cersei-types",
+ "chrono",
+ "dashmap",
+ "futures",
+ "parking_lot",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
  "uuid",
 ]
 
@@ -2752,7 +2773,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "system-configuration 0.7.0",
  "tokio",
  "tower-service",
@@ -3474,6 +3495,7 @@ dependencies = [
  "cersei-provider",
  "cersei-tools",
  "cersei-types",
+ "cersei-workflows",
  "chrono",
  "clap 4.6.1",
  "comrak",
@@ -4110,7 +4132,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "sfv",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "strum",
  "strum_macros",
  "thread_local",
@@ -4440,7 +4462,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.41",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4477,7 +4499,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.60.2",
 ]
