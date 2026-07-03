@@ -48,9 +48,9 @@ Inspect how the in-process executor assigns a session identifier to each check's
 
 Every check runs against a copy-on-write clone of the working tree, so a misbehaving agent cannot mutate the user's real files. Both checks below must pass for this requirement to be satisfied.
 
-## Check Sandbox Exists and Is Platform-Gated
+## Check Sandbox Is Cross-Platform and Platform-Gated
 
-Inspect the sandboxing code. Confirm there is a sandbox abstraction (a trait such as `Sandbox`) with a macOS copy-on-write implementation built on APFS `clonefile`, and that operating-system-specific code is selected with `cfg` attributes so the crate still compiles on non-macOS targets. The check fails if sandboxing is compiled unconditionally for a single operating system in a way that would break the build on other targets.
+Inspect the sandboxing code. Confirm there is a sandbox abstraction (a trait such as `Sandbox`) with a working copy-on-write implementation on **both** macOS and Linux: macOS built on APFS `clonefile`, and Linux built on reflinks (the `FICLONE` ioctl) with a plain-copy fallback for filesystems that lack reflink support. Operating-system-specific code must be selected with `cfg` attributes so the crate still compiles on every target. The check fails if a real sandbox is created on only one of macOS or Linux (for example, if Linux falls through to a stub that returns an "unsupported platform" error instead of cloning the working tree), or if sandboxing is compiled unconditionally for a single operating system in a way that would break the build on other targets.
 
 ## Check Execution Uses the Sandbox
 
