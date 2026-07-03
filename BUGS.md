@@ -2,27 +2,21 @@
 
 These are bugs (or missing features) I've observed while working with `multi checks`.
 
-- [ ] No use of Cersei workflows to chain multiple prompts together.
-
-- [ ] No GitHub Action available.
-
-- [ ] Logs no longer report the id of the check that failed (or the number of attempted retries)
-
-- [ ] Assemble_instructions is hard-coded: src/checks/executor/mod.rs:98 (definition), called from src/checks/executor/cersei.rs:110
-
-- [ ] No system prompt provided.
-
-- [ ] Not sure if prompt caching is enabled at all.
-
-- [ ] Running 16 agents seems to nearly freeze the computer. Use an OTel profile to determine if this is true.
-
-- [ ] No limit on max turns.
+- [ ] I have not fiddled with `max turns` yet.
 
 - [ ] No loading of skills.
 
-- [ ] No loading of RULES.md files from the .claude directory.
+- [ ] No loading of `RULES.md` files from the `.claude` directory.
 
-- CERSEI: `append_system_prompt()` function is dead unless routed through the separate build_system_prompt() composer.
+- [ ] Logs no longer report the id of the check that failed (or the number of attempted retries)
+
+- [ ] `assemble_instructions` is hard-coded: `src/checks/executor/mod.rs:98` (definition), called from `src/checks/executor/cersei.rs:110`
+
+- [ ] I haven't fiddled with the system prompt yet.
+
+- [ ] Not sure if prompt caching is enabled at all, but I suspect it is.
+
+- [ ] Running 16 agents seems to nearly freeze the computer. Use an OTel profile to determine if this is true.
 
 - [ ] `Ctrl-C` (shutdown signals) needs to be handled gracefully and cross-platform.
 The `multi check` presenter installs a raw `libc::signal(SIGINT, …)` handler
@@ -37,7 +31,13 @@ the same graceful-shutdown path (or an equivalent `tokio::signal::ctrl_c` + coor
 cancellation covering SIGINT/SIGTERM and Windows Ctrl-C/Ctrl-Break) while still
 guaranteeing the terminal is restored on the way out.
 
+- CERSEI: `append_system_prompt()` function is dead unless routed through the separate build_system_prompt() composer.
+
 ## Fixes
+
+- [x] No GitHub Action available.
+
+- [x] No use of Cersei workflows to chain multiple prompts together.
 
 - [x] No support for Fireworks AI.
 

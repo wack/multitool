@@ -13,9 +13,6 @@
 
 use std::path::PathBuf;
 
-use miette::Result;
-
-use crate::checks::executor::AgentOutcome;
 use crate::checks::model::{Check, CheckId, CheckOutcome};
 
 /// One validated check, ready to run, carried end-to-end through the pipeline so
@@ -46,17 +43,6 @@ pub struct CheckDiscovered {
 /// streamed (the end-of-stream sentinel for the discovery→execution edge).
 pub struct DiscoveryComplete {
     pub total_checks: usize,
-}
-
-/// Execution self-message: a spawned agent run finished without reporting a
-/// verdict; re-enqueue the same check (reframing the old retry loop as messages).
-pub struct RetryCheck {
-    pub job: CheckJob,
-    /// The 1-based attempt number that just finished without a verdict.
-    pub attempt: usize,
-    /// The outcome of that attempt, kept so the terminal (attempts-exhausted)
-    /// case can synthesize an accurate "errored" reason.
-    pub last: Result<AgentOutcome>,
 }
 
 /// Execution -> Reporting: a single check reached a terminal verdict.

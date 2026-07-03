@@ -17,8 +17,8 @@
 //! 2. [`discovery`] — find/parse/validate `CHECKS.md` files, then stream each
 //!    validated check downstream (strict whole-run abort on any invalid file).
 //! 3. [`execution`] — run each check in a CoW [`sandbox`] via a boxed
-//!    [`executor`], offloaded onto bounded background tasks; capture verdicts
-//!    through each agent's in-process judge tool.
+//!    [`executor`], fanned out through a bounded-concurrency cersei `foreach`
+//!    workflow; capture verdicts through each agent's in-process judge tool.
 //! 4. [`reporting`] — fold verdicts incrementally, render, and produce the exit
 //!    code.
 //!
@@ -177,14 +177,14 @@ fn spawn_core(
 ///
 /// Every pipeline actor is stopped this way rather than merely having its
 /// `ActorRef` dropped: an actor's mailbox only closes once *every* clone of its
-/// `ActorRef` is gone, and [`ExecutionActor`]'s per-check background tasks each
-/// hold clones of `execution`/`reporting`/`presenter` for their own lifetime
-/// (see `execution::dispatch`). Relying on that implicit ref-counting to close
-/// the mailbox — instead of sending an explicit `Signal::Stop`, which the actor
-/// loop honors regardless of how many `ActorRef` clones are still outstanding —
-/// makes teardown a race against those tasks actually finishing, rather than a
-/// deterministic signal. An explicit stop is what let the presenter's shutdown
-/// stay reliable; the other three actors need the same treatment.
+/// `ActorRef` is gone, and the actors hold clones of one another's refs
+/// (`execution` → `reporting`/`presenter`, `discovery` → all three). Relying on
+/// that implicit ref-counting to close a mailbox — instead of sending an explicit
+/// `Signal::Stop`, which the actor loop honors regardless of how many `ActorRef`
+/// clones are still outstanding — makes teardown a race against every last ref
+/// being dropped, rather than a deterministic signal. An explicit stop is what
+/// let the presenter's shutdown stay reliable; the other three actors need the
+/// same treatment.
 async fn shutdown_actor<A: Actor>(actor: &ActorRef<A>) {
     let _ = actor.stop_gracefully().await;
     actor.wait_for_shutdown().await;
