@@ -1,16 +1,15 @@
 //! The configuration phase (M2 #1341, global config #1359, executor wiring #1367).
 //!
-//! Resolves the global default **provider**, **model**, **effort**, and
-//! **executor** from three sources with standard CLI precedence —
-//! `flag > env var > config file` — merged with [`figment`], constructs a
-//! registry of ready-to-use model providers, and builds the selected
-//! [`BoxedExecutor`] from a per-provider [`ProviderFactory`].
+//! Resolves the global default **provider**, **model**, and **effort** from
+//! three sources with standard CLI precedence — `flag > env var > config file`
+//! — merged with [`figment`], constructs a registry of ready-to-use model
+//! providers, and builds the [`BoxedExecutor`] from a per-provider
+//! [`ProviderFactory`].
 //!
 //! The resolved [`Config`] is **dependency-injected** forward: execution
 //! receives a [`BoxedExecutor`] (see [`Resolved::build_executor`]) rather than
-//! reading provider details at point of use. The default executor is the
-//! in-process [`CerseiExecutor`]; the legacy [`ClaudeExecutor`] remains
-//! selectable as a migration fallback.
+//! reading provider details at point of use. The executor is the in-process
+//! [`CerseiExecutor`].
 
 mod file;
 mod models;
@@ -29,10 +28,9 @@ use miette::{Result, miette};
 
 use crate::checks::executor::BoxedExecutor;
 use crate::checks::executor::cersei::CerseiExecutor;
-use crate::checks::executor::claude::ClaudeExecutor;
 
 pub use providers::{ProviderFactory, ProviderRegistry};
-pub use schema::{CliOverrides, Effort, ExecutorKind, ProviderKind};
+pub use schema::{CliOverrides, Effort, ProviderKind};
 
 /// Per-agent wall-clock timeout. Generous: the heaviest reasoning checks can
 /// take a few minutes under contention before they report.
@@ -55,16 +53,14 @@ fn default_concurrency() -> usize {
 pub struct Config {
     /// The selected provider.
     pub provider: ProviderKind,
-    /// The selected provider's optional base-URL override, if configured. Used
-    /// by the `claude -p` fallback as `ANTHROPIC_BASE_URL` (the in-process
-    /// executor applies it via the provider factory); `None` uses the default.
+    /// The selected provider's optional base-URL override, if configured
+    /// (applied by the in-process executor via the provider factory); `None`
+    /// uses the default.
     pub provider_url: Option<String>,
     /// The concrete model ID to run (validated against the hardcoded allowlist).
     pub model: String,
     /// The effort level.
     pub effort: Effort,
-    /// Which execution engine runs each check (default: in-process cersei).
-    pub executor: ExecutorKind,
     /// Maximum number of checks executed concurrently (default: the number of
     /// available CPU cores; see [`default_concurrency`]).
     pub concurrency: usize,
@@ -78,21 +74,6 @@ pub struct Config {
     /// Where to bundle the opt-in session-trace archive, or `None` (default) to
     /// disable trace capture. See [`crate::checks::trace_archive`].
     pub trace_archive: Option<PathBuf>,
-}
-
-impl Config {
-    /// Construct the legacy `claude -p` fallback executor from this
-    /// configuration. The in-process cersei executor needs the resolved provider
-    /// factory and so is built from [`Resolved`]; this builder only covers the
-    /// fallback, which needs nothing beyond [`Config`].
-    pub fn build_claude_executor(&self) -> BoxedExecutor {
-        Box::new(ClaudeExecutor::new(
-            self.model.clone(),
-            self.provider_url.clone(),
-            self.effort,
-            self.agent_timeout,
-        ))
-    }
 }
 
 /// Merge the three config layers and extract the resolved `[checks]` table.
@@ -128,24 +109,20 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    /// Construct the selected [`BoxedExecutor`]. This is the injection point and
-    /// the migration lever: `cersei` (default) runs the in-process agent;
-    /// `claude` runs the legacy `claude -p` fallback over the same checks.
+    /// Construct the [`BoxedExecutor`]: the in-process cersei agent. This is the
+    /// injection point — execution depends on the trait object, not this
+    /// concrete type.
     pub fn build_executor(&self) -> Result<BoxedExecutor> {
         let cfg = &self.config;
-        let executor: BoxedExecutor = match cfg.executor {
-            ExecutorKind::Cersei => Box::new(CerseiExecutor::new(
-                self.factory.clone(),
-                cfg.model.clone(),
-                cfg.effort,
-                cfg.agent_timeout,
-                // The archive path lives at the orchestration layer; the executor
-                // only needs to know whether to capture a per-execution trace.
-                cfg.trace_archive.is_some(),
-            )),
-            ExecutorKind::Claude => cfg.build_claude_executor(),
-        };
-        Ok(executor)
+        Ok(Box::new(CerseiExecutor::new(
+            self.factory.clone(),
+            cfg.model.clone(),
+            cfg.effort,
+            cfg.agent_timeout,
+            // The archive path lives at the orchestration layer; the executor
+            // only needs to know whether to capture a per-execution trace.
+            cfg.trace_archive.is_some(),
+        )))
     }
 }
 
@@ -163,7 +140,6 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         .model
         .unwrap_or_else(|| models::default_model(provider).to_string());
     let effort = checks.effort.unwrap_or(Effort::Low);
-    let executor = checks.executor.unwrap_or(ExecutorKind::Cersei);
     let concurrency = checks.concurrency.unwrap_or_else(default_concurrency);
 
     if !models::is_valid_model(provider, &model) {
@@ -201,7 +177,6 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         provider_url,
         model,
         effort,
-        executor,
         concurrency,
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
@@ -228,7 +203,6 @@ pub fn configuration() -> Config {
         // sonnet reasons efficiently and reports in well under a minute.)
         model: models::default_model(provider).to_string(),
         effort: Effort::Low,
-        executor: ExecutorKind::Cersei,
         concurrency: default_concurrency(),
         agent_timeout: DEFAULT_AGENT_TIMEOUT,
         max_attempts: DEFAULT_MAX_ATTEMPTS,
@@ -252,7 +226,6 @@ mod tests {
                 provider: Some(provider),
                 model: Some(model.to_string()),
                 effort: Some(Effort::Low),
-                executor: None,
                 concurrency: None,
                 trace_archive: None,
                 providers: ProvidersSection::default(),
@@ -265,12 +238,9 @@ mod tests {
         let cfg = configuration();
         assert_eq!(cfg.provider, ProviderKind::Anthropic);
         assert_eq!(cfg.model, "claude-sonnet-4-6");
-        assert_eq!(cfg.executor, ExecutorKind::Cersei);
         assert!(cfg.concurrency >= 1);
         // The default must track the machine's core count, not a hardcoded value.
         assert_eq!(cfg.concurrency, default_concurrency());
-        // The fallback executor is constructible from config alone (DI seam works).
-        let _exec = cfg.build_claude_executor();
     }
 
     #[test]
@@ -280,7 +250,6 @@ mod tests {
             let overrides = CliOverrides::new(
                 Some(ProviderKind::OpenAi),
                 Some("gpt-4o".into()),
-                None,
                 None,
                 None,
                 None,
@@ -318,7 +287,7 @@ mod tests {
 
             // ...and a flag outranks env.
             let overrides =
-                CliOverrides::new(None, Some("claude-opus-4-8".into()), None, None, None, None);
+                CliOverrides::new(None, Some("claude-opus-4-8".into()), None, None, None);
             let checks = resolve_layers(file, overrides).unwrap();
             assert_eq!(checks.model.as_deref(), Some("claude-opus-4-8"));
             Ok(())

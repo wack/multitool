@@ -2,19 +2,19 @@
 
 # Requirement Provider-Agnostic Execution
 
-The agent executor is swappable behind a trait so execution can run over different engines (the in-process `cersei-agent` executor, the legacy `claude -p` fallback, or a test fake) without rewriting the execution phase. This extensibility is the whole point of the configuration/executor seam.
+The agent executor is defined behind a trait so execution can run over the in-process `cersei-agent` executor or a test fake without rewriting the execution phase. This extensibility is the whole point of the configuration/executor seam.
 
 ## Check Boxed Executor Trait
 
-Inspect the Rust sources for the `multi check` feature. Confirm that agent execution is defined behind a trait (for example `CheckExecutor`) that is consumed as a boxed or `Arc`-wrapped, dynamically-dispatched trait object — for example a type alias of the form `Box<dyn CheckExecutor + Send + Sync>`, mirroring the existing `BoxedIngress`, `BoxedMonitor`, and `BoxedPlatform` aliases. The check passes only if the execution phase depends on this trait rather than naming a concrete executor type. Report a failure if the execution path references a concrete executor struct (such as the cersei or claude executor) directly instead of the trait object.
+Inspect the Rust sources for the `multi check` feature. Confirm that agent execution is defined behind a trait (for example `CheckExecutor`) that is consumed as a boxed or `Arc`-wrapped, dynamically-dispatched trait object — for example a type alias of the form `Box<dyn CheckExecutor + Send + Sync>`, mirroring the existing `BoxedIngress`, `BoxedMonitor`, and `BoxedPlatform` aliases. The check passes only if the execution phase depends on this trait rather than naming a concrete executor type. Report a failure if the execution path references a concrete executor struct (such as the cersei executor) directly instead of the trait object.
 
 # Requirement In-Process Agent Execution
 
-The default executor runs each check's agent **inside the CLI process** via the `cersei-agent` library — there is no longer any requirement to shell out to the `claude` CLI for a check to run. A `claude -p` executor is retained only as an optional, explicitly-selected migration fallback.
+The executor runs each check's agent **inside the CLI process** via the `cersei-agent` library — there is no requirement to shell out to any external CLI for a check to run.
 
 ## Check Default Executor Runs In-Process
 
-Inspect the executor implementations and how the default executor is selected from configuration. Confirm that the default execution engine builds and runs a `cersei_agent::Agent` in-process (calling its `run`/`run_stream` method) rather than spawning the `claude` CLI. Confirm that any use of `std::process::Command` / `tokio::process` to launch `claude -p` lives only in the non-default fallback executor, gated behind an explicit `executor` selection. The check fails if running a check with the default configuration requires spawning an external `claude` process.
+Inspect the executor implementation and how it is constructed from configuration. Confirm that the execution engine builds and runs a `cersei_agent::Agent` in-process (calling its `run`/`run_stream` method) rather than spawning an external process. The check fails if running a check requires spawning an external `claude` process.
 
 # Requirement Trustworthy In-Process Reporting
 
@@ -66,7 +66,7 @@ Inspect the execution phase. Confirm that checks are dispatched concurrently —
 
 # Requirement Concurrency Defaults To The Host's Core Count
 
-The concurrency cap is user-configurable (a `--concurrency` flag, layered the same way as `--provider`/`--model`/`--effort`/`--executor`), but absent any override its default must equal the number of CPU cores available on the machine running `multi check` — not a hardcoded constant. A fixed default either strands cores on big machines or overcommits small ones.
+The concurrency cap is user-configurable (a `--concurrency` flag, layered the same way as `--provider`/`--model`/`--effort`), but absent any override its default must equal the number of CPU cores available on the machine running `multi check` — not a hardcoded constant. A fixed default either strands cores on big machines or overcommits small ones.
 
 ## Check Default Concurrency Equals Available Parallelism
 
@@ -90,11 +90,11 @@ Confirm that the command exits with status code 0 when every requirement is sati
 
 # Requirement Layered Configuration
 
-The model, provider, effort, and executor are resolved from three sources with standard CLI precedence — flag, then environment, then config file (flag wins) — while credentials are read only from each provider's native environment variable, never from the config file.
+The model, provider, and effort are resolved from three sources with standard CLI precedence — flag, then environment, then config file (flag wins) — while credentials are read only from each provider's native environment variable, never from the config file.
 
 ## Check Precedence And Validation
 
-Inspect the configuration phase of `multi check`. Confirm that provider/model/effort/executor are merged from a config file, `MULTI_`-prefixed environment variables, and CLI flags, with flags overriding environment overriding file. Confirm the selected model is validated against a hardcoded allowlist of known IDs for the provider (an unknown ID is a clear error). The check fails if any of these values cannot be set from configuration, or if the merge precedence is not flag > env > file.
+Inspect the configuration phase of `multi check`. Confirm that provider/model/effort are merged from a config file, `MULTI_`-prefixed environment variables, and CLI flags, with flags overriding environment overriding file. Confirm the selected model is validated against a hardcoded allowlist of known IDs for the provider (an unknown ID is a clear error). The check fails if any of these values cannot be set from configuration, or if the merge precedence is not flag > env > file.
 
 ## Check Credentials Are Environment-Only
 

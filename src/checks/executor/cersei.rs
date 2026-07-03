@@ -118,8 +118,18 @@ fn project_instructions(project_root: &Path) -> Option<String> {
 /// the provider fixes for round-tripping thinking blocks (`signature_delta`
 /// accumulation in 94f18b2, `redacted_thinking` preservation in 5bd06db), so
 /// the temperature-as-effort workaround that previously lived here is retired.
-/// Low effort — the default — keeps thinking off to stay fast and cheap, and
+/// Low effort — the default — turns thinking off to stay fast and cheap, and
 /// steers with temperature instead (see [`attempt_temperature`]).
+///
+/// "Off" must be *explicit*: `None` here maps to cersei's `disable_thinking()`
+/// (an explicit `thinking: {"type": "disabled"}` in the request), not to
+/// omitting the field. Omission means "model default", and for
+/// hybrid-reasoning models behind Fireworks' Anthropic-compatible endpoint
+/// (GLM 5.1) the default is reasoning ON — the 2026-07-02 trace archive shows
+/// low-effort GLM runs thinking on every turn with the field omitted. Every
+/// model in our allowlist ([`super::super::config::models::ANTHROPIC_MODELS`])
+/// accepts an explicit disable; models that reject it (Claude Fable 5) are
+/// not selectable here.
 ///
 /// Budgets follow cersei's own `EffortLevel` scale (medium 4096, high 8192)
 /// and sit comfortably under the agent's default 16k `max_tokens` (the API
@@ -190,10 +200,14 @@ impl CheckExecutor for CerseiExecutor {
             .cancel_token(cancel.clone());
 
         // Exactly one reasoning control applies: the API rejects a temperature
-        // when extended thinking is enabled (see [`thinking_budget`]).
+        // when extended thinking is enabled (see [`thinking_budget`]). The
+        // no-budget arm disables thinking *explicitly* — omitting the field
+        // would leave gateway-served hybrid models (GLM) reasoning by default.
         agent_builder = match thinking_budget(self.effort) {
             Some(budget) => agent_builder.thinking_budget(budget),
-            None => agent_builder.temperature(attempt_temperature(req.attempt)),
+            None => agent_builder
+                .disable_thinking()
+                .temperature(attempt_temperature(req.attempt)),
         };
 
         // `.system_prompt()`, not `.append_system_prompt()`: cersei's agent

@@ -43,20 +43,6 @@ pub enum Effort {
     High,
 }
 
-/// Which execution engine runs each check. The default is the in-process
-/// [`cersei`](crate::checks::executor::cersei) agent; `claude` selects the
-/// legacy `claude -p` shell-out fallback, kept selectable during the migration
-/// (MULTI-1367) so verdicts from both can be compared before the fallback is
-/// retired.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-#[serde(rename_all = "lowercase")]
-pub enum ExecutorKind {
-    /// The in-process `cersei-agent` executor (default).
-    Cersei,
-    /// The legacy `claude -p` shell-out fallback.
-    Claude,
-}
-
 /// The whole config file, of which only the `[checks]` table concerns us. Other
 /// top-level keys (the legacy manifest's `workspace`/`application`/`config`) are
 /// ignored rather than rejected, so a single `MultiTool.toml` can carry both.
@@ -76,9 +62,6 @@ pub struct ChecksSection {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
-    /// Which execution engine runs each check (`cersei` by default).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor: Option<ExecutorKind>,
     /// Maximum number of checks executed concurrently (default: the number of
     /// available CPU cores).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,8 +128,6 @@ pub struct CliChecksOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub executor: Option<ExecutorKind>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_archive: Option<PathBuf>,
@@ -158,7 +139,6 @@ impl CliOverrides {
         provider: Option<ProviderKind>,
         model: Option<String>,
         effort: Option<Effort>,
-        executor: Option<ExecutorKind>,
         concurrency: Option<usize>,
         trace_archive: Option<PathBuf>,
     ) -> Self {
@@ -167,7 +147,6 @@ impl CliOverrides {
                 provider,
                 model,
                 effort,
-                executor,
                 concurrency,
                 trace_archive,
             },
