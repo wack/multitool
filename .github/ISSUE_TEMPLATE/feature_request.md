@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
+about: Suggest an idea for MultiTool Checks
 title: "[FEATURE]"
 labels: enhancement
 assignees: ''
@@ -10,7 +10,7 @@ assignees: ''
 👍 *If you’d like to see this feature too, react with a thumbs-up to help us prioritize it.*
 
 **Feature idea**
-Describe what you'd like MultiTool to do or support.
+Describe what you'd like MultiTool Checks to do or support.
 
 **Motivation**
 What’s the reason for this feature request? What would it help you with?
