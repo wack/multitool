@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use miette::Result;
 
 use super::judge::CheckReport;
+use super::tool_capture::ToolCall;
 use super::{AgentOutcome, AgentRunRequest, CheckExecutor};
 use crate::checks::model::CheckId;
 
@@ -22,6 +23,9 @@ pub struct FakeExecutor {
     /// id to `(report_on_attempt, report)`. Exercises the retry path: the same
     /// `CheckId` is re-run, so the fake counts attempts per id.
     silent_until: HashMap<CheckId, (usize, CheckReport)>,
+    /// `AgentOutcome::tool_calls` to attach for a given check id, scripted via
+    /// `with_tool_calls` (MULTI-1817). Absent ids default to no calls.
+    tool_calls: HashMap<CheckId, Vec<ToolCall>>,
     /// Every `(check_id, attempt)` the fake was asked to run, in call order.
     seen: Mutex<Vec<(CheckId, u32)>>,
 }
@@ -71,6 +75,15 @@ impl FakeExecutor {
         self
     }
 
+    /// Script the `tool_calls` an `AgentOutcome` for `id` carries (MULTI-1817),
+    /// e.g. to exercise plan-capture logic downstream without a real agent.
+    /// `id`'s outcome carries `calls` verbatim, regardless of how it reports —
+    /// scripted, silent, or silent-until.
+    pub fn with_tool_calls(mut self, id: CheckId, calls: Vec<ToolCall>) -> Self {
+        self.tool_calls.insert(id, calls);
+        self
+    }
+
     /// The check ids the fake was asked to run, in call order.
     pub fn seen(&self) -> Vec<CheckId> {
         self.seen
@@ -98,6 +111,12 @@ impl CheckExecutor for FakeExecutor {
             seen.iter().filter(|(id, _)| *id == req.check_id).count()
         };
 
+        let tool_calls = self
+            .tool_calls
+            .get(&req.check_id)
+            .cloned()
+            .unwrap_or_default();
+
         if self.silent.contains(&req.check_id) {
             return Ok(AgentOutcome {
                 verdict: None,
@@ -105,6 +124,7 @@ impl CheckExecutor for FakeExecutor {
                 turns: 1,
                 error: None,
                 trace_jsonl: None,
+                tool_calls,
             });
         }
 
@@ -117,6 +137,7 @@ impl CheckExecutor for FakeExecutor {
                 turns: 1,
                 error: None,
                 trace_jsonl: None,
+                tool_calls,
             });
         }
 
@@ -126,6 +147,67 @@ impl CheckExecutor for FakeExecutor {
             turns: 1,
             error: None,
             trace_jsonl: None,
+            tool_calls,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::super::tool_capture::ReadOnlyTool;
+    use super::*;
+
+    fn req(check_id: CheckId) -> AgentRunRequest {
+        AgentRunRequest {
+            check_id,
+            check: crate::checks::model::Check {
+                title: "t".into(),
+                prompt: "p".into(),
+            },
+            working_dir: std::path::PathBuf::from("."),
+            attempt: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn scripted_tool_calls_ride_along_with_a_reported_verdict() {
+        let calls = vec![ToolCall {
+            tool: ReadOnlyTool::Read,
+            input: json!({ "file_path": "src/lib.rs" }),
+        }];
+        let fake = FakeExecutor::new()
+            .with_report(0, true, None)
+            .with_tool_calls(0, calls.clone());
+
+        let outcome = fake.run_check(req(0)).await.unwrap();
+        assert_eq!(outcome.tool_calls, calls);
+    }
+
+    #[tokio::test]
+    async fn an_unscripted_check_carries_no_tool_calls() {
+        let fake = FakeExecutor::new().with_report(0, true, None);
+        let outcome = fake.run_check(req(0)).await.unwrap();
+        assert!(outcome.tool_calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn scripted_tool_calls_also_ride_along_on_silent_and_silent_until_outcomes() {
+        let calls = vec![ToolCall {
+            tool: ReadOnlyTool::Grep,
+            input: json!({ "pattern": "TODO" }),
+        }];
+        let fake = FakeExecutor::new()
+            .with_silent(0)
+            .with_tool_calls(0, calls.clone())
+            .with_silent_until(1, 2, true, None)
+            .with_tool_calls(1, calls.clone());
+
+        let silent_outcome = fake.run_check(req(0)).await.unwrap();
+        assert_eq!(silent_outcome.tool_calls, calls);
+
+        let silent_until_outcome = fake.run_check(req(1)).await.unwrap();
+        assert_eq!(silent_until_outcome.tool_calls, calls);
     }
 }

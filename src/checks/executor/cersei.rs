@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::jail::Jailed;
 use super::judge::{JudgeTool, VerdictSink};
+use super::tool_capture::ToolCallCollector;
 use super::trace::{TraceHeader, TraceRecorder, serialize_trace};
 use super::{
     AgentOutcome, AgentRunRequest, CheckExecutor, assemble_instructions, judge_tool_directive,
@@ -220,7 +221,7 @@ impl CheckExecutor for CerseiExecutor {
             agent_builder = agent_builder.system_prompt(project_prompt);
         }
 
-        // Observe agent events for two purposes sharing the builder's single
+        // Observe agent events for three purposes sharing the builder's single
         // `on_event` slot. The turn counter runs unconditionally: the success
         // path cancels the agent the instant it reports, which makes `run`
         // return `Err(Cancelled)` and discards cersei's own turn count — so
@@ -228,13 +229,17 @@ impl CheckExecutor for CerseiExecutor {
         // recorder is opt-in; `emit` invokes this synchronously for each event
         // *before* the loop's early returns, so the trace survives post-verdict
         // cancellation and the drop-on-timeout below (which cersei's own
-        // session persistence would miss). The executor owns clones, so a
-        // dropped agent loses neither.
+        // session persistence would miss). The tool-call collector (MULTI-1817)
+        // runs unconditionally, same reasoning as the turn counter — it freezes
+        // the evidence the Jev decision engine replays. The executor owns
+        // clones, so a dropped agent loses none of the three.
         let recorder = self.capture_traces.then(|| Arc::new(TraceRecorder::new()));
         let turns_seen = Arc::new(AtomicU32::new(0));
+        let tool_calls = Arc::new(ToolCallCollector::new());
         {
             let recorder = recorder.clone();
             let turns_seen = Arc::clone(&turns_seen);
+            let tool_calls = Arc::clone(&tool_calls);
             agent_builder = agent_builder.on_event(move |event| {
                 if let AgentEvent::TurnStart { turn } = event {
                     turns_seen.fetch_max(*turn, Ordering::Relaxed);
@@ -242,6 +247,7 @@ impl CheckExecutor for CerseiExecutor {
                 if let Some(recorder) = &recorder {
                     recorder.record(event);
                 }
+                tool_calls.record(event);
             });
         }
 
@@ -267,6 +273,7 @@ impl CheckExecutor for CerseiExecutor {
                 turns: output.turns,
                 error: None,
                 trace_jsonl: None,
+                tool_calls: tool_calls.finish(),
             },
             Ok(Err(err)) => {
                 let reported = verdict.is_some();
@@ -278,6 +285,7 @@ impl CheckExecutor for CerseiExecutor {
                     turns: turns_seen.load(Ordering::Relaxed),
                     error: (!reported).then(|| err.to_string()),
                     trace_jsonl: None,
+                    tool_calls: tool_calls.finish(),
                 }
             }
             Err(_elapsed) => AgentOutcome {
@@ -287,6 +295,7 @@ impl CheckExecutor for CerseiExecutor {
                 turns: turns_seen.load(Ordering::Relaxed),
                 error: Some(format!("agent timed out after {:?}", self.timeout)),
                 trace_jsonl: None,
+                tool_calls: tool_calls.finish(),
             },
         };
 
@@ -311,7 +320,26 @@ impl CheckExecutor for CerseiExecutor {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tool_capture::ReadOnlyTool;
     use super::*;
+
+    /// [`ReadOnlyTool`] is the single programmatic allowlist mapping a tool
+    /// name to a captured `ToolCall` (MULTI-1817). This test keeps that enum
+    /// in lockstep with what [`read_only_tools`] actually grants the agent:
+    /// if the tool set is ever widened here without widening the enum, the
+    /// new tool's calls would silently vanish from captured plans instead of
+    /// failing loudly.
+    #[test]
+    fn read_only_tools_stay_in_lockstep_with_the_capture_allowlist() {
+        for tool in read_only_tools() {
+            assert!(
+                ReadOnlyTool::from_tool_name(tool.name()).is_some(),
+                "read_only_tools() grants `{}`, which ReadOnlyTool does not know about — \
+                 widen the ReadOnlyTool enum before widening the executor's tool set",
+                tool.name(),
+            );
+        }
+    }
 
     #[test]
     fn retries_raise_the_temperature_up_to_the_cap() {

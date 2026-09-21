@@ -12,6 +12,7 @@ pub mod cersei;
 mod fake;
 mod jail;
 pub mod judge;
+mod tool_capture;
 mod trace;
 
 use std::path::{Path, PathBuf};
@@ -20,6 +21,12 @@ use async_trait::async_trait;
 use miette::Result;
 
 pub use judge::{CheckReport, JUDGE_TOOL};
+// `ReadOnlyTool` isn't named outside tests yet (only `ToolCall`, whose `tool`
+// field carries it, is): re-exporting it here too would be an unused `pub use`
+// in the default build. Test code reaches it via `tool_capture::ReadOnlyTool`
+// directly; widen this re-export once a non-test caller needs the variant
+// (e.g. MULTI-1820's plan writer).
+pub use tool_capture::ToolCall;
 
 use crate::checks::model::{Check, CheckId};
 
@@ -70,6 +77,13 @@ pub struct AgentOutcome {
     /// fake). The execution layer moves these into the per-run
     /// [`crate::checks::trace_archive`] bundle.
     pub trace_jsonl: Option<Vec<u8>>,
+    /// The allowlisted, read-only tool calls this attempt made (MULTI-1817):
+    /// each `ToolStart` paired with its `ToolEnd` by `id`, kept only when the
+    /// tool is on the `ReadOnlyTool` allowlist and the call finished with
+    /// `is_error == false`, in `ToolStart` (call) order. Populated
+    /// unconditionally — this is the frozen evidence the Jev decision engine
+    /// replays; it has no non-test reader until the `jev` modules land.
+    pub tool_calls: Vec<ToolCall>,
 }
 
 impl AgentOutcome {
