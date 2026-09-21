@@ -34,11 +34,18 @@
 //! byte-for-byte-identical request with `evidence: []`, used at plan time to
 //! confirm Jev doesn't rubber-stamp a check it has no evidence for). This
 //! module is deliberately thin on `super::replay`: an [`Evidence`] entry
-//! carries only a replayed call's `tool`, `input`, and root-normalized
-//! `output` — never `super::replay::ReplayedCall`'s checksum/freshness
-//! bookkeeping, which has nothing to do with building a request and would
-//! otherwise couple this module to replay's shape (replay's own plan-review
-//! branch may still change it).
+//! carries only a replayed call's `tool`, `input`, root-normalized `output`,
+//! and `windowed` flag — never `super::replay::ReplayedCall`'s checksum/
+//! freshness bookkeeping, which has nothing to do with building a request
+//! and would otherwise couple this module to replay's shape (replay's own
+//! plan-review branch may still change it). `windowed` is never sent to Jev
+//! (`#[serde(skip_serializing)]`) — it exists purely to drive
+//! [`merge_overlapping_reads`], below.
+//!
+//! `input.file_path` (for `Read` evidence) is expected to already be
+//! repository-root-relative, exactly as [`super::plan_file::relativize`]
+//! (MULTI-1820) produces it — this module doesn't re-derive that from a
+//! sandbox root.
 //!
 //! ### Merging overlapping `Read`s
 //!
@@ -46,10 +53,10 @@
 //!
 //! * Duplicate whole-file `Read`s of the same `file_path` (an agent reading
 //!   the same file twice at plan time) collapse to the first occurrence.
-//! * A windowed `Read` (stored `input` carries `offset`/`limit`) of a file
-//!   that *also* has a whole-file `Read` for the same `file_path` is dropped
-//!   outright — its content is a strict subset of what the whole-file read
-//!   already sends, so keeping both would send the same lines twice.
+//! * A windowed `Read` (`Evidence::windowed`) of a file that *also* has a
+//!   whole-file `Read` for the same `file_path` is dropped outright — its
+//!   content is a strict subset of what the whole-file read already sends,
+//!   so keeping both would send the same lines twice.
 //! * Two windowed `Read`s of the same file, with no whole-file `Read` of it,
 //!   are **never spliced** into one, even when their ranges overlap or are
 //!   adjacent — doing that correctly requires parsing the line-numbered
@@ -57,6 +64,25 @@
 //!   not attempt (see [`merge_overlapping_reads`]). Both entries are kept.
 //! * Everything else (`Grep`/`Glob` entries, and `Read`s of different files)
 //!   is left untouched.
+//!
+//! Whether a `Read` is "whole-file" is read directly from
+//! [`Evidence::windowed`] — **not** re-derived from whether `input` carries
+//! `offset`/`limit` — because a `Read` can fail to see the whole file even
+//! when it omitted both: `super::replay::ReplayedCall::windowed` is also set
+//! when an unwindowed call's output happened to hit the read tool's default
+//! line cap exactly (see that field's docs). Treating such a capped read as
+//! "whole" would wrongly drop a later, genuinely windowed read of the file's
+//! remaining lines — see the
+//! `a_capped_read_marked_windowed_does_not_subsume_a_later_window_of_the_same_file`
+//! test. The caller (the future `multi plan`/`multi check` wiring) is
+//! expected to fill `Evidence::windowed` straight from
+//! `ReplayedCall::windowed`.
+//!
+//! Two evidence entries are considered the same file when their (already
+//! root-relative) `file_path`s are equal after stripping a redundant leading
+//! `./` — e.g. `./a.rs` and `a.rs` — see [`normalized_file_path`]. This is a
+//! defensive normalization of trivially-equivalent spellings, not a general
+//! path canonicalization.
 //!
 //! Only `Read` is handled: `Grep`/`Glob` results are already
 //! deduplicated exactly by [`super::plan_file::dedup_calls_preserving_order`]
@@ -108,13 +134,24 @@
 //! the decision follows the Noul regardless.
 //!
 //! A response can carry a Noul answer with no Choice answer (or an
-//! unparseable one) without that invalidating an otherwise-valid decision:
-//! [`ChoiceOutcome`] is carried as `Option`, `None` whenever the Choice
-//! answer is missing or doesn't parse into
-//! [`super::plan_file::Reading`] — see [`extract_choice`]. Only a
-//! missing/malformed **Noul** answer fails the request (as
-//! [`JevError::Transport`], the same variant [`super::client::JevClient`]
-//! already uses for a response that doesn't match the documented shape).
+//! unparseable, wrong-typed, or out-of-range one) without that invalidating
+//! an otherwise-valid decision: [`ChoiceOutcome`] is carried as `Option`,
+//! `None` whenever the Choice answer is missing, isn't shaped like a Choice,
+//! doesn't parse into [`super::plan_file::Reading`], or carries a
+//! `confidence`/probability outside `0.0..=1.0` — see [`extract_choice`].
+//! [`SystemOneResponse::answers`] itself is a map of raw, unparsed JSON
+//! values for exactly this reason (see `types.rs`): eagerly parsing every
+//! entry into a typed [`Answer`] would let a malformed *record-only* Choice
+//! answer fail the *whole response*, silently promoting it to something that
+//! gates the decision after all.
+//!
+//! Only a missing/malformed/out-of-range **Noul** answer fails the request
+//! (as [`JevError::Transport`], the same variant [`super::client::JevClient`]
+//! already uses for a response that doesn't match the documented shape) —
+//! see [`extract_noul`]. `noul` is validated to be finite and within
+//! `0.0..=1.0` before it's trusted for a decision: an API bug returning e.g.
+//! `1.2` must not silently become `Satisfied`, and a `NaN` must not silently
+//! compare `false` against `threshold`.
 //!
 //! ## Budget
 //!
@@ -134,13 +171,23 @@
 //! request is too large for the model's context" from any other validation
 //! failure — confirmed by fetching the live spec directly; none of the
 //! Python/JavaScript SDK exception docs document one either. In the absence
-//! of a documented shape, [`looks_like_context_limit`] matches on wording: a
-//! `detail[].msg` (or, if the body isn't that shape, the raw body text)
-//! mentioning both "token" and either "context" or "limit", case-
-//! insensitively — conservative in the sense of erring toward `OverBudget`
-//! (which only ever *downgrades* a hard `Err` to a softer, retriable-later
-//! outcome) rather than toward silently swallowing an unrelated validation
-//! error. See the two `_maps_to_over_budget`/`_stays_an_err` tests.
+//! of a documented shape, [`looks_like_context_limit`] prefers the
+//! structured `detail[].msg` when the body parses as that shape (falling
+//! back to the raw body text otherwise) and matches on wording: the text
+//! must mention "context" together with one of "token"/"length"/"exceed"/
+//! "too long"/"too many", or contain "maximum context" outright — see
+//! [`mentions_context_limit`].
+//!
+//! This is deliberately narrower than "token" + ("context" OR "limit"): a
+//! genuinely unrelated `422` can easily mention "token" (e.g. an invalid API
+//! token) or "limit" (e.g. Choice's own 255-option limit) without being
+//! about the context window, and MULTI-1825 must **abort** on a genuine
+//! `Invalid`, not silently escalate it to an agent as if it were merely
+//! over budget. `OverBudget` only ever *downgrades* a hard `Err`, so a false
+//! positive here is a correctness bug, not just noise — a match is logged at
+//! `warn` with the full body (see [`verify`]) precisely so a misclassification
+//! is visible rather than silently masked. See the `_maps_to_over_budget`/
+//! `_stays_an_err`/`_near_miss_...` tests.
 //!
 //! The estimate is logged alongside the response's `usage.input_tokens` at
 //! `debug` (see [`verify`]) so the byte-per-token ratio can be tuned later.
@@ -157,8 +204,9 @@
 //! shadow report) notice that drift instead of assuming the model never
 //! changed.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -208,11 +256,23 @@ pub struct Requirement<'a> {
 /// and root-normalized output, sent in `state.evidence` as `{tool, input,
 /// output}`. See the module docs for why this is its own type rather than
 /// `super::replay::ReplayedCall`.
+///
+/// `input.file_path` (for `Read` evidence) must already be root-relative,
+/// exactly as [`super::plan_file::relativize`] produces it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Evidence {
     pub tool: ReadOnlyTool,
     pub input: Value,
     pub output: String,
+    /// Whether the replayed `Read` this evidence came from saw only part of
+    /// its file — mirrors `super::replay::ReplayedCall::windowed` (the
+    /// caller fills this straight from that field). Drives
+    /// [`merge_overlapping_reads`] only; never sent to Jev
+    /// (`#[serde(skip_serializing)]`, so the wire shape stays exactly
+    /// `{tool, input, output}`). Meaningless — and always `false` — for
+    /// `Grep`/`Glob`.
+    #[serde(skip_serializing)]
+    pub windowed: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -338,9 +398,15 @@ pub async fn verify(
     let response = match client.ask(&request).await {
         Ok(response) => response,
         Err(JevError::Invalid { body }) if looks_like_context_limit(&body) => {
-            tracing::debug!(
+            // `warn`, not `debug`: this heuristic (see the module docs)
+            // downgrades a hard `Err` to `OverBudget`, so a misclassified
+            // genuine validation bug would otherwise be silently masked as
+            // "escalate to an agent later" instead of surfacing now. The
+            // full body is logged so a misclassification is diagnosable.
+            tracing::warn!(
                 estimate_tokens = estimate,
-                "jev rejected the request as over its context limit",
+                body = %body,
+                "jev 422 matched the context-limit heuristic; treating as OverBudget",
             );
             return Ok(JevDecision::OverBudget);
         }
@@ -389,7 +455,9 @@ pub fn build_request(
     let merged = merge_overlapping_reads(evidence);
     let state = build_state(requirement, check, &merged);
 
-    let mut questions = HashMap::with_capacity(2);
+    // Insertion order is preserved on the wire (see the module docs): the
+    // gating Noul first, then the record-only Choice.
+    let mut questions = IndexMap::with_capacity(2);
     questions.insert(NOUL_QUESTION_ID.to_string(), noul_question());
     questions.insert(CHOICE_QUESTION_ID.to_string(), choice_question());
 
@@ -453,7 +521,7 @@ fn merge_overlapping_reads(evidence: &[Evidence]) -> Vec<Evidence> {
     let mut whole_file_paths: HashSet<&str> = HashSet::new();
     for entry in evidence {
         if entry.tool == ReadOnlyTool::Read
-            && !is_windowed(&entry.input)
+            && !entry.windowed
             && let Some(path) = read_file_path(&entry.input)
         {
             whole_file_paths.insert(path);
@@ -466,12 +534,11 @@ fn merge_overlapping_reads(evidence: &[Evidence]) -> Vec<Evidence> {
         if entry.tool == ReadOnlyTool::Read
             && let Some(path) = read_file_path(&entry.input)
         {
-            let windowed = is_windowed(&entry.input);
-            if windowed && whole_file_paths.contains(path) {
+            if entry.windowed && whole_file_paths.contains(path) {
                 // Fully contained in a whole-file read of the same file.
                 continue;
             }
-            if !windowed && !seen_whole_file.insert(path) {
+            if !entry.windowed && !seen_whole_file.insert(path) {
                 // A duplicate whole-file read of the same file.
                 continue;
             }
@@ -481,28 +548,42 @@ fn merge_overlapping_reads(evidence: &[Evidence]) -> Vec<Evidence> {
     merged
 }
 
+/// A `Read` evidence entry's `file_path`, normalized for the merge
+/// comparison above — see the module docs on why this is only a trivial
+/// `./`-stripping normalization, not a general canonicalization.
 fn read_file_path(input: &Value) -> Option<&str> {
-    input.get("file_path")?.as_str()
+    let raw = input.get("file_path")?.as_str()?;
+    Some(normalized_file_path(raw))
 }
 
-/// Whether a stored `Read` input carries an explicit `offset`/`limit` (a
-/// captured call always omits both entirely for a whole-file read — see
-/// `super::plan_file::relativize`'s null-stripping, which this module's
-/// evidence is assumed to have already been through).
-fn is_windowed(input: &Value) -> bool {
-    input.get("offset").is_some() || input.get("limit").is_some()
+/// Strip a redundant leading `./` (repeated, e.g. `././a.rs`) so trivially-
+/// equivalent path spellings compare equal — see the module docs.
+fn normalized_file_path(path: &str) -> &str {
+    let mut path = path;
+    while let Some(rest) = path.strip_prefix("./") {
+        path = rest;
+    }
+    path
 }
 
 // ---------------------------------------------------------------------------
 // Questions
 // ---------------------------------------------------------------------------
 
+/// [`noul_question`]'s `instructions`, named so the byte-stable snapshot
+/// test can reference the exact same text rather than a hand-copied literal
+/// that could silently drift from it.
+const NOUL_INSTRUCTIONS: &str = "Does `evidence` affirmatively demonstrate that the requirement \
+    described by `check.prompt` is satisfied?";
+
+/// [`choice_question`]'s `instructions` — see [`NOUL_INSTRUCTIONS`].
+const CHOICE_INSTRUCTIONS: &str = "Which reading best characterizes what `evidence` shows about \
+    the requirement described by `check.prompt`: satisfied, violated, or insufficient?";
+
 /// The gating Noul question — see the module docs.
 fn noul_question() -> Question {
     Question::Noul(NoulQuestion {
-        instructions: "Does `evidence` affirmatively demonstrate that the requirement described \
-            by `check.prompt` is satisfied?"
-            .to_string(),
+        instructions: NOUL_INSTRUCTIONS.to_string(),
         criteria: Some(NoulCriteria {
             when_true: "The evidence affirmatively demonstrates the check is satisfied".to_string(),
             when_false: "The evidence shows a violation, or is insufficient to demonstrate \
@@ -512,9 +593,11 @@ fn noul_question() -> Question {
     })
 }
 
-/// The record-only Choice question — see the module docs.
+/// The record-only Choice question — see the module docs. Options are
+/// inserted (and therefore presented to the model, and serialized) in the
+/// fixed order `satisfied`, `violated`, `insufficient`.
 fn choice_question() -> Question {
-    let mut criteria = HashMap::with_capacity(3);
+    let mut criteria = IndexMap::with_capacity(3);
     criteria.insert(
         "satisfied".to_string(),
         "The evidence affirmatively demonstrates the check holds".to_string(),
@@ -528,9 +611,7 @@ fn choice_question() -> Question {
         "The evidence does not address the check either way".to_string(),
     );
     Question::Choice(ChoiceQuestion {
-        instructions: "Which reading best characterizes what `evidence` shows about the \
-            requirement described by `check.prompt`: satisfied, violated, or insufficient?"
-            .to_string(),
+        instructions: CHOICE_INSTRUCTIONS.to_string(),
         criteria,
     })
 }
@@ -541,7 +622,7 @@ fn choice_question() -> Question {
 
 /// Estimate the token cost of `state` plus both `questions`, conservatively
 /// (bytes / [`BYTES_PER_TOKEN`], rounded up) — see the module docs.
-fn estimate_tokens(state: &Value, questions: &HashMap<String, Question>) -> u64 {
+fn estimate_tokens(state: &Value, questions: &IndexMap<String, Question>) -> u64 {
     // Infallible for the same reason as `build_state`.
     let state_bytes = serde_json::to_vec(state)
         .expect("Value always serializes")
@@ -554,7 +635,7 @@ fn estimate_tokens(state: &Value, questions: &HashMap<String, Question>) -> u64 
 
 /// Whether a `422` response body identifies the context/token limit as the
 /// rejection reason — see the module docs on why this is a wording match
-/// rather than a documented error code.
+/// rather than a documented error code, and why it's deliberately narrow.
 fn looks_like_context_limit(body: &str) -> bool {
     if let Ok(parsed) = serde_json::from_str::<ValidationErrorBody>(body) {
         return parsed.detail.iter().any(|d| mentions_context_limit(&d.msg));
@@ -562,9 +643,22 @@ fn looks_like_context_limit(body: &str) -> bool {
     mentions_context_limit(body)
 }
 
+/// Companion words that, together with "context", indicate the model's
+/// context window specifically — as opposed to some other, unrelated sense
+/// of "limit" (e.g. Choice's 255-option cap) or "token" (e.g. an invalid API
+/// token) that a genuinely different `422` could just as easily mention. See
+/// the module docs.
+const CONTEXT_LIMIT_COMPANIONS: &[&str] = &["token", "length", "exceed", "too long", "too many"];
+
 fn mentions_context_limit(text: &str) -> bool {
     let lower = text.to_lowercase();
-    lower.contains("token") && (lower.contains("context") || lower.contains("limit"))
+    if lower.contains("maximum context") {
+        return true;
+    }
+    lower.contains("context")
+        && CONTEXT_LIMIT_COMPANIONS
+            .iter()
+            .any(|companion| lower.contains(companion))
 }
 
 /// TypeSafe's documented `422` shape: a generic FastAPI-style
@@ -586,29 +680,63 @@ struct ValidationErrorDetail {
 // Extracting answers
 // ---------------------------------------------------------------------------
 
+/// Whether `x` is a value Jev's documented `0.0..=1.0` probability contract
+/// promises — rejects `NaN`/infinite as well as merely out-of-range values,
+/// since `NaN`'s `PartialOrd` makes every direct comparison against it
+/// silently `false` (see the module docs).
+fn valid_probability(x: f64) -> bool {
+    x.is_finite() && (0.0..=1.0).contains(&x)
+}
+
+/// Extract and validate the required, gating Noul answer for `id`.
+/// [`JevError::Transport`] (not a decision) on anything that isn't exactly a
+/// well-formed Noul answer: missing, wrong-shaped, or a `noul` outside
+/// `0.0..=1.0` — a malformed *required* answer must never silently decide a
+/// check. See the module docs.
 fn extract_noul(response: &SystemOneResponse, id: &str) -> Result<f64, JevError> {
-    match response.answers.get(id) {
-        Some(Answer::Noul(answer)) => Ok(answer.noul),
-        Some(other) => Err(JevError::Transport(format!(
-            "expected a Noul answer for question `{id}`, got {other:?}"
+    let value = response.answers.get(id).ok_or_else(|| {
+        JevError::Transport(format!("response is missing an answer for question `{id}`"))
+    })?;
+    let answer: Answer = serde_json::from_value(value.clone())
+        .map_err(|e| JevError::Transport(format!("malformed answer for question `{id}`: {e}")))?;
+    match answer {
+        Answer::Noul(noul) if valid_probability(noul.noul) => Ok(noul.noul),
+        Answer::Noul(noul) => Err(JevError::Transport(format!(
+            "question `{id}`'s Noul answer is out of range: {} (must be finite and within 0.0..=1.0)",
+            noul.noul
         ))),
-        None => Err(JevError::Transport(format!(
-            "response is missing an answer for question `{id}`"
+        other => Err(JevError::Transport(format!(
+            "expected a Noul answer for question `{id}`, got {other:?}"
         ))),
     }
 }
 
-/// Extract the Choice answer for `id`, or `None` when it's missing or
-/// doesn't parse into a known [`Reading`] — never an error; see the module
-/// docs' "Choice never gates" section.
+/// Extract the record-only Choice answer for `id`, or `None` for anything
+/// that isn't exactly a well-formed, in-range Choice answer that parses into
+/// a known [`Reading`] — missing, malformed, wrong-shaped, an unrecognized
+/// `choice` value, or a `confidence`/probability outside `0.0..=1.0`. Never
+/// an error: see the module docs' "Choice never gates" section.
 fn extract_choice(response: &SystemOneResponse, id: &str) -> Option<ChoiceOutcome> {
-    let Some(Answer::Choice(answer)) = response.answers.get(id) else {
+    let value = response.answers.get(id)?;
+    let answer: Answer = serde_json::from_value(value.clone()).ok()?;
+    let Answer::Choice(choice) = answer else {
         return None;
     };
-    let reading = parse_reading(&answer.choice)?;
+    if !valid_probability(choice.confidence) {
+        return None;
+    }
+    if !choice
+        .probabilities
+        .values()
+        .copied()
+        .all(valid_probability)
+    {
+        return None;
+    }
+    let reading = parse_reading(&choice.choice)?;
     Some(ChoiceOutcome {
         reading,
-        confidence: answer.confidence,
+        confidence: choice.confidence,
     })
 }
 
@@ -652,12 +780,14 @@ mod tests {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "services/keystore/src/sign.rs"}),
                 output: "pub fn sign_jwt() { /* ... */ }\n".to_string(),
+                windowed: false,
             },
             Evidence {
                 tool: ReadOnlyTool::Grep,
                 input: serde_json::json!({"pattern": "sign_jwt", "path": "."}),
                 output: "services/keystore/src/sign.rs:1:pub fn sign_jwt() { /* ... */ }"
                     .to_string(),
+                windowed: false,
             },
         ]
     }
@@ -774,6 +904,54 @@ mod tests {
         );
     }
 
+    /// A true snapshot: the request's serialized STRING (not just its
+    /// `Value` tree) is byte-stable, both across repeated calls and against a
+    /// fixed expected literal.
+    ///
+    /// The expected literal is a raw string, not a `serde_json::json!` value
+    /// compared via `to_string` — confirmed empirically (see this ticket's
+    /// review): `serde_json::Value`'s `Map` in this workspace's actual
+    /// dependency resolution is **not** order-preserving despite `toml`'s
+    /// `preserve_order` feature appearing in `cargo tree`'s output (that
+    /// unification apparently doesn't reach this crate's own use of
+    /// `serde_json::Value` — `assert_eq!` against another `json!` value would
+    /// silently normalize away the exact ordering this test exists to pin
+    /// down). `request.state` is built through exactly one
+    /// `serde_json::to_value` hop (see `build_state`), so every object
+    /// *inside* `state` serializes alphabetically by key, regardless of the
+    /// Rust struct field order it came from — still perfectly deterministic
+    /// (same bytes every run), just not the struct's declared order.
+    /// `request.model`/`request.questions` never pass through `Value` at
+    /// all (they're typed fields serialized directly), so `questions`
+    /// preserves real insertion order — `satisfied` then `reading`, and
+    /// `reading`'s `criteria` preserves `satisfied`, `violated`,
+    /// `insufficient` — exactly item 4's ask, guaranteed by the `IndexMap`
+    /// switch (a `HashMap` here would have randomized per process instead).
+    #[test]
+    fn serialized_request_is_byte_stable() {
+        let requirement = sample_requirement();
+        let check = sample_check();
+        let evidence = sample_evidence();
+
+        let request = build_request("jev-latest", &requirement, &check, &evidence);
+        let actual = serde_json::to_string(&request).unwrap();
+
+        // Repeating the call must reproduce the exact same bytes.
+        let repeated = serde_json::to_string(&build_request(
+            "jev-latest",
+            &requirement,
+            &check,
+            &evidence,
+        ))
+        .unwrap();
+        assert_eq!(actual, repeated);
+
+        let expected = format!(
+            r#"{{"state":{{"check":{{"prompt":"Keystore alone imports the JWT signing key; no other service does.","title":"Only Keystore imports the signing key"}},"evidence":[{{"input":{{"file_path":"services/keystore/src/sign.rs"}},"output":"pub fn sign_jwt() {{ /* ... */ }}\n","tool":"Read"}},{{"input":{{"path":".","pattern":"sign_jwt"}},"output":"services/keystore/src/sign.rs:1:pub fn sign_jwt() {{ /* ... */ }}","tool":"Grep"}}],"requirement":{{"declared_in":"services/keystore/CHECKS.md","title":"Only Keystore signs JWTs"}}}},"model":"jev-latest","questions":{{"satisfied":{{"type":"noul","instructions":"{NOUL_INSTRUCTIONS}","criteria":{{"true":"The evidence affirmatively demonstrates the check is satisfied","false":"The evidence shows a violation, or is insufficient to demonstrate satisfaction"}}}},"reading":{{"type":"choice","instructions":"{CHOICE_INSTRUCTIONS}","criteria":{{"satisfied":"The evidence affirmatively demonstrates the check holds","violated":"The evidence shows the check does not hold","insufficient":"The evidence does not address the check either way"}}}}}}}}"#
+        );
+        assert_eq!(actual, expected);
+    }
+
     #[test]
     fn negative_control_request_differs_only_in_evidence() {
         let requirement = sample_requirement();
@@ -799,6 +977,34 @@ mod tests {
         assert_eq!(with_evidence_value, control_value);
     }
 
+    /// The same check as `negative_control_request_differs_only_in_evidence`,
+    /// but on the serialized STRING (see
+    /// `serialized_request_is_byte_stable`'s docs on why that's a stronger
+    /// check than comparing `Value`s): the two requests' bytes differ, but
+    /// become byte-identical once `state.evidence` is neutralized in both.
+    #[test]
+    fn negative_control_request_string_differs_only_in_evidence() {
+        let requirement = sample_requirement();
+        let check = sample_check();
+        let evidence = sample_evidence();
+
+        let with_evidence = build_request("jev-latest", &requirement, &check, &evidence);
+        let control = build_request("jev-latest", &requirement, &check, &[]);
+
+        let with_evidence_str = serde_json::to_string(&with_evidence).unwrap();
+        let control_str = serde_json::to_string(&control).unwrap();
+        assert_ne!(with_evidence_str, control_str);
+
+        let mut with_evidence_value = serde_json::to_value(&with_evidence).unwrap();
+        let mut control_value = serde_json::to_value(&control).unwrap();
+        with_evidence_value["state"]["evidence"] = serde_json::json!(null);
+        control_value["state"]["evidence"] = serde_json::json!(null);
+        assert_eq!(
+            serde_json::to_string(&with_evidence_value).unwrap(),
+            serde_json::to_string(&control_value).unwrap()
+        );
+    }
+
     // -- merging overlapping Reads ---------------------------------------------
 
     #[test]
@@ -808,11 +1014,13 @@ mod tests {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs"}),
                 output: "fn a() {}\n".to_string(),
+                windowed: false,
             },
             Evidence {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs"}),
                 output: "fn a() {}\n".to_string(),
+                windowed: false,
             },
         ];
         let merged = merge_overlapping_reads(&evidence);
@@ -826,11 +1034,13 @@ mod tests {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs", "offset": 0, "limit": 5}),
                 output: "fn a() {\n".to_string(),
+                windowed: true,
             },
             Evidence {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs"}),
                 output: "fn a() {\n}\n".to_string(),
+                windowed: false,
             },
         ];
         let merged = merge_overlapping_reads(&evidence);
@@ -847,11 +1057,13 @@ mod tests {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs", "limit": 5}),
                 output: "fn a() {\n".to_string(),
+                windowed: true,
             },
             Evidence {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs"}),
                 output: "fn a() {\n}\n".to_string(),
+                windowed: false,
             },
         ];
         let merged = merge_overlapping_reads(&evidence);
@@ -866,11 +1078,13 @@ mod tests {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs", "offset": 0, "limit": 5}),
                 output: "one\ntwo\n".to_string(),
+                windowed: true,
             },
             Evidence {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs", "offset": 3, "limit": 5}),
                 output: "four\nfive\n".to_string(),
+                windowed: true,
             },
         ];
         let merged = merge_overlapping_reads(&evidence);
@@ -882,17 +1096,68 @@ mod tests {
     }
 
     #[test]
+    fn a_capped_read_marked_windowed_does_not_subsume_a_later_window_of_the_same_file() {
+        // Simulates a Read that hit cersei's 2000-line default: its `input`
+        // omits offset/limit entirely (so a heuristic based on `input` alone
+        // would wrongly call it "whole-file"), but the caller marks it
+        // `windowed: true` — exactly as `ReplayedCall::windowed` would,
+        // since it did not see the whole file. See the module docs.
+        let evidence = vec![
+            Evidence {
+                tool: ReadOnlyTool::Read,
+                input: serde_json::json!({"file_path": "big.rs"}),
+                output: "line\n".repeat(2000),
+                windowed: true,
+            },
+            Evidence {
+                tool: ReadOnlyTool::Read,
+                input: serde_json::json!({"file_path": "big.rs", "offset": 2000, "limit": 500}),
+                output: "line 2001\n".to_string(),
+                windowed: true,
+            },
+        ];
+        let merged = merge_overlapping_reads(&evidence);
+        assert_eq!(
+            merged.len(),
+            2,
+            "neither read covers the whole file, so neither subsumes the other"
+        );
+    }
+
+    #[test]
+    fn dot_slash_prefixed_and_bare_file_paths_are_treated_as_the_same_file() {
+        let evidence = vec![
+            Evidence {
+                tool: ReadOnlyTool::Read,
+                input: serde_json::json!({"file_path": "./a.rs"}),
+                output: "fn a() {}\n".to_string(),
+                windowed: false,
+            },
+            Evidence {
+                tool: ReadOnlyTool::Read,
+                input: serde_json::json!({"file_path": "a.rs"}),
+                output: "fn a() {}\n".to_string(),
+                windowed: false,
+            },
+        ];
+        let merged = merge_overlapping_reads(&evidence);
+        assert_eq!(merged.len(), 1, "`./a.rs` and `a.rs` name the same file");
+    }
+
+    #[test]
     fn reads_of_different_files_are_untouched() {
         let evidence = vec![
             Evidence {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "a.rs"}),
                 output: "fn a() {}\n".to_string(),
+                windowed: false,
             },
             Evidence {
                 tool: ReadOnlyTool::Read,
                 input: serde_json::json!({"file_path": "b.rs"}),
                 output: "fn b() {}\n".to_string(),
+                windowed: false,
             },
         ];
         let merged = merge_overlapping_reads(&evidence);
@@ -906,16 +1171,19 @@ mod tests {
                 tool: ReadOnlyTool::Grep,
                 input: serde_json::json!({"pattern": "x", "path": "."}),
                 output: "a.rs:1:x".to_string(),
+                windowed: false,
             },
             Evidence {
                 tool: ReadOnlyTool::Grep,
                 input: serde_json::json!({"pattern": "x", "path": "."}),
                 output: "a.rs:1:x".to_string(),
+                windowed: false,
             },
             Evidence {
                 tool: ReadOnlyTool::Glob,
                 input: serde_json::json!({"pattern": "*.rs", "path": "."}),
                 output: "a.rs".to_string(),
+                windowed: false,
             },
         ];
         let merged = merge_overlapping_reads(&evidence);
@@ -1071,6 +1339,202 @@ mod tests {
         assert!(matches!(err, JevError::Transport(_)));
     }
 
+    // -- Noul range validation ---------------------------------------------------
+
+    #[tokio::test]
+    async fn noul_above_one_is_an_error_not_a_silent_satisfied() {
+        let server = MockServer::start().await;
+        mock_answer(&server, 1.2, "satisfied", 0.9).await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let err = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, JevError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn noul_below_zero_is_an_error() {
+        let server = MockServer::start().await;
+        mock_answer(&server, -0.1, "insufficient", 0.9).await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let err = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, JevError::Transport(_)));
+    }
+
+    #[test]
+    fn valid_probability_rejects_out_of_range_and_non_finite_values() {
+        assert!(valid_probability(0.0));
+        assert!(valid_probability(1.0));
+        assert!(valid_probability(0.5));
+        assert!(!valid_probability(1.2));
+        assert!(!valid_probability(-0.1));
+        assert!(!valid_probability(f64::NAN));
+        assert!(!valid_probability(f64::INFINITY));
+        assert!(!valid_probability(f64::NEG_INFINITY));
+    }
+
+    // -- a malformed/unusual Choice answer never blocks the Noul decision --------
+
+    #[tokio::test]
+    async fn choice_missing_confidence_does_not_block_the_noul_decision() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "jev-1.13.0",
+                "answers": {
+                    NOUL_QUESTION_ID: {"type": "noul", "noul": 0.9},
+                    // Missing `confidence`/`probabilities`.
+                    CHOICE_QUESTION_ID: {"type": "choice", "choice": "satisfied"},
+                },
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+            })))
+            .mount(&server)
+            .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let decision = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap();
+
+        match decision {
+            JevDecision::Satisfied { noul, choice, .. } => {
+                assert_eq!(noul, 0.9);
+                assert_eq!(choice, None);
+            }
+            other => panic!("expected Satisfied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn choice_answer_with_wrong_type_does_not_block_the_noul_decision() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "jev-1.13.0",
+                "answers": {
+                    NOUL_QUESTION_ID: {"type": "noul", "noul": 0.9},
+                    // A Noul-shaped answer under the Choice question's id.
+                    CHOICE_QUESTION_ID: {"type": "noul", "noul": 0.5},
+                },
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+            })))
+            .mount(&server)
+            .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let decision = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap();
+
+        match decision {
+            JevDecision::Satisfied { choice, .. } => assert_eq!(choice, None),
+            other => panic!("expected Satisfied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn choice_answer_with_unknown_type_does_not_block_the_noul_decision() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "jev-1.13.0",
+                "answers": {
+                    NOUL_QUESTION_ID: {"type": "noul", "noul": 0.9},
+                    // Not a recognized answer `type` at all.
+                    CHOICE_QUESTION_ID: {"type": "score", "score": 3.0},
+                },
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+            })))
+            .mount(&server)
+            .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let decision = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap();
+
+        match decision {
+            JevDecision::Satisfied { choice, .. } => assert_eq!(choice, None),
+            other => panic!("expected Satisfied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn extra_unknown_answer_id_does_not_block_the_noul_decision() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "jev-1.13.0",
+                "answers": {
+                    NOUL_QUESTION_ID: {"type": "noul", "noul": 0.9},
+                    // No `reading` entry at all, but an entirely unrelated
+                    // extra id with an unrecognized shape.
+                    "mystery": {"type": "score", "score": 3.0},
+                },
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+            })))
+            .mount(&server)
+            .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let decision = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap();
+
+        match decision {
+            JevDecision::Satisfied { noul, choice, .. } => {
+                assert_eq!(noul, 0.9);
+                assert_eq!(choice, None);
+            }
+            other => panic!("expected Satisfied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn choice_confidence_out_of_range_degrades_to_none() {
+        let server = MockServer::start().await;
+        mock_answer(&server, 0.9, "satisfied", 1.5).await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let decision = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap();
+
+        match decision {
+            JevDecision::Satisfied { choice, .. } => assert_eq!(choice, None),
+            other => panic!("expected Satisfied, got {other:?}"),
+        }
+    }
+
     // -- budget -------------------------------------------------------------------
 
     #[tokio::test]
@@ -1086,6 +1550,7 @@ mod tests {
             tool: ReadOnlyTool::Read,
             input: serde_json::json!({"file_path": "huge.rs"}),
             output: "x".repeat(200_000),
+            windowed: false,
         }];
         let (requirement, check) = (sample_requirement(), sample_check());
 
@@ -1105,7 +1570,7 @@ mod tests {
         let estimate = estimate_tokens(
             &build_state(&sample_requirement(), &sample_check(), &sample_evidence()),
             &{
-                let mut q = HashMap::new();
+                let mut q = IndexMap::new();
                 q.insert(NOUL_QUESTION_ID.to_string(), noul_question());
                 q.insert(CHOICE_QUESTION_ID.to_string(), choice_question());
                 q
@@ -1252,6 +1717,30 @@ mod tests {
         assert_eq!(agreement(Expected::Fail, 0.0, 0.3), Agreement::Agrees);
     }
 
+    #[test]
+    fn agreement_at_threshold_one_half_the_bands_touch_and_the_boundary_is_uncertain() {
+        // threshold = 0.5, low = 0.5: the bands touch exactly rather than
+        // cross — the boundary noul satisfies both conditions at once.
+        assert_eq!(agreement(Expected::Pass, 0.5, 0.5), Agreement::Uncertain);
+        assert_eq!(agreement(Expected::Fail, 0.5, 0.5), Agreement::Uncertain);
+        assert_eq!(agreement(Expected::Pass, 0.6, 0.5), Agreement::Agrees);
+        assert_eq!(agreement(Expected::Pass, 0.4, 0.5), Agreement::Disagrees);
+        assert_eq!(agreement(Expected::Fail, 0.4, 0.5), Agreement::Agrees);
+        assert_eq!(agreement(Expected::Fail, 0.6, 0.5), Agreement::Disagrees);
+    }
+
+    #[test]
+    fn agreement_at_threshold_one_only_a_perfect_noul_agrees() {
+        // threshold = 1.0, low = 0.0: the widest possible Uncertain band —
+        // only an exact 1.0 (Pass) or exact 0.0 (Fail) agrees.
+        assert_eq!(agreement(Expected::Pass, 1.0, 1.0), Agreement::Agrees);
+        assert_eq!(agreement(Expected::Pass, 0.0, 1.0), Agreement::Disagrees);
+        assert_eq!(agreement(Expected::Pass, 0.5, 1.0), Agreement::Uncertain);
+        assert_eq!(agreement(Expected::Fail, 0.0, 1.0), Agreement::Agrees);
+        assert_eq!(agreement(Expected::Fail, 1.0, 1.0), Agreement::Disagrees);
+        assert_eq!(agreement(Expected::Fail, 0.5, 1.0), Agreement::Uncertain);
+    }
+
     // -- context-limit wording heuristic -------------------------------------------
 
     #[test]
@@ -1281,5 +1770,81 @@ mod tests {
         })
         .to_string();
         assert!(!looks_like_context_limit(&body));
+    }
+
+    /// Near misses: each mentions "token" or "limit" (the old, looser
+    /// heuristic's trigger words) without being about the context window at
+    /// all. A genuine `Invalid` on one of these must stay `Err`, never
+    /// silently downgrade to `OverBudget` — see the module docs.
+    #[test]
+    fn near_miss_api_token_wording_is_not_a_context_limit() {
+        let body = serde_json::json!({
+            "detail": [{"loc": ["header", "authorization"], "msg": "API token invalid", "type": "value_error"}],
+        })
+        .to_string();
+        assert!(!looks_like_context_limit(&body));
+    }
+
+    #[test]
+    fn near_miss_criteria_option_limit_wording_is_not_a_context_limit() {
+        let body = serde_json::json!({
+            "detail": [{
+                "loc": ["body", "questions", "reading", "criteria"],
+                "msg": "criteria limit of 255 options exceeded",
+                "type": "value_error",
+            }],
+        })
+        .to_string();
+        assert!(!looks_like_context_limit(&body));
+    }
+
+    #[tokio::test]
+    async fn invalid_422_with_near_miss_api_token_wording_stays_an_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+                "detail": [{
+                    "loc": ["header", "authorization"],
+                    "msg": "API token invalid",
+                    "type": "value_error",
+                }],
+            })))
+            .mount(&server)
+            .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let err = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, JevError::Invalid { .. }));
+    }
+
+    #[tokio::test]
+    async fn invalid_422_with_near_miss_criteria_limit_wording_stays_an_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+                "detail": [{
+                    "loc": ["body", "questions", "reading", "criteria"],
+                    "msg": "criteria limit of 255 options exceeded",
+                    "type": "value_error",
+                }],
+            })))
+            .mount(&server)
+            .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let err = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, JevError::Invalid { .. }));
     }
 }

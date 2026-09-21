@@ -8,9 +8,17 @@
 //! same state — see <https://docs.typesafe.ai/primitives/choice.md>) are both
 //! implemented; `Score` (<https://docs.typesafe.ai/primitives/score.md>) is
 //! not, since nothing in this milestone asks one.
+//!
+//! `questions`/`criteria` use [`IndexMap`] rather than [`HashMap`], and
+//! `verify` inserts into them in a fixed order — a `HashMap`'s iteration
+//! order is randomized per process, which would make the request's
+//! serialized bytes (and the order Choice options are presented to the
+//! model) nondeterministic run to run. `indexmap` is already a direct
+//! workspace dependency (see `Cargo.toml`), so this needed no new one.
 
 use std::collections::HashMap;
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 /// A request to `POST {base_url}/v1/systemone`
@@ -25,7 +33,9 @@ pub struct SystemOneRequest {
     pub model: String,
     /// Named questions to ask over `state`, keyed by a caller-chosen id. The
     /// same id keys the corresponding entry in [`SystemOneResponse::answers`].
-    pub questions: HashMap<String, Question>,
+    /// Insertion-ordered (see the module docs) so the request's serialized
+    /// bytes are deterministic.
+    pub questions: IndexMap<String, Question>,
 }
 
 /// One question in a [`SystemOneRequest`]. Internally tagged by TypeSafe's
@@ -69,8 +79,10 @@ pub struct ChoiceQuestion {
     /// The question being asked (e.g. "Which team should handle this?").
     pub instructions: String,
     /// Option name -> description, up to 255 entries
-    /// (<https://docs.typesafe.ai/primitives/choice.md>).
-    pub criteria: HashMap<String, String>,
+    /// (<https://docs.typesafe.ai/primitives/choice.md>). Insertion-ordered
+    /// (see the module docs): the order options are inserted in is the order
+    /// they're presented to the model, and must not vary call to call.
+    pub criteria: IndexMap<String, String>,
 }
 
 /// A successful `200` response from `POST /v1/systemone`
@@ -80,15 +92,29 @@ pub struct SystemOneResponse {
     /// The concrete model that actually answered (e.g. `jev-1.13.0`), which
     /// may differ from the requested alias (e.g. `jev-latest`).
     pub model: String,
-    /// One answer per requested question, keyed by the same id.
-    pub answers: HashMap<String, Answer>,
+    /// One raw answer payload per requested question, keyed by the same id.
+    ///
+    /// Deliberately **not** eagerly parsed into [`Answer`] here (contrast
+    /// MULTI-1819's original design): this milestone sends one *required*
+    /// question (a Noul) and one *record-only* question (a Choice) in the
+    /// same request (see `crate::checks::jev::verify`), and a malformed or
+    /// unrecognized entry for the record-only question must not fail the
+    /// whole response and block an otherwise-valid required answer. Callers
+    /// parse the specific id(s) they need on demand — typically via
+    /// `serde_json::from_value::<Answer>` — and decide for themselves how to
+    /// treat a parse failure (see `verify::extract_noul`, which errors, and
+    /// `verify::extract_choice`, which degrades to `None`).
+    pub answers: HashMap<String, serde_json::Value>,
     /// Token accounting for this request.
     pub usage: Usage,
 }
 
 /// One answer in a [`SystemOneResponse`]. Tagged by TypeSafe's `"type"` field,
 /// mirroring [`Question`] — but deserialized by hand (see the `Deserialize`
-/// impl below) rather than via `#[serde(tag = "type")]`.
+/// impl below) rather than via `#[serde(tag = "type")]`. Never deserialized
+/// automatically as part of [`SystemOneResponse`] — see
+/// [`SystemOneResponse::answers`]; a caller parses one on demand via
+/// `serde_json::from_value::<Answer>(value)`.
 #[derive(Debug, Clone)]
 pub enum Answer {
     Noul(NoulAnswer),
@@ -219,16 +245,40 @@ mod tests {
         let response: SystemOneResponse = serde_json::from_value(raw).unwrap();
         assert_eq!(response.model, "jev-1.13.0");
         assert_eq!(response.usage.input_tokens, 360);
-        match response.answers.get("question_id") {
-            Some(Answer::Noul(NoulAnswer { noul })) => assert_eq!(*noul, 0.99),
+        // `answers` entries are raw `Value`s — see `SystemOneResponse::answers`
+        // — so a caller parses the one it wants on demand.
+        let answer: Answer =
+            serde_json::from_value(response.answers.get("question_id").unwrap().clone()).unwrap();
+        match answer {
+            Answer::Noul(NoulAnswer { noul }) => assert_eq!(noul, 0.99),
             other => panic!("expected a Noul answer, got {other:?}"),
         }
     }
 
     #[test]
+    fn system_one_response_tolerates_a_malformed_or_unknown_answer_entry() {
+        // A record-only/optional answer that's missing a required field, or
+        // whose `type` isn't recognized at all, must not fail the whole
+        // response — see `SystemOneResponse::answers`'s docs. Only parsing a
+        // *specific* id on demand (as `system_one_response_deserializes_the_
+        // documented_example` does above) can fail.
+        let raw = serde_json::json!({
+            "model": "jev-1.13.0",
+            "answers": {
+                "satisfied": {"type": "noul", "noul": 0.9},
+                "reading": {"type": "choice", "choice": "satisfied"}, // missing confidence/probabilities
+                "mystery": {"type": "score", "score": 3.0}, // unrecognized type
+            },
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        });
+        let response: SystemOneResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(response.answers.len(), 3);
+    }
+
+    #[test]
     fn choice_question_serializes_to_the_documented_shape() {
         // The example request from https://docs.typesafe.ai/primitives/choice.md
-        let mut criteria = HashMap::new();
+        let mut criteria = IndexMap::new();
         criteria.insert(
             "returns".to_string(),
             "Exchanges, wrong or damaged items".to_string(),
@@ -276,8 +326,10 @@ mod tests {
             "usage": {"input_tokens": 328, "output_tokens": 34},
         });
         let response: SystemOneResponse = serde_json::from_value(raw).unwrap();
-        match response.answers.get("department") {
-            Some(Answer::Choice(answer)) => {
+        let answer: Answer =
+            serde_json::from_value(response.answers.get("department").unwrap().clone()).unwrap();
+        match answer {
+            Answer::Choice(answer) => {
                 assert_eq!(answer.choice, "returns");
                 assert_eq!(answer.confidence, 1.0);
                 assert_eq!(answer.probabilities.get("returns"), Some(&1.0));
@@ -287,13 +339,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_answer_type_is_rejected() {
-        let raw = serde_json::json!({
-            "model": "jev-1.13.0",
-            "answers": {"q": {"type": "score", "score": 3.0}},
-            "usage": {"input_tokens": 1, "output_tokens": 1},
-        });
-        let err = serde_json::from_value::<SystemOneResponse>(raw).unwrap_err();
+    fn answer_deserialize_rejects_an_unknown_type() {
+        // `Answer`'s own hand-written `Deserialize` still rejects an
+        // unrecognized `type` when a caller actually asks to parse one (see
+        // `system_one_response_tolerates_a_malformed_or_unknown_answer_entry`
+        // for why `SystemOneResponse` itself no longer does this eagerly).
+        let raw = serde_json::json!({"type": "score", "score": 3.0});
+        let err = serde_json::from_value::<Answer>(raw).unwrap_err();
         assert!(err.to_string().contains("score"), "got: {err}");
     }
 }

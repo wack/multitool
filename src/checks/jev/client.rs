@@ -154,8 +154,7 @@ impl JevClient {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
+    use indexmap::IndexMap;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -165,7 +164,7 @@ mod tests {
     /// A minimal single-question Noul request, matching
     /// https://docs.typesafe.ai/api.md's example request.
     fn sample_request() -> SystemOneRequest {
-        let mut questions = HashMap::new();
+        let mut questions = IndexMap::new();
         questions.insert(
             "is_urgent".to_string(),
             Question::Noul(NoulQuestion {
@@ -244,8 +243,12 @@ mod tests {
 
         assert_eq!(response.model, "jev-1.13.0");
         assert_eq!(response.usage.input_tokens, 296);
-        match response.answers.get("is_urgent") {
-            Some(crate::checks::jev::types::Answer::Noul(answer)) => {
+        // `answers` entries are raw `Value`s (see `SystemOneResponse::answers`
+        // in `types.rs`); a caller parses the one it wants on demand.
+        let answer: crate::checks::jev::types::Answer =
+            serde_json::from_value(response.answers.get("is_urgent").unwrap().clone()).unwrap();
+        match answer {
+            crate::checks::jev::types::Answer::Noul(answer) => {
                 assert_eq!(answer.noul, 0.95);
             }
             other => panic!("expected a Noul answer, got {other:?}"),
