@@ -7,9 +7,11 @@
 //! concurrency is `cfg.concurrency`. The workflow replaces the hand-rolled
 //! semaphore + per-check `tokio::spawn` + retry-self-message machinery: the engine
 //! runs one `run-check` step per check, caps how many run at once, and each step
-//! creates a CoW sandbox, runs the check's agent via the injected
-//! [`CheckExecutor`] (which returns the verdict inline), drops the sandbox,
-//! harvests the attempt's trace, and forwards a [`CheckCompleted`] to reporting.
+//! hands the injected [`CheckExecutor`] a lazy CoW sandbox lease alongside the
+//! check's evidence source (MULTI-1818) — the executor decides whether it needs
+//! the sandbox at all, acquires it (or not), returns the verdict inline, drops
+//! the request (tearing any acquired sandbox down), harvests the attempt's
+//! trace, and forwards a [`CheckCompleted`] to reporting.
 //!
 //! A check whose agent never reports a verdict is retried **in place** (up to
 //! `cfg.max_attempts`) inside the step, escalating the attempt number so the
@@ -36,7 +38,7 @@ use crate::checks::messages::{
 use crate::checks::model::{CheckOutcome, Verdict};
 use crate::checks::presenter::{PresenterActor, UiEvent};
 use crate::checks::reporting::ReportingActor;
-use crate::checks::sandbox::Sandbox;
+use crate::checks::sandbox::{Sandbox, SandboxLease};
 use crate::checks::trace_archive::{TraceCollector, TraceEntry};
 
 /// The execution actor: buffers the discovered checks, then fans them out
@@ -286,39 +288,35 @@ fn has_verdict(outcome: Option<&Result<AgentOutcome>>) -> bool {
     matches!(outcome, Some(Ok(o)) if o.has_verdict())
 }
 
-/// Drive one check: create its CoW sandbox, run the agent against it, then tear
-/// the sandbox down. The executor owns the agent lifecycle (the in-process
-/// executor cancels its agent the instant it reports; the legacy fallback runs
-/// the subprocess to completion or timeout).
+/// Drive one check: hand the executor its evidence source plus a lazy CoW
+/// sandbox lease over it, and let the executor decide whether it needs the
+/// sandbox at all (MULTI-1818). The executor owns the agent lifecycle (the
+/// in-process executor cancels its agent the instant it reports; the legacy
+/// fallback runs the subprocess to completion or timeout) and, if it acquires
+/// the lease, its teardown too — the lease lives inside the request, so
+/// dropping the request when `run_check` returns tears the clone down (RAII).
 ///
-/// The sandbox clones `job.root` — the requirement's repository root
+/// The lease clones `job.root` — the requirement's repository root
 /// (MULTI-1834), resolved per requirements file during discovery — not the
-/// directory `multi check` was scanned from. MULTI-1818's lazy sandbox lease
-/// will replace this eager `sandbox.create` call; `job.root` is the value it
-/// will lease.
+/// directory `multi check` was scanned from.
 async fn run_one(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
     job: &CheckJob,
     attempt: usize,
 ) -> Result<AgentOutcome> {
-    let handle = sandbox.create(&job.root).await?;
-
     let declared_in = declared_in_relative_to_root(&job.filepath, &job.root);
 
     let request = crate::checks::executor::AgentRunRequest {
         check_id: job.id,
         check: job.check.clone(),
-        working_dir: handle.path().to_path_buf(),
+        source_dir: job.root.clone(),
+        sandbox: SandboxLease::new(sandbox, job.root.clone()),
         declared_in,
         attempt: u32::try_from(attempt).unwrap_or(u32::MAX),
     };
 
-    let outcome = executor.run_check(request).await;
-
-    // Drop the sandbox after the run completes (RAII teardown of the clone).
-    drop(handle);
-    outcome
+    executor.run_check(request).await
 }
 
 /// The declaring file's path relative to `root`, for display in the agent's

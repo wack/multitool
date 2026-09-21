@@ -116,6 +116,13 @@ impl FakeExecutor {
 #[async_trait]
 impl CheckExecutor for FakeExecutor {
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
+        // Mirror `CerseiExecutor`: this fake always "runs an agent", so it
+        // always acquires the sandbox lease (MULTI-1818). This is what keeps
+        // the `RecordingSandbox`-based e2e assertions (one clone per attempt,
+        // cloning the repository root) meaningful with this fake standing in
+        // for the real executor.
+        req.sandbox.acquire().await?;
+
         let attempt = {
             let mut seen = self.seen.lock().unwrap();
             seen.push((req.check_id, req.attempt));

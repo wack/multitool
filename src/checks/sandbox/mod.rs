@@ -9,9 +9,11 @@
 //! still builds everywhere.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use miette::Result;
+use tokio::sync::OnceCell;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -46,6 +48,48 @@ impl SandboxHandle {
     /// The sandbox root directory (use as the agent's working directory).
     pub fn path(&self) -> &Path {
         &self.root
+    }
+}
+
+/// A lazily-created CoW sandbox for one check attempt (MULTI-1818). Wraps the
+/// injected [`Sandbox`] factory and the source directory (a requirement's
+/// repository root, [`crate::checks::model::Requirement::root`]) to clone
+/// from — but does not clone anything until asked.
+///
+/// [`SandboxLease::acquire`] creates the clone on its first call and hands
+/// back that same clone on any later call, so a check whose evidence is
+/// settled without an agent (the Jev decision engine's in-host replay,
+/// MULTI-1825) never pays for a clone: an executor that never calls
+/// `acquire` triggers zero [`Sandbox::create`] calls. The clone is removed
+/// when the lease — and, transitively, the
+/// [`AgentRunRequest`](crate::checks::executor::AgentRunRequest) carrying it
+/// — is dropped, the same RAII teardown the eager `sandbox.create` call used
+/// to get for free.
+pub struct SandboxLease {
+    sandbox: Arc<dyn Sandbox + Send + Sync>,
+    source: PathBuf,
+    handle: OnceCell<SandboxHandle>,
+}
+
+impl SandboxLease {
+    /// Wrap `sandbox` for lazily cloning `source`.
+    pub fn new(sandbox: Arc<dyn Sandbox + Send + Sync>, source: PathBuf) -> Self {
+        Self {
+            sandbox,
+            source,
+            handle: OnceCell::new(),
+        }
+    }
+
+    /// Acquire the sandbox, cloning the source directory on the first call.
+    /// Later calls on the same lease reuse that clone rather than creating
+    /// another one, so a lease is safe to acquire more than once within an
+    /// attempt.
+    pub async fn acquire(&self) -> Result<&Path> {
+        self.handle
+            .get_or_try_init(|| self.sandbox.create(&self.source))
+            .await
+            .map(SandboxHandle::path)
     }
 }
 
@@ -160,5 +204,31 @@ mod tests {
         let clone_path = handle.path().to_path_buf();
         drop(handle);
         assert!(!clone_path.exists());
+    }
+
+    /// MULTI-1818 acceptance: a lease that is never acquired triggers zero
+    /// `Sandbox::create` calls — the clone is lazy, not eager.
+    #[tokio::test]
+    async fn lease_creates_nothing_until_acquired() {
+        let sandbox = Arc::new(RecordingSandbox::new());
+        let lease = SandboxLease::new(sandbox.clone(), PathBuf::from("/tmp/does-not-matter"));
+        drop(lease);
+        assert!(sandbox.sources().is_empty());
+    }
+
+    /// MULTI-1818: `acquire` clones on its first call and reuses that clone on
+    /// any later call from the same lease — the "one sandbox per attempt"
+    /// guarantee holds even if a future caller acquires more than once.
+    #[tokio::test]
+    async fn lease_acquire_clones_once_and_reuses_it() {
+        let sandbox = Arc::new(RecordingSandbox::new());
+        let source = PathBuf::from("/tmp/does-not-matter");
+        let lease = SandboxLease::new(sandbox.clone(), source.clone());
+
+        let first = lease.acquire().await.unwrap().to_path_buf();
+        let second = lease.acquire().await.unwrap().to_path_buf();
+
+        assert_eq!(first, second);
+        assert_eq!(sandbox.sources(), vec![source]);
     }
 }

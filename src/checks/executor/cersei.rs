@@ -158,6 +158,15 @@ fn attempt_temperature(attempt: u32) -> f32 {
 #[async_trait]
 impl CheckExecutor for CerseiExecutor {
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
+        // Acquire the sandbox lease up front (MULTI-1818): this executor always
+        // runs an agent, so it always needs the CoW clone, and acquiring it here
+        // — rather than the caller creating it eagerly — preserves today's
+        // behavior exactly (one sandbox per attempt, RAII teardown when `req`,
+        // and the lease within it, drops at the end of this call). A creation
+        // failure propagates as `Err` from this method, exactly as it did when
+        // the caller created the sandbox before invoking `run_check`.
+        let working_dir = req.sandbox.acquire().await?.to_path_buf();
+
         // Distinct session id per check: cersei's BashTool persists shell cwd/env
         // in a process-global registry keyed by session_id, so a shared id would
         // let parallel agents clobber each other's shell state.
@@ -183,7 +192,7 @@ impl CheckExecutor for CerseiExecutor {
         let instructions = assemble_instructions(
             &req.check,
             &judge_tool_directive(),
-            &req.working_dir,
+            &working_dir,
             &req.declared_in,
             req.attempt,
         );
@@ -191,7 +200,7 @@ impl CheckExecutor for CerseiExecutor {
         let mut agent_builder = Agent::builder()
             .provider_boxed(provider)
             .model(self.model.clone())
-            .working_dir(req.working_dir.clone())
+            .working_dir(working_dir.clone())
             .session_id(session_id.clone())
             // Least privilege: read-only tools + a policy that denies anything
             // above ReadOnly (defense in depth if the tool set ever widens).
@@ -218,7 +227,7 @@ impl CheckExecutor for CerseiExecutor {
         // by the separate `cersei_agent::system_prompt::build_system_prompt`
         // composer, which this executor doesn't use), and we don't set a base
         // system prompt anywhere else here.
-        if let Some(project_prompt) = project_instructions(&req.working_dir) {
+        if let Some(project_prompt) = project_instructions(&working_dir) {
             agent_builder = agent_builder.system_prompt(project_prompt);
         }
 
@@ -308,7 +317,7 @@ impl CheckExecutor for CerseiExecutor {
                 check_title: &req.check.title,
                 model: &self.model,
                 effort: self.effort,
-                working_dir: &req.working_dir,
+                working_dir: &working_dir,
                 session_id: &session_id,
             };
             let bytes = serialize_trace(recorder, &header, &outcome);

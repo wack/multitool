@@ -464,3 +464,57 @@ fn cwd_inside_a_subdirectory_scanning_dot_still_finds_the_root_above() {
         Ok(())
     });
 }
+
+/// A check executor that decides every check from
+/// [`AgentRunRequest::source_dir`] alone and never calls
+/// `AgentRunRequest::sandbox.acquire()` — standing in for MULTI-1825's Jev
+/// decision path, which replays evidence in-host and only falls back to an
+/// agent (and its sandbox) when Jev can't decide.
+struct NeverAcquiresExecutor;
+
+#[async_trait]
+impl CheckExecutor for NeverAcquiresExecutor {
+    async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
+        // The source directory is available without ever touching the lease.
+        assert!(req.source_dir.exists());
+        Ok(AgentOutcome {
+            verdict: Some(CheckReport {
+                success: true,
+                evidence: Some("decided from source_dir, no sandbox needed".into()),
+            }),
+            stop_reason: Some("never-acquires probe".into()),
+            turns: 0,
+            error: None,
+            trace_jsonl: None,
+        })
+    }
+}
+
+/// MULTI-1818 acceptance: an executor that never acquires its sandbox lease
+/// causes zero `Sandbox::create` calls — the clone is created lazily, on
+/// demand, rather than eagerly for every check like before this ticket.
+#[tokio::test]
+async fn executor_that_never_acquires_the_lease_creates_no_sandbox() {
+    let dir = write_manifest_fixture();
+    let scan_dir = dir.path().join("services/keystore");
+    let reqs = discover(&scan_dir).await.unwrap();
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let cfg = configuration();
+    let outcomes = run_to_outcomes(
+        &cfg,
+        Arc::new(NeverAcquiresExecutor),
+        sandbox.clone(),
+        &reqs,
+        null_backend(),
+    )
+    .await
+    .unwrap();
+    assert!(outcomes[0].satisfied);
+
+    assert!(
+        sandbox.sources().is_empty(),
+        "expected zero Sandbox::create calls, got {:?}",
+        sandbox.sources()
+    );
+}
