@@ -31,7 +31,7 @@ use kameo::message::{Context, Message};
 use miette::Result;
 use serde_json::{Value, json};
 
-use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport};
+use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport, ProgressSink};
 use crate::checks::messages::{
     CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete,
 };
@@ -232,7 +232,7 @@ async fn execute_check_job(
         // The agent is about to run: mark the check Running.
         let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
 
-        let mut result = run_one(executor.clone(), sandbox.clone(), &job, attempt).await;
+        let mut result = run_one(executor.clone(), sandbox.clone(), presenter, &job, attempt).await;
 
         // Harvest this attempt's trace *before* signalling completion, so it is
         // collected even for retried attempts (whose outcome never reaches
@@ -299,13 +299,40 @@ fn has_verdict(outcome: Option<&Result<AgentOutcome>>) -> bool {
 /// The lease clones `job.root` — the requirement's repository root
 /// (MULTI-1834), resolved per requirements file during discovery — not the
 /// directory `multi check` was scanned from.
+///
+/// Also wires this attempt's [`ProgressSink`] (MULTI-1828) to `presenter`: a
+/// forwarder task drains the paired receiver into fire-and-forget
+/// `UiEvent::CheckProgress` tells while the executor runs, and is joined
+/// after `run_check` returns (which drops every clone of the sink, closing
+/// the channel) so every update already sent lands before this attempt's own
+/// `CheckRetrying`/`CheckSettled` tell, and no task outlives the attempt it
+/// belonged to.
 async fn run_one(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
+    presenter: &ActorRef<PresenterActor>,
     job: &CheckJob,
     attempt: usize,
 ) -> Result<AgentOutcome> {
     let declared_in = declared_in_relative_to_root(&job.filepath, &job.root);
+
+    let (progress, mut updates) = ProgressSink::channel();
+    let id = job.id;
+    let forwarder = {
+        let presenter = presenter.clone();
+        tokio::spawn(async move {
+            while let Some(update) = updates.recv().await {
+                let _ = presenter
+                    .tell(UiEvent::CheckProgress {
+                        id,
+                        turn: update.turn,
+                        max_turns: update.max_turns,
+                        activity: update.activity,
+                    })
+                    .await;
+            }
+        })
+    };
 
     let request = crate::checks::executor::AgentRunRequest {
         check_id: job.id,
@@ -314,9 +341,12 @@ async fn run_one(
         sandbox: SandboxLease::new(sandbox, job.root.clone()),
         declared_in,
         attempt: u32::try_from(attempt).unwrap_or(u32::MAX),
+        progress: Some(progress),
     };
 
-    executor.run_check(request).await
+    let outcome = executor.run_check(request).await;
+    let _ = forwarder.await;
+    outcome
 }
 
 /// The declaring file's path relative to `root`, for display in the agent's

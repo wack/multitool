@@ -17,12 +17,14 @@ use cersei_types::CerseiError;
 use miette::{Result, miette};
 use tokio_util::sync::CancellationToken;
 
+use super::activity::render_activity;
 use super::jail::Jailed;
 use super::judge::{JudgeTool, VerdictSink};
 use super::tool_capture::ToolCallCollector;
 use super::trace::{TraceHeader, TraceRecorder, serialize_trace};
 use super::{
-    AgentOutcome, AgentRunRequest, CheckExecutor, assemble_instructions, judge_tool_directive,
+    AgentOutcome, AgentProgress, AgentRunRequest, CheckExecutor, assemble_instructions,
+    judge_tool_directive,
 };
 use crate::checks::config::Effort;
 use crate::checks::config::ProviderFactory;
@@ -167,6 +169,11 @@ impl CheckExecutor for CerseiExecutor {
         // the caller created the sandbox before invoking `run_check`.
         let working_dir = req.sandbox.acquire().await?.to_path_buf();
 
+        // Cloned up front so the `on_event` closure below can own it: the
+        // presenter's live progress display (MULTI-1828), fire-and-forget and
+        // display-only. `None` when the caller doesn't want it (tests).
+        let progress = req.progress.clone();
+
         // Distinct session id per check: cersei's BashTool persists shell cwd/env
         // in a process-global registry keyed by session_id, so a shared id would
         // let parallel agents clobber each other's shell state.
@@ -235,9 +242,13 @@ impl CheckExecutor for CerseiExecutor {
         // `on_event` slot. The turn counter runs unconditionally: the success
         // path cancels the agent the instant it reports, which makes `run`
         // return `Err(Cancelled)` and discards cersei's own turn count — so
-        // without it every successful check would report 0 turns. The trace
-        // recorder is opt-in; `emit` invokes this synchronously for each event
-        // *before* the loop's early returns, so the trace survives post-verdict
+        // without it every successful check would report 0 turns. The
+        // progress sink (MULTI-1828) is display-only and best-effort: a turn
+        // starting, and each allowlisted tool call, feeds a short update to
+        // the presenter via `render_activity` (kept in its own module so this
+        // hook stays a thin passthrough). The trace recorder is opt-in;
+        // `emit` invokes this synchronously for each event *before* the
+        // loop's early returns, so the trace survives post-verdict
         // cancellation and the drop-on-timeout below (which cersei's own
         // session persistence would miss). The tool-call collector (MULTI-1817)
         // runs unconditionally, same reasoning as the turn counter — it freezes
@@ -250,9 +261,28 @@ impl CheckExecutor for CerseiExecutor {
             let recorder = recorder.clone();
             let turns_seen = Arc::clone(&turns_seen);
             let tool_calls = Arc::clone(&tool_calls);
+            let progress = progress.clone();
+            let working_dir = working_dir.clone();
             agent_builder = agent_builder.on_event(move |event| {
                 if let AgentEvent::TurnStart { turn } = event {
                     turns_seen.fetch_max(*turn, Ordering::Relaxed);
+                    if let Some(sink) = &progress {
+                        sink.send(AgentProgress {
+                            turn: *turn,
+                            max_turns: MAX_TURNS,
+                            activity: None,
+                        });
+                    }
+                }
+                if let AgentEvent::ToolStart { name, input, .. } = event
+                    && let Some(sink) = &progress
+                    && let Some(activity) = render_activity(name, input, &working_dir)
+                {
+                    sink.send(AgentProgress {
+                        turn: turns_seen.load(Ordering::Relaxed),
+                        max_turns: MAX_TURNS,
+                        activity: Some(activity),
+                    });
                 }
                 if let Some(recorder) = &recorder {
                     recorder.record(event);

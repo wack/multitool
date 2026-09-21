@@ -80,6 +80,17 @@ pub(crate) enum UiEvent {
     /// The check reached a terminal verdict. Carries the reconciled outcome so the
     /// presenter can render the same record the reporting actor would.
     CheckSettled { id: CheckId, outcome: CheckOutcome },
+    /// A running check's agent made in-flight progress (MULTI-1828): which
+    /// turn it's on (out of `max_turns`) and, when there is one, a short
+    /// root-relative rendering of its most recent allowlisted tool call.
+    /// Fire-and-forget from [`crate::checks::execution`]; display-only —
+    /// never affects verdicts, retries, or reporting.
+    CheckProgress {
+        id: CheckId,
+        turn: u32,
+        max_turns: u32,
+        activity: Option<String>,
+    },
     /// A `tracing` log line fired somewhere in the run, already formatted.
     /// Routed through the presenter (via [`crate::terminal::route_logs`]) so it
     /// never writes raw bytes over a live backend's cursor-managed display; each

@@ -40,17 +40,33 @@ impl HeartbeatBackend {
         }
     }
 
-    /// The heartbeat text, e.g.
-    /// `[multi] 7/12 checks complete · 4 running · 3m12s · claude-sonnet-4-6`.
-    /// Returns `None` before there's anything meaningful to report.
+    /// The heartbeat text, e.g. `[multi] 7/12 checks complete · 4 running
+    /// (turn 3/30, turn 12/30) · 3m12s · claude-sonnet-4-6`. Returns `None`
+    /// before there's anything meaningful to report.
+    ///
+    /// The parenthetical lists the turn of each currently-running check
+    /// (MULTI-1828), in row order — the CI-log substitute for the inline
+    /// TUI's per-row `turn N/max` — but only for the events already folded
+    /// into `state`; this method itself never emits per-event lines (only
+    /// `tick`, on the slow heartbeat cadence, does).
     fn line(&self, state: &PresenterState) -> Option<String> {
         let total = state.total?;
         if total == 0 {
             return None;
         }
         let elapsed = human_elapsed(state.run_started.elapsed());
+        let turns = state.running_turns();
+        let progress = if turns.is_empty() {
+            String::new()
+        } else {
+            let parts: Vec<String> = turns
+                .iter()
+                .map(|(turn, max_turns)| format!("turn {turn}/{max_turns}"))
+                .collect();
+            format!(" ({})", parts.join(", "))
+        };
         Some(format!(
-            "[multi] {}/{total} checks complete · {} running · {elapsed} · {}",
+            "[multi] {}/{total} checks complete · {} running{progress} · {elapsed} · {}",
             state.done(),
             state.running(),
             state.model,
@@ -163,5 +179,50 @@ mod tests {
         let mut state = PresenterState::new("test-model".into());
         state.apply(&UiEvent::DiscoveryComplete { total_checks: 0 });
         assert!(backend.line(&state).is_none());
+    }
+
+    /// MULTI-1828 acceptance: the heartbeat line includes the turn of each
+    /// running check (never the activity text — that would flood CI logs).
+    #[test]
+    fn line_includes_the_turn_of_each_running_check() {
+        let backend = HeartbeatBackend::new(false);
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        queued(&mut state, 1);
+        state.apply(&UiEvent::DiscoveryComplete { total_checks: 2 });
+        state.apply(&UiEvent::CheckStarted { id: 0 });
+        state.apply(&UiEvent::CheckStarted { id: 1 });
+        state.apply(&UiEvent::CheckProgress {
+            id: 0,
+            turn: 3,
+            max_turns: 30,
+            activity: Some("Read src/auth/sign.rs".into()),
+        });
+        state.apply(&UiEvent::CheckProgress {
+            id: 1,
+            turn: 12,
+            max_turns: 30,
+            activity: None,
+        });
+
+        let line = backend.line(&state).unwrap();
+        assert!(line.contains("turn 3/30"), "{line}");
+        assert!(line.contains("turn 12/30"), "{line}");
+        // Never the activity text itself — only the turn.
+        assert!(!line.contains("sign.rs"), "{line}");
+    }
+
+    /// A running check with no progress yet (no `TurnStart` observed) is
+    /// simply omitted rather than padded with a placeholder.
+    #[test]
+    fn line_omits_turn_for_a_running_check_with_no_progress_yet() {
+        let backend = HeartbeatBackend::new(false);
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        state.apply(&UiEvent::DiscoveryComplete { total_checks: 1 });
+        state.apply(&UiEvent::CheckStarted { id: 0 });
+
+        let line = backend.line(&state).unwrap();
+        assert!(!line.contains("turn"), "{line}");
     }
 }

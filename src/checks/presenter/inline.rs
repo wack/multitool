@@ -387,7 +387,21 @@ fn live_lines(
                 .started
                 .map(|s| clock_elapsed(s.elapsed()))
                 .unwrap_or_default();
-            lines.push(Line::raw(format!("{label:<44}{elapsed}")));
+            let mut text = format!("{label:<44}{elapsed}");
+            // MULTI-1828: a running row also shows which turn its agent is on
+            // and, once one has arrived, its most recent allowlisted tool
+            // call. The live region is a fixed-width `Buffer` (see the module
+            // docs), so a long line is clipped rather than wrapped — that's
+            // the "truncated to the row width" the ticket asks for, for free.
+            if matches!(row.state, CheckState::Running)
+                && let Some(progress) = &row.progress
+            {
+                text.push_str(&format!("  turn {}/{}", progress.turn, progress.max_turns));
+                if let Some(activity) = &progress.activity {
+                    text.push_str(&format!(" · {activity}"));
+                }
+            }
+            lines.push(Line::raw(text));
         }
     }
 
@@ -462,6 +476,58 @@ mod tests {
         let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.ends_with("claude-sonnet-4-6"), "{header}");
+    }
+
+    /// MULTI-1828 acceptance: a running row shows `turn N/max · <activity>`.
+    #[test]
+    fn running_row_shows_turn_and_activity() {
+        let mut state = PresenterState::new("test-model".into());
+        state.apply(&UiEvent::CheckQueued {
+            id: 0,
+            req_index: 0,
+            req_title: "R".into(),
+            check_title: "c".into(),
+        });
+        state.apply(&UiEvent::CheckStarted { id: 0 });
+        state.apply(&UiEvent::CheckProgress {
+            id: 0,
+            turn: 3,
+            max_turns: 30,
+            activity: Some("Read src/auth/sign.rs".into()),
+        });
+
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(
+            rendered
+                .iter()
+                .any(|l| l.contains("turn 3/30 · Read src/auth/sign.rs")),
+            "{rendered:?}"
+        );
+    }
+
+    /// A running row with no progress yet (no `TurnStart` observed) shows no
+    /// turn/activity suffix at all — nothing to show yet.
+    #[test]
+    fn running_row_without_progress_shows_no_turn_suffix() {
+        let mut state = PresenterState::new("test-model".into());
+        state.apply(&UiEvent::CheckQueued {
+            id: 0,
+            req_index: 0,
+            req_title: "R".into(),
+            check_title: "c".into(),
+        });
+        state.apply(&UiEvent::CheckStarted { id: 0 });
+
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(!rendered.iter().any(|l| l.contains("turn")), "{rendered:?}");
     }
 
     #[test]

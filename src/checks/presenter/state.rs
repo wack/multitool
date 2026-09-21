@@ -61,6 +61,24 @@ pub(crate) struct CheckRow {
     pub started: Option<Instant>,
     /// The reconciled outcome, set once settled (carries evidence for the record).
     pub outcome: Option<CheckOutcome>,
+    /// The current attempt's most recent in-flight progress (MULTI-1828).
+    /// `None` until the first `CheckProgress` for this attempt arrives;
+    /// cleared on retry and on settle so a stale turn/activity never
+    /// survives past the attempt it described.
+    pub progress: Option<CheckProgress>,
+}
+
+/// One check's live progress, folded from [`UiEvent::CheckProgress`].
+/// Display-only: never affects verdicts, retries, or reporting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CheckProgress {
+    /// The turn the agent is currently on.
+    pub turn: u32,
+    /// The executor's configured turn ceiling.
+    pub max_turns: u32,
+    /// A short, root-relative rendering of the most recent allowlisted tool
+    /// call, when there is one to show.
+    pub activity: Option<String>,
 }
 
 /// The presenter's whole view-model, mutated by [`PresenterState::apply`].
@@ -119,6 +137,7 @@ impl PresenterState {
                         state: CheckState::Queued,
                         started: None,
                         outcome: None,
+                        progress: None,
                     },
                 );
             }
@@ -131,12 +150,37 @@ impl PresenterState {
             UiEvent::CheckRetrying { id, attempt } => {
                 if let Some(row) = self.rows.get_mut(id) {
                     row.state = CheckState::Retrying(*attempt);
+                    // A fresh attempt starts silent (MULTI-1828): the prior
+                    // attempt's turn/activity no longer describes anything.
+                    row.progress = None;
                 }
             }
             UiEvent::CheckSettled { id, outcome } => {
                 if let Some(row) = self.rows.get_mut(id) {
                     row.state = CheckState::Settled(outcome.verdict);
                     row.outcome = Some(outcome.clone());
+                    // Nothing left to show once settled (MULTI-1828).
+                    row.progress = None;
+                }
+            }
+            UiEvent::CheckProgress {
+                id,
+                turn,
+                max_turns,
+                activity,
+            } => {
+                // Ignored for an unknown id (no such row) or a settled one (a
+                // straggling update from an attempt that has already
+                // finished) — only a genuinely in-flight row's progress is
+                // worth showing.
+                if let Some(row) = self.rows.get_mut(id)
+                    && !row.state.is_settled()
+                {
+                    row.progress = Some(CheckProgress {
+                        turn: *turn,
+                        max_turns: *max_turns,
+                        activity: activity.clone(),
+                    });
                 }
             }
             UiEvent::Log(line) => {
@@ -183,6 +227,19 @@ impl PresenterState {
             .values()
             .filter(|r| matches!(r.state, CheckState::Queued | CheckState::Retrying(_)))
             .count()
+    }
+
+    /// The `(turn, max_turns)` of every currently-running check that has
+    /// reported at least one turn, in id order — the heartbeat backend's
+    /// "turn of each running check" (MULTI-1828). A running check with no
+    /// progress yet (no turn observed) is simply omitted rather than padded
+    /// with a placeholder.
+    pub(crate) fn running_turns(&self) -> Vec<(u32, u32)> {
+        self.rows
+            .values()
+            .filter(|r| matches!(r.state, CheckState::Running))
+            .filter_map(|r| r.progress.as_ref().map(|p| (p.turn, p.max_turns)))
+            .collect()
     }
 
     /// The set of distinct `req_index`es, in ascending (declaration) order.
@@ -308,5 +365,99 @@ mod tests {
         assert_eq!(outcome.title, "Req");
         assert!(!outcome.satisfied);
         assert_eq!(outcome.check_outcomes.len(), 2);
+    }
+
+    fn progress(turn: u32, max_turns: u32, activity: Option<&str>) -> UiEvent {
+        UiEvent::CheckProgress {
+            id: 0,
+            turn,
+            max_turns,
+            activity: activity.map(str::to_string),
+        }
+    }
+
+    fn queued(s: &mut PresenterState, id: CheckId) {
+        s.apply(&UiEvent::CheckQueued {
+            id,
+            req_index: 0,
+            req_title: "R".into(),
+            check_title: "c".into(),
+        });
+    }
+
+    /// MULTI-1828 acceptance: progress updates a running row.
+    #[test]
+    fn progress_updates_a_running_row() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0 });
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+
+        s.apply(&progress(1, 30, None));
+        let p = s.rows.get(&0).unwrap().progress.clone().unwrap();
+        assert_eq!(p.turn, 1);
+        assert_eq!(p.max_turns, 30);
+        assert_eq!(p.activity, None);
+
+        s.apply(&progress(1, 30, Some("Read src/auth/sign.rs")));
+        let p = s.rows.get(&0).unwrap().progress.clone().unwrap();
+        assert_eq!(p.activity.as_deref(), Some("Read src/auth/sign.rs"));
+        assert_eq!(s.running_turns(), vec![(1, 30)]);
+    }
+
+    /// MULTI-1828 acceptance: progress is cleared on retry.
+    #[test]
+    fn progress_is_cleared_on_retry() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0 });
+        s.apply(&progress(3, 30, Some("Grep \"sign_jwt\"")));
+        assert!(s.rows.get(&0).unwrap().progress.is_some());
+
+        s.apply(&UiEvent::CheckRetrying { id: 0, attempt: 1 });
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+        assert!(s.running_turns().is_empty());
+    }
+
+    /// MULTI-1828 acceptance: progress is cleared on settle.
+    #[test]
+    fn progress_is_cleared_on_settle() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0 });
+        s.apply(&progress(5, 30, Some("Glob \"**/*.rs\"")));
+        assert!(s.rows.get(&0).unwrap().progress.is_some());
+
+        s.apply(&UiEvent::CheckSettled {
+            id: 0,
+            outcome: settled(Verdict::Satisfied),
+        });
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+    }
+
+    /// MULTI-1828 acceptance: events for an unknown id are ignored.
+    #[test]
+    fn progress_for_an_unknown_id_is_ignored() {
+        let mut s = PresenterState::new("test-model".into());
+        // No `CheckQueued` for id 0 at all.
+        s.apply(&progress(1, 30, Some("Read x")));
+        assert!(s.rows.is_empty());
+    }
+
+    /// MULTI-1828 acceptance: a straggling event for an already-settled id
+    /// is ignored (it must not resurrect a turn/activity display for a row
+    /// that's already showing its final verdict).
+    #[test]
+    fn progress_for_a_settled_id_is_ignored() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0 });
+        s.apply(&UiEvent::CheckSettled {
+            id: 0,
+            outcome: settled(Verdict::Satisfied),
+        });
+
+        s.apply(&progress(9, 30, Some("Read late.rs")));
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
     }
 }

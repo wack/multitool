@@ -7,6 +7,7 @@
 //! [`FakeExecutor`]. It is a boxed trait object for dynamic dispatch, mirroring
 //! the repo's `BoxedIngress` / `BoxedMonitor` / `BoxedPlatform` convention.
 
+mod activity;
 pub mod cersei;
 #[cfg(test)]
 mod fake;
@@ -75,6 +76,55 @@ pub struct AgentRunRequest {
     /// temperature-0 retries reproducing the same fatal trajectory three
     /// times in a row).
     pub attempt: u32,
+    /// Where a running agent reports its turn/activity progress, for the
+    /// presenter (MULTI-1828). `None` in tests (and any executor) that don't
+    /// care to surface it — progress is display-only, never required for
+    /// correctness.
+    pub progress: Option<ProgressSink>,
+}
+
+/// One progress update from a running check's agent (MULTI-1828), emitted
+/// from [`cersei::CerseiExecutor`]'s `on_event` hook. Display-only: it never
+/// reaches verdict, retry, or reporting logic — only the presenter.
+#[derive(Debug, Clone)]
+pub struct AgentProgress {
+    /// The turn the agent is currently on (per `AgentEvent::TurnStart`).
+    pub turn: u32,
+    /// The executor's configured turn ceiling (e.g. `CerseiExecutor`'s
+    /// `MAX_TURNS`), threaded through so the presenter can show `turn
+    /// N/max` without hardcoding the limit itself.
+    pub max_turns: u32,
+    /// A short, root-relative rendering of the triggering allowlisted tool
+    /// call (see [`activity::render_activity`]), when there is one to show.
+    /// `None` for a bare turn start — a turn beginning has no activity yet.
+    pub activity: Option<String>,
+}
+
+/// A cheap, cloneable, fire-and-forget sink for [`AgentProgress`] updates.
+/// Backed by a small bounded channel: [`ProgressSink::send`] uses
+/// `try_send`, so a slow or gone receiver can never block or fail the agent
+/// run — a full or closed channel just drops the update, which is fine
+/// because progress is display-only and the next update supersedes it
+/// anyway.
+#[derive(Clone)]
+pub struct ProgressSink(tokio::sync::mpsc::Sender<AgentProgress>);
+
+/// Small: these are ephemeral display updates, not a durable log — a burst
+/// the presenter can't keep up with is fine to thin out rather than buffer.
+const PROGRESS_CHANNEL_CAPACITY: usize = 16;
+
+impl ProgressSink {
+    /// A sink paired with the receiver that drains it.
+    pub fn channel() -> (Self, tokio::sync::mpsc::Receiver<AgentProgress>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(PROGRESS_CHANNEL_CAPACITY);
+        (Self(tx), rx)
+    }
+
+    /// Best-effort send: never blocks, and a full or closed channel is
+    /// silently dropped rather than propagated as an error.
+    pub fn send(&self, progress: AgentProgress) {
+        let _ = self.0.try_send(progress);
+    }
 }
 
 /// The result of running one check's agent in-process.
