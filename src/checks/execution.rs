@@ -19,7 +19,7 @@
 //! parse-gates the whole suite before streaming a single check, so all jobs are
 //! always known by the time the workflow starts.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use cersei_workflows::{FnStep, RunStatus, StepRegistry, Workflow, WorkflowBuilder};
@@ -304,15 +304,7 @@ async fn run_one(
 ) -> Result<AgentOutcome> {
     let handle = sandbox.create(&job.root).await?;
 
-    // The declaring file's path relative to the repository root, e.g.
-    // `services/keystore/CHECKS.md` — stated in the instructions so the agent
-    // retains the scoping a smaller, per-scan-directory sandbox used to
-    // provide for free (the sandbox now spans the whole repository root).
-    let declared_in = job
-        .filepath
-        .strip_prefix(&job.root)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|_| job.filepath.clone());
+    let declared_in = declared_in_relative_to_root(&job.filepath, &job.root);
 
     let request = crate::checks::executor::AgentRunRequest {
         check_id: job.id,
@@ -327,6 +319,42 @@ async fn run_one(
     // Drop the sandbox after the run completes (RAII teardown of the clone).
     drop(handle);
     outcome
+}
+
+/// The declaring file's path relative to `root`, for display in the agent's
+/// instructions (MULTI-1834), e.g. `services/keystore/CHECKS.md`. Stated so
+/// the agent retains the scoping a smaller, per-scan-directory sandbox used
+/// to provide for free, now that the sandbox spans the whole repository root.
+///
+/// `filepath` may be relative to the process's current directory —
+/// [`super::discovery::discover`] leaves discovered `CHECKS.md` paths exactly
+/// as found, so diagnostics elsewhere that name a file keep their
+/// pre-MULTI-1834 display — while `root` is always absolute (resolved during
+/// discovery). This absolutizes `filepath` before stripping `root` off, so
+/// the result is correct regardless of the invocation directory or how deep
+/// `job.root` sits above it.
+///
+/// `root` is always a lexical ancestor of the absolutized `filepath` by
+/// construction (both are derived from the same scan root via the same
+/// lexical `std::path::absolute` operation — see `discover` and
+/// `repo_root::resolve`), so the `strip_prefix` below cannot fail in
+/// practice. The fallback exists only to guarantee this *never* emits an
+/// absolute host filesystem path into an agent's instructions if that
+/// invariant is somehow violated (e.g. `std::path::absolute` itself errors,
+/// which only happens if the process's current directory is unavailable): it
+/// degrades to just the file's name, dropping directory context rather than
+/// leaking the host path.
+fn declared_in_relative_to_root(filepath: &Path, root: &Path) -> PathBuf {
+    let absolute = std::path::absolute(filepath).unwrap_or_else(|_| filepath.to_path_buf());
+    absolute
+        .strip_prefix(root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| {
+            filepath
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| filepath.to_path_buf())
+        })
 }
 
 /// Reconcile a single check's verdict from its agent outcome. The reported
@@ -388,6 +416,9 @@ fn turns_suffix(turns: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    // `figment::Jail`'s closure returns a large `Result`; unavoidable here.
+    #![allow(clippy::result_large_err)]
+
     use crate::checks::config::configuration;
     use crate::checks::executor::FakeExecutor;
     use crate::checks::model::{Check, Requirement, RootSource, Verdict};
@@ -395,6 +426,37 @@ mod tests {
     use crate::checks::sandbox::NoopSandbox;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    /// Regression test for a code-review blocker on MULTI-1834: `job.filepath`
+    /// is relative to the process's current directory (discovery leaves it
+    /// exactly as found), and `job.root` is always absolute — `declared_in`
+    /// must absolutize `filepath` before stripping `root`, or the two never
+    /// share a common prefix.
+    #[test]
+    fn declared_in_strips_the_root_even_when_filepath_is_relative() {
+        use figment::Jail;
+        Jail::expect_with(|jail| {
+            let root = jail.directory().to_path_buf();
+            let filepath = PathBuf::from("services/keystore/CHECKS.md");
+            assert_eq!(
+                super::declared_in_relative_to_root(&filepath, &root),
+                PathBuf::from("services/keystore/CHECKS.md")
+            );
+            Ok(())
+        });
+    }
+
+    /// If `root` is somehow not an ancestor of `filepath` (unreachable in the
+    /// real pipeline — see `declared_in_relative_to_root`'s doc comment), the
+    /// result must degrade to just the file name, never leak the absolute
+    /// host path into an agent's instructions.
+    #[test]
+    fn declared_in_never_leaks_an_absolute_path_on_mismatch() {
+        let filepath = PathBuf::from("/some/unrelated/tree/CHECKS.md");
+        let root = PathBuf::from("/a/totally/different/root");
+        let declared_in = super::declared_in_relative_to_root(&filepath, &root);
+        assert_eq!(declared_in, PathBuf::from("CHECKS.md"));
+    }
 
     fn req(title: &str, checks: Vec<(&str, &str)>) -> Requirement {
         Requirement {

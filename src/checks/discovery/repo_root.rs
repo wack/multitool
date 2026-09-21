@@ -17,7 +17,20 @@ use crate::checks::model::RootSource;
 
 /// Resolve the repository root for a requirements file at `declared_in`,
 /// falling back to `scan_root` when no MultiTool manifest exists above it.
+///
+/// `declared_in` may be relative (`walk::find_checks_files` preserves
+/// whatever relativeness the scan directory had) or absolute;
+/// [`crate::fs::find_manifest_root`] absolutizes it internally, so either
+/// works and the returned root is always absolute. `scan_root`, by contrast,
+/// **must already be absolute** — it is used verbatim as the fallback root,
+/// and [`discover`](super::discover) resolves it to absolute exactly once
+/// before any file reaches this function, so every requirement's root shares
+/// one absolute spelling regardless of which branch below is taken.
 pub(super) fn resolve(declared_in: &Path, scan_root: &Path) -> (PathBuf, RootSource) {
+    debug_assert!(
+        scan_root.is_absolute(),
+        "scan_root must be resolved to absolute before reaching repo_root::resolve"
+    );
     let start = declared_in.parent().unwrap_or(declared_in);
     match crate::fs::find_manifest_root(start) {
         Some(root) => (root, RootSource::Manifest),

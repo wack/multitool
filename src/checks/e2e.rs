@@ -7,6 +7,7 @@
 //! regressions.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ use crate::checks::discovery::discover;
 use crate::checks::executor::{
     AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, FakeExecutor,
 };
+use crate::checks::model::RootSource;
 use crate::checks::presenter::null_backend;
 use crate::checks::reporting::report;
 use crate::checks::sandbox::{NoopSandbox, RecordingSandbox};
@@ -351,4 +353,114 @@ async fn sandbox_clones_repository_root_once_per_attempt() {
         sandbox.sources(),
         vec![dir.path().to_path_buf(), dir.path().to_path_buf()]
     );
+}
+
+/// Code-review regression for MULTI-1834: all the tests above pass an
+/// **absolute** `TempDir` scan path, but `multi check`'s default scan
+/// directory is the RELATIVE `.`, and the ticket's own motivating case —
+/// `multi check services/keystore` — is a relative subdirectory argument
+/// too. Before this fix, `Path::ancestors()` on a relative path never climbs
+/// above itself, so root resolution silently fell back to the scan
+/// directory: exactly the invocation-dependence this ticket exists to
+/// remove. Drives discovery from a RELATIVE scan path and asserts the root
+/// still resolves to the manifest above it, and `declared_in` is
+/// root-relative (not an absolute host path).
+#[allow(clippy::result_large_err)] // `figment::Jail`'s closure returns a large `Result`.
+#[test]
+fn relative_scan_path_still_resolves_the_repository_root() {
+    figment::Jail::expect_with(|jail| {
+        jail.create_file("MultiTool.toml", "")?;
+        fs::create_dir_all("services/keystore").unwrap();
+        fs::write(
+            "services/keystore/CHECKS.md",
+            "# Requirement Keystore Scoped\ndo it\n",
+        )
+        .unwrap();
+
+        let repo_root = jail.directory().to_path_buf();
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            // A RELATIVE scan path, exactly `multi check services/keystore`
+            // run from the repository root.
+            let reqs = discover(Path::new("services/keystore")).await.unwrap();
+            assert_eq!(reqs.len(), 1);
+            assert_eq!(reqs[0].root, repo_root);
+            assert_eq!(reqs[0].root_source, RootSource::Manifest);
+
+            let sandbox = Arc::new(RecordingSandbox::new());
+            let cfg = configuration();
+            let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+            let outcomes =
+                run_to_outcomes(&cfg, fake.clone(), sandbox.clone(), &reqs, null_backend())
+                    .await
+                    .unwrap();
+            assert!(outcomes[0].satisfied);
+
+            // The sandbox cloned the repository root — not the relative scan
+            // directory.
+            assert_eq!(sandbox.sources(), vec![repo_root.clone()]);
+            // The instructions state where the requirement was declared,
+            // root-relative — never an absolute host path.
+            assert_eq!(
+                fake.declared_ins(),
+                vec![PathBuf::from("services/keystore/CHECKS.md")]
+            );
+        });
+
+        Ok(())
+    });
+}
+
+/// Code-review regression for MULTI-1834, the companion invocation to the
+/// test above: `cd services/keystore && multi check` scans `.` from *inside*
+/// the subdirectory, with the manifest two levels above `cwd`. Root
+/// resolution must still find it — a relative scan directory can't rely on
+/// climbing from the scan root; it has to climb from the file's own
+/// location — and it must resolve to the exact same root and `declared_in`
+/// as scanning the subdirectory from the repository root (the test above),
+/// proving resolution really is independent of the invocation directory.
+#[allow(clippy::result_large_err)] // `figment::Jail`'s closure returns a large `Result`.
+#[test]
+fn cwd_inside_a_subdirectory_scanning_dot_still_finds_the_root_above() {
+    figment::Jail::expect_with(|jail| {
+        jail.create_file("MultiTool.toml", "")?;
+        fs::create_dir_all("services/keystore").unwrap();
+        fs::write(
+            "services/keystore/CHECKS.md",
+            "# Requirement Keystore Scoped\ndo it\n",
+        )
+        .unwrap();
+
+        let repo_root = jail.directory().to_path_buf();
+
+        // `cd services/keystore && multi check` — cwd moves two levels below
+        // the manifest, and the scan directory is `.`.
+        jail.change_dir("services/keystore")?;
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let reqs = discover(Path::new(".")).await.unwrap();
+            assert_eq!(reqs.len(), 1);
+            assert_eq!(reqs[0].root, repo_root);
+            assert_eq!(reqs[0].root_source, RootSource::Manifest);
+
+            let sandbox = Arc::new(RecordingSandbox::new());
+            let cfg = configuration();
+            let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+            let outcomes =
+                run_to_outcomes(&cfg, fake.clone(), sandbox.clone(), &reqs, null_backend())
+                    .await
+                    .unwrap();
+            assert!(outcomes[0].satisfied);
+            assert_eq!(sandbox.sources(), vec![repo_root.clone()]);
+            // Same root-relative `declared_in` as the previous test, despite
+            // the discovered file's own path being spelled differently
+            // (`./CHECKS.md` here vs. `services/keystore/CHECKS.md` there).
+            assert_eq!(
+                fake.declared_ins(),
+                vec![PathBuf::from("services/keystore/CHECKS.md")]
+            );
+        });
+
+        Ok(())
+    });
 }
