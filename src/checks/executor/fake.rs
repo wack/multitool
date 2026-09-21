@@ -195,6 +195,7 @@ mod tests {
             ),
             declared_in: std::path::PathBuf::from("CHECKS.md"),
             attempt: 1,
+            progress: None,
         }
     }
 
