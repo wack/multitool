@@ -24,6 +24,7 @@ jobs:
     needs:
       - "format"
       - "build"
+      - "jev"
       - "dist-plan"
       - "dist-build"
       - "publish-edge"
@@ -67,6 +68,28 @@ jobs:
           extra-tools: cargo-nextest,cargo-llvm-cov
       - name: Cargo Make
         run: cargo make ci-flow
+
+  # Validates the jev decision engine (MULTI-1819+), which lives behind the
+  # `jev` Cargo feature and is off by default. Runs clippy and the nextest
+  # suite with that feature enabled (cargo make ci-jev-flow) so the
+  # feature-gated code doesn't rot — MULTI-1821. A separate job from `build`
+  # (rather than appended to `ci-flow`'s dependency list) so it runs in
+  # parallel instead of serializing after `build`'s docs + coverage steps;
+  # it doesn't need its own docs/coverage/dist run since the default-feature
+  # artifacts and release packaging are unaffected by this feature.
+  jev:
+    name: Validate Jev Feature
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Setup Rust
+        uses: "wack/gh-actions/setup-rust@trunk"
+        with:
+          shared-key: rust-ci-jev
+          extra-tools: cargo-nextest
+      - name: Cargo Make
+        run: cargo make ci-jev-flow
 
   # ───────────────────────────────────────────────────────────────────────────
   # Gating release build. Every merge-queue candidate is built for all Linux

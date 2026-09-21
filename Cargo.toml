@@ -156,6 +156,14 @@ on_success = "job:clippy"
 command = ["cargo", "make", "clippy"]
 need_stdout = false
 
+# Lints the jev decision engine's feature-gated code (MULTI-1821). Not
+# chained into the default fmt-check -> check -> clippy sequence (it would
+# double the watch-loop latency on every save); select it explicitly to
+# check the `jev` feature build.
+[package.metadata.bacon.jobs.clippy-jev]
+command = ["cargo", "make", "clippy-jev"]
+need_stdout = false
+
 [package.metadata.bacon.jobs.nextest]
 command = [
   "cargo",
