@@ -75,6 +75,14 @@ pub struct ChecksSection {
     /// Optional, non-secret per-provider base-URL overrides.
     #[serde(default)]
     pub providers: ProvidersSection,
+    /// The `[checks.jev]` table (TypeSafe/Jev decision-engine settings).
+    /// Present unconditionally — not `#[cfg(feature = "jev")]` — so a config
+    /// file carrying a `[checks.jev]` table parses identically whether or not
+    /// the `jev` Cargo feature is compiled in; only `crate::checks::jev` (the
+    /// feature-gated HTTP client) acts on the resolved values. See
+    /// `super::jev::resolve_jev`.
+    #[serde(default)]
+    pub jev: JevSection,
 }
 
 /// `[checks.providers]` — at most one table per provider, each carrying an
@@ -108,6 +116,28 @@ pub struct ProviderOverrides {
     pub base_url: Option<String>,
 }
 
+/// `[checks.jev]` — TypeSafe/Jev decision-engine settings. Every field is
+/// optional so an unset value in a higher-precedence layer contributes nothing
+/// to the merge (same convention as [`ChecksSection`]). Credentials never live
+/// here: `TYPESAFE_API_KEY` is read directly from the environment (lazily, by
+/// the feature-gated HTTP client), never from this table and never under
+/// `MULTI_`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct JevSection {
+    /// The Jev model ID or alias (default: [`super::jev::DEFAULT_MODEL`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The confidence threshold gating a Jev-decided verdict, validated to
+    /// `(0, 1]` (default: [`super::jev::DEFAULT_THRESHOLD`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+    /// The TypeSafe SystemOne API origin. This is the **single** source of
+    /// truth for the endpoint — there is no separate `TYPESAFE_BASE_URL`
+    /// variable (avoids the split-source-of-truth problem in MULTI-1417).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+}
+
 /// The flag layer, fed into figment via `Serialized::defaults`. Only the values
 /// the user actually passed are serialised (`skip_serializing_if`), so unset
 /// flags don't clobber the env/file layers — the clap-defaults gotcha the
@@ -131,6 +161,24 @@ pub struct CliChecksOverrides {
     pub concurrency: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_archive: Option<PathBuf>,
+    /// The `[checks.jev]` subset settable from flags. `multi check` exposes no
+    /// `--jev-*` flags yet (no command consumes Jev config until MULTI-1825),
+    /// so this is always empty in practice today; it exists so the merge
+    /// pipeline already supports a flag layer for `checks.jev.*` without
+    /// reshaping [`CliOverrides`] when that flag surface is added.
+    #[serde(default)]
+    pub jev: CliJevOverrides,
+}
+
+/// The `[checks.jev]` subset settable from flags. See [`CliChecksOverrides::jev`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct CliJevOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
 }
 
 impl CliOverrides {
@@ -149,6 +197,7 @@ impl CliOverrides {
                 effort,
                 concurrency,
                 trace_archive,
+                jev: CliJevOverrides::default(),
             },
         }
     }
