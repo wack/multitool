@@ -488,9 +488,10 @@ mod tests {
             req_title: "R".into(),
             check_title: "c".into(),
         });
-        state.apply(&UiEvent::CheckStarted { id: 0 });
+        state.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
         state.apply(&UiEvent::CheckProgress {
             id: 0,
+            attempt: 1,
             turn: 3,
             max_turns: 30,
             activity: Some("Read src/auth/sign.rs".into()),
@@ -520,7 +521,7 @@ mod tests {
             req_title: "R".into(),
             check_title: "c".into(),
         });
-        state.apply(&UiEvent::CheckStarted { id: 0 });
+        state.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
 
         let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
         let rendered: Vec<String> = lines

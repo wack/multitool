@@ -40,6 +40,13 @@ const READ: &str = "Read";
 const GREP: &str = "Grep";
 const GLOB: &str = "Glob";
 
+/// The cap on a rendered activity string's length (in `char`s), applied
+/// after root-stripping and before the tool-name prefix/quoting is added.
+/// Chosen to comfortably fit one inline-TUI row alongside the check title,
+/// turn counter, and elapsed timer, while still bounding an otherwise
+/// unbounded agent-supplied path or pattern (MULTI-1828 code review).
+const MAX_ACTIVITY_LEN: usize = 80;
+
 /// Render a short, root-relative description of an allowlisted `ToolStart`
 /// call's primary argument for the presenter, e.g. `Read src/auth/sign.rs`
 /// or `Grep "sign_jwt"`.
@@ -48,34 +55,55 @@ const GLOB: &str = "Glob";
 /// when the tool's primary argument is missing or not a string — a
 /// malformed or unexpected call simply produces no progress update rather
 /// than a misleading or panicking one.
+///
+/// Every primary argument — including Grep/Glob's pattern, which is
+/// frequently absolute-path-shaped (a glob pattern like
+/// `/private/var/.../sandbox-xyz/src/**/*.rs`, or a search `path` folded
+/// into `pattern`'s display) — is run through the same two-stage sanitizer
+/// before it's handed to the sink: [`derelativize`] first (never an absolute
+/// sandbox — or other host — path survives), then [`sanitize_for_display`]
+/// (no control characters, bounded length). A plain, already-relative
+/// string (the common case for both a `Read` path and a `Grep`/`Glob`
+/// pattern) passes through `derelativize` unchanged.
 pub fn render_activity(name: &str, input: &Value, sandbox_root: &Path) -> Option<String> {
     match name {
         READ => {
             let file_path = input.get("file_path")?.as_str()?;
-            Some(format!("Read {}", render_path(file_path, sandbox_root)))
+            let rendered = sanitize_for_display(&derelativize(file_path, sandbox_root));
+            Some(format!("Read {rendered}"))
         }
-        // Grep/Glob's primary argument is the search/glob pattern, not a
-        // path — it names no filesystem location, so it is rendered as a
-        // quoted string rather than run through `render_path`.
         GREP => {
             let pattern = input.get("pattern")?.as_str()?;
-            Some(format!("Grep {pattern:?}"))
+            let rendered = sanitize_for_display(&derelativize(pattern, sandbox_root));
+            Some(format!("Grep {rendered:?}"))
         }
         GLOB => {
             let pattern = input.get("pattern")?.as_str()?;
-            Some(format!("Glob {pattern:?}"))
+            let rendered = sanitize_for_display(&derelativize(pattern, sandbox_root));
+            Some(format!("Glob {rendered:?}"))
         }
         _ => None,
     }
 }
 
-/// Render `raw` — a `file_path` argument value exactly as the agent supplied
-/// it — relative to `sandbox_root`: an already-relative path is returned
-/// as-is (it can't name anything outside the working directory it would be
-/// resolved against); an absolute one renders as `.` when it names the root
-/// itself, a relative path when it names something under the root, and
+/// Render `raw` — a tool's primary argument exactly as the agent supplied
+/// it (a `Read` `file_path`, or a `Grep`/`Glob` `pattern`, which is
+/// frequently absolute-path-shaped even though it's a pattern rather than a
+/// path) — relative to `sandbox_root`.
+///
+/// An already-relative string is returned as-is: it can't name anything
+/// outside the working directory it would be resolved against, and — for a
+/// pattern like `**/*.rs` or a search term like `sign_jwt` — is not a path
+/// at all. An absolute one renders as `.` when it names the root itself, a
+/// relative remainder when it names something under the root, and
 /// [`OUTSIDE_SANDBOX`] when it names anything else.
-fn render_path(raw: &str, sandbox_root: &Path) -> String {
+///
+/// `Path`/`PathBuf` here are used purely as a slash-splitting string
+/// primitive, not a claim that `raw` is a filesystem path: a glob pattern's
+/// metacharacters (`*`, `?`, `[`, `{`) are opaque to `Component` parsing —
+/// they ride along as ordinary path components — so stripping the root off
+/// `/tmp/sandbox-xyz/**/*.rs` correctly yields `**/*.rs`.
+fn derelativize(raw: &str, sandbox_root: &Path) -> String {
     let path = Path::new(raw);
     if !path.is_absolute() {
         return raw.to_string();
@@ -92,6 +120,27 @@ fn render_path(raw: &str, sandbox_root: &Path) -> String {
         }
     }
     OUTSIDE_SANDBOX.to_string()
+}
+
+/// The last-mile sanitizer every rendered primary argument passes through
+/// (MULTI-1828 code review): strip control characters (a raw newline or
+/// escape sequence in an agent-supplied path/pattern could otherwise corrupt
+/// a TUI row) and cap the length, truncating on a `char` boundary with a
+/// trailing ellipsis so an unbounded input can't grow a row without limit.
+fn sanitize_for_display(text: &str) -> String {
+    let cleaned: String = text.chars().filter(|c| !c.is_control()).collect();
+    truncate_with_ellipsis(&cleaned, MAX_ACTIVITY_LEN)
+}
+
+/// Truncate `text` to at most `max_chars` `char`s, appending `…` when it
+/// had to cut anything. Counts/truncates by `char`, never by byte, so a
+/// multi-byte UTF-8 sequence is never split.
+fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{kept}…")
 }
 
 /// Every spelling of `root` worth comparing a tool input against. Always
@@ -255,6 +304,121 @@ mod tests {
             render_activity("Bash", &serde_json::json!({ "command": "ls" }), root),
             None
         );
+    }
+
+    /// MULTI-1828 code review blocker: `Glob`'s `pattern` is frequently
+    /// absolute-path-shaped and must be root-stripped exactly like a `Read`
+    /// path — an absolute pattern under the sandbox root renders relative.
+    #[test]
+    fn glob_absolute_pattern_inside_root_renders_root_relative() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let input = serde_json::json!({ "pattern": "/tmp/sandbox-xyz/**/*.rs" });
+        assert_eq!(
+            render_activity(GLOB, &input, root),
+            Some("Glob \"**/*.rs\"".to_string())
+        );
+    }
+
+    /// MULTI-1828 code review blocker: an absolute `Glob` pattern outside
+    /// the sandbox root must never leak the raw absolute path.
+    #[test]
+    fn glob_absolute_pattern_outside_root_renders_placeholder() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let input = serde_json::json!({ "pattern": "/etc/**/*.rs" });
+        let rendered = render_activity(GLOB, &input, root).unwrap();
+        assert_eq!(rendered, "Glob \"<outside sandbox>\"");
+        assert!(!rendered.contains("/etc"));
+    }
+
+    /// MULTI-1828 code review blocker: a `Grep` pattern that happens to be
+    /// absolute-path-shaped gets the same treatment as a `Read` path or
+    /// `Glob` pattern, not left to leak the sandbox root verbatim.
+    #[test]
+    fn grep_absolute_path_like_pattern_is_sanitized() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let inside = serde_json::json!({ "pattern": "/tmp/sandbox-xyz/secret.txt" });
+        assert_eq!(
+            render_activity(GREP, &inside, root),
+            Some("Grep \"secret.txt\"".to_string())
+        );
+
+        let outside = serde_json::json!({ "pattern": "/etc/shadow" });
+        let rendered = render_activity(GREP, &outside, root).unwrap();
+        assert_eq!(rendered, "Grep \"<outside sandbox>\"");
+    }
+
+    /// MULTI-1828 code review blocker (property-style): across a table of
+    /// inputs spanning all three tools — relative, absolute-inside-root,
+    /// absolute-outside-root, and a lexical `..` escape — no rendered
+    /// activity ever contains the sandbox root string, and no argument
+    /// portion ever starts with `/`.
+    #[test]
+    fn no_rendered_activity_ever_leaks_the_sandbox_root_or_an_absolute_path() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let root_str = root.to_str().unwrap();
+        let cases: Vec<(&str, Value)> = vec![
+            (READ, read_input("src/relative.rs")),
+            (READ, read_input("/tmp/sandbox-xyz/src/main.rs")),
+            (READ, read_input("/tmp/sandbox-xyz")),
+            (READ, read_input("/etc/passwd")),
+            (READ, read_input("/tmp/sandbox-xyz/../../etc/passwd")),
+            (GREP, serde_json::json!({ "pattern": "sign_jwt" })),
+            (
+                GREP,
+                serde_json::json!({ "pattern": "/tmp/sandbox-xyz/secret" }),
+            ),
+            (GREP, serde_json::json!({ "pattern": "/etc/shadow" })),
+            (GLOB, serde_json::json!({ "pattern": "**/*.rs" })),
+            (
+                GLOB,
+                serde_json::json!({ "pattern": "/tmp/sandbox-xyz/**/*.rs" }),
+            ),
+            (GLOB, serde_json::json!({ "pattern": "/var/**/*.rs" })),
+        ];
+
+        for (name, input) in cases {
+            let rendered = render_activity(name, &input, root).unwrap();
+            assert!(
+                !rendered.contains(root_str),
+                "leaked the sandbox root in {rendered:?}"
+            );
+            let (_, arg) = rendered
+                .split_once(' ')
+                .expect("every rendered activity has a tool-name prefix");
+            let arg = arg.trim_matches('"');
+            assert!(
+                !arg.starts_with('/'),
+                "argument portion leaked an absolute path: {rendered:?}"
+            );
+        }
+    }
+
+    /// MULTI-1828 code review minor: a raw newline (or other control
+    /// character) in an agent-supplied path/pattern must not survive into
+    /// the rendered activity — it would corrupt a TUI row.
+    #[test]
+    fn control_characters_are_stripped() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let input = read_input("src/evil\n\t\r.rs");
+        let rendered = render_activity(READ, &input, root).unwrap();
+        assert_eq!(rendered, "Read src/evil.rs");
+        assert!(rendered.chars().all(|c| !c.is_control()));
+    }
+
+    /// MULTI-1828 code review minor: an unbounded relative path/pattern is
+    /// truncated to a bounded length, on a `char` boundary, with a trailing
+    /// ellipsis rather than growing the row without limit.
+    #[test]
+    fn overlong_activity_is_truncated_with_an_ellipsis() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let long_name = "a".repeat(200);
+        let input = read_input(&format!("src/{long_name}.rs"));
+        let rendered = render_activity(READ, &input, root).unwrap();
+
+        // "Read " (5 chars) + the sanitized/truncated argument.
+        assert_eq!(rendered.chars().count(), 5 + MAX_ACTIVITY_LEN);
+        assert!(rendered.ends_with('…'), "{rendered}");
+        assert!(!rendered.contains(&long_name), "{rendered}");
     }
 
     /// macOS mounts `/var` as a symlink to `/private/var`. An agent may echo

@@ -159,7 +159,7 @@ mod tests {
         queued(&mut state, 0);
         queued(&mut state, 1);
         state.apply(&UiEvent::DiscoveryComplete { total_checks: 2 });
-        state.apply(&UiEvent::CheckStarted { id: 0 });
+        state.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
         state.apply(&UiEvent::CheckSettled {
             id: 1,
             outcome: CheckOutcome {
@@ -190,16 +190,18 @@ mod tests {
         queued(&mut state, 0);
         queued(&mut state, 1);
         state.apply(&UiEvent::DiscoveryComplete { total_checks: 2 });
-        state.apply(&UiEvent::CheckStarted { id: 0 });
-        state.apply(&UiEvent::CheckStarted { id: 1 });
+        state.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        state.apply(&UiEvent::CheckStarted { id: 1, attempt: 1 });
         state.apply(&UiEvent::CheckProgress {
             id: 0,
+            attempt: 1,
             turn: 3,
             max_turns: 30,
             activity: Some("Read src/auth/sign.rs".into()),
         });
         state.apply(&UiEvent::CheckProgress {
             id: 1,
+            attempt: 1,
             turn: 12,
             max_turns: 30,
             activity: None,
@@ -220,7 +222,7 @@ mod tests {
         let mut state = PresenterState::new("test-model".into());
         queued(&mut state, 0);
         state.apply(&UiEvent::DiscoveryComplete { total_checks: 1 });
-        state.apply(&UiEvent::CheckStarted { id: 0 });
+        state.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
 
         let line = backend.line(&state).unwrap();
         assert!(!line.contains("turn"), "{line}");

@@ -72,8 +72,12 @@ pub(crate) enum UiEvent {
         req_title: String,
         check_title: String,
     },
-    /// A permit was acquired and the check's agent began running.
-    CheckStarted { id: CheckId },
+    /// A permit was acquired and the check's agent began running. `attempt`
+    /// is the 1-based attempt now starting (MULTI-1828): the presenter uses
+    /// it to reject a late [`UiEvent::CheckProgress`] from a previous,
+    /// already-superseded attempt, and clears any progress left over from
+    /// one.
+    CheckStarted { id: CheckId, attempt: u32 },
     /// A prior attempt finished without a verdict; the check is being re-run. The
     /// `attempt` is the just-finished attempt number.
     CheckRetrying { id: CheckId, attempt: u32 },
@@ -81,12 +85,17 @@ pub(crate) enum UiEvent {
     /// presenter can render the same record the reporting actor would.
     CheckSettled { id: CheckId, outcome: CheckOutcome },
     /// A running check's agent made in-flight progress (MULTI-1828): which
-    /// turn it's on (out of `max_turns`) and, when there is one, a short
-    /// root-relative rendering of its most recent allowlisted tool call.
-    /// Fire-and-forget from [`crate::checks::execution`]; display-only —
-    /// never affects verdicts, retries, or reporting.
+    /// attempt and turn it's on (out of `max_turns`) and, when there is one,
+    /// a short root-relative rendering of its most recent allowlisted tool
+    /// call. Fire-and-forget from [`crate::checks::execution`], which does
+    /// **not** wait for every update to be delivered before moving the check
+    /// on to its next lifecycle event — so `attempt` is what lets a late
+    /// update from a superseded attempt be told apart from a current one;
+    /// see `presenter::state`. Display-only — never affects verdicts,
+    /// retries, or reporting.
     CheckProgress {
         id: CheckId,
+        attempt: u32,
         turn: u32,
         max_turns: u32,
         activity: Option<String>,
@@ -293,7 +302,7 @@ mod tests {
             .await
             .unwrap();
         presenter
-            .tell(UiEvent::CheckStarted { id: 0 })
+            .tell(UiEvent::CheckStarted { id: 0, attempt: 1 })
             .await
             .unwrap();
         presenter
