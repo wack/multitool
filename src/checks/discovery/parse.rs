@@ -15,13 +15,13 @@
 //! Validation errors (orphan check, checkless requirement) are collected rather
 //! than thrown so the caller can aggregate them across files.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use comrak::{Arena, Options, nodes::NodeValue, parse_document};
 use miette::{Diagnostic, miette};
 use thiserror::Error;
 
-use crate::checks::model::{Check, Requirement};
+use crate::checks::model::{Check, Requirement, RootSource};
 
 /// The result of extracting one file: the requirements it declared plus any
 /// validation errors (each a ready-to-render `miette` diagnostic).
@@ -59,21 +59,29 @@ enum Marker {
 
 /// Parse `source` (the contents of `path`) and extract its requirements/checks.
 ///
-/// This is the AST-walking heart of discovery (MULTI-1335/1336/1337/1338). It
-/// never fails outright — structural problems are returned as `errors` so the
-/// caller can aggregate across all files.
-pub fn extract(path: &Path, source: &str) -> FileExtraction {
+/// This is the AST-walking heart of discovery (MULTI-1335/1336/1337/1338).
+/// `repo_root`/`root_source` (MULTI-1834) are the already-resolved repository
+/// root for `path` (see [`super::repo_root::resolve`]) and are stamped onto
+/// every requirement extracted from this file. Never fails outright —
+/// structural problems are returned as `errors` so the caller can aggregate
+/// across all files.
+pub fn extract(
+    path: &Path,
+    source: &str,
+    repo_root: PathBuf,
+    root_source: RootSource,
+) -> FileExtraction {
     let file = path.display().to_string();
     let line_starts = line_byte_starts(source);
 
     // Parse to a comrak AST. The arena owns the nodes for this scope.
     let arena = Arena::new();
-    let root = parse_document(&arena, source, &Options::default());
+    let ast_root = parse_document(&arena, source, &Options::default());
 
     // Pass 1: collect the structural markers (Requirement/Check headings) in
     // document order, with the 1-based line each heading starts and ends on.
     let mut markers: Vec<(Marker, usize)> = Vec::new(); // (marker, heading_end_line)
-    for node in root.children() {
+    for node in ast_root.children() {
         let (level, start_line, end_line) = {
             let data = node.data();
             match &data.value {
@@ -177,6 +185,8 @@ pub fn extract(path: &Path, source: &str) -> FileExtraction {
             filepath: path.to_path_buf(),
             title,
             checks,
+            root: repo_root.clone(),
+            root_source,
         });
     }
 
@@ -278,9 +288,9 @@ fn slice_lines<'a>(
 }
 
 /// Convenience: read + extract, surfacing read errors as a one-off diagnostic.
-pub fn extract_file(path: &Path) -> FileExtraction {
+pub fn extract_file(path: &Path, repo_root: PathBuf, root_source: RootSource) -> FileExtraction {
     match std::fs::read_to_string(path) {
-        Ok(source) => extract(path, &source),
+        Ok(source) => extract(path, &source, repo_root, root_source),
         Err(e) => FileExtraction {
             requirements: Vec::new(),
             errors: vec![miette!("failed to read {}: {e}", path.display())],
@@ -294,7 +304,12 @@ mod tests {
     use std::path::PathBuf;
 
     fn extract_str(src: &str) -> FileExtraction {
-        extract(&PathBuf::from("CHECKS.md"), src)
+        extract(
+            &PathBuf::from("CHECKS.md"),
+            src,
+            PathBuf::from("."),
+            RootSource::ScanDirectory,
+        )
     }
 
     #[test]

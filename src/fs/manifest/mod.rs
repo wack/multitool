@@ -9,17 +9,17 @@ mod schema;
 /// This is the prefix of the manifest file name. e.g. MultiTool.toml, MultiTool.yml, and MultiTool.json
 /// are all prefixed with `MultiTool`
 const MANIFEST_PREFIX: &str = "MultiTool";
-/// This is the set of allowed filetypes for the manifest. Right now,
-/// we only accept toml and Json files, but we could imagine accepting yml
+/// This is the set of allowed filetypes for the manifest. We accept toml,
+/// json, and jsonc (JSON-with-comments) files; we could imagine accepting yml
 /// files in the future.
-const MANIFEST_EXTENSIONS: [&str; 2] = ["toml", "json"];
+const MANIFEST_EXTENSIONS: [&str; 3] = ["toml", "json", "jsonc"];
 
 /// `manifest_filenames` returns an ordered list of legal filenames
 /// for the manifest file.
 //
 // This is the cross-product of the MANIFEST_PREFIX and
 // MANIFEST_EXTENSIONS constants.
-pub(crate) fn manifest_filenames() -> [String; 2] {
+pub(crate) fn manifest_filenames() -> [String; 3] {
     MANIFEST_EXTENSIONS.map(|ext| format!("{MANIFEST_PREFIX}.{ext}"))
 }
 

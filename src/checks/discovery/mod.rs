@@ -8,6 +8,7 @@
 //! authoring ergonomics.
 
 mod parse;
+mod repo_root;
 mod walk;
 
 use std::path::{Path, PathBuf};
@@ -31,11 +32,21 @@ use crate::checks::reporting::ReportingActor;
 /// empty tree yields an empty set (the pipeline then succeeds with exit 0).
 pub async fn discover(root: &Path) -> Result<Vec<Requirement>> {
     let files = walk::find_checks_files(root)?;
+    let scan_root = root.to_path_buf();
 
     // Parse + extract each file in parallel on blocking tasks (file IO + CPU).
+    // Repository-root resolution (MULTI-1834) rides along on the same
+    // blocking task: it's a handful of `fs::metadata` calls walking up from
+    // the file's own directory, cheap but still blocking I/O.
     let handles: Vec<_> = files
         .into_iter()
-        .map(|path| tokio::task::spawn_blocking(move || parse::extract_file(&path)))
+        .map(|path| {
+            let scan_root = scan_root.clone();
+            tokio::task::spawn_blocking(move || {
+                let (req_root, root_source) = repo_root::resolve(&path, &scan_root);
+                parse::extract_file(&path, req_root, root_source)
+            })
+        })
         .collect();
 
     let mut requirements = Vec::new();

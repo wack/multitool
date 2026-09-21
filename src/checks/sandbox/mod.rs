@@ -85,6 +85,41 @@ impl Sandbox for NoopSandbox {
     }
 }
 
+/// A test-only sandbox that, like [`NoopSandbox`], doesn't clone — but records
+/// every source path it was asked to create a sandbox for, in call order. Used
+/// to assert *what* execution clones (MULTI-1834: the requirement's repository
+/// root, not the directory `multi check` was scanned from), which a
+/// non-recording fake can't observe.
+#[cfg(test)]
+#[derive(Default)]
+pub struct RecordingSandbox {
+    sources: std::sync::Mutex<Vec<PathBuf>>,
+}
+
+#[cfg(test)]
+impl RecordingSandbox {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Every source path `create` was called with, in call order.
+    pub fn sources(&self) -> Vec<PathBuf> {
+        self.sources.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl Sandbox for RecordingSandbox {
+    async fn create(&self, source: &Path) -> Result<SandboxHandle> {
+        self.sources.lock().unwrap().push(source.to_path_buf());
+        Ok(SandboxHandle {
+            root: source.to_path_buf(),
+            _temp: None,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

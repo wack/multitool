@@ -23,7 +23,7 @@ use crate::checks::executor::{
 };
 use crate::checks::presenter::null_backend;
 use crate::checks::reporting::report;
-use crate::checks::sandbox::NoopSandbox;
+use crate::checks::sandbox::{NoopSandbox, RecordingSandbox};
 use crate::checks::{run_pipeline, run_to_outcomes};
 use crate::{Cli, Terminal};
 
@@ -96,7 +96,6 @@ async fn pipeline_satisfied_failed_multi_and_anonymous() {
         &cfg,
         fake.clone(),
         Arc::new(NoopSandbox),
-        dir.path(),
         &reqs,
         null_backend(),
     )
@@ -135,16 +134,9 @@ async fn all_satisfied_exits_zero() {
 
     let fake = Arc::new(FakeExecutor::new().with_report(0, true, None));
     let cfg = configuration();
-    let outcomes = run_to_outcomes(
-        &cfg,
-        fake,
-        Arc::new(NoopSandbox),
-        dir.path(),
-        &reqs,
-        null_backend(),
-    )
-    .await
-    .unwrap();
+    let outcomes = run_to_outcomes(&cfg, fake, Arc::new(NoopSandbox), &reqs, null_backend())
+        .await
+        .unwrap();
     assert!(outcomes[0].satisfied);
 
     let code = report(&plain_terminal(), &outcomes).unwrap();
@@ -162,7 +154,6 @@ async fn empty_tree_exits_zero() {
         &cfg,
         Arc::new(FakeExecutor::new()),
         Arc::new(NoopSandbox),
-        dir.path(),
         &reqs,
         null_backend(),
     )
@@ -229,16 +220,9 @@ async fn checks_execute_concurrently_not_in_a_barrier() {
         ..configuration()
     };
 
-    let outcomes = run_to_outcomes(
-        &cfg,
-        executor,
-        Arc::new(NoopSandbox),
-        dir.path(),
-        &reqs,
-        null_backend(),
-    )
-    .await
-    .unwrap();
+    let outcomes = run_to_outcomes(&cfg, executor, Arc::new(NoopSandbox), &reqs, null_backend())
+        .await
+        .unwrap();
 
     // Both satisfied ⇒ both ran simultaneously (the barrier tripped).
     assert!(
@@ -281,5 +265,90 @@ async fn invalid_suite_aborts_run_without_spawning_agents() {
         fake.seen().is_empty(),
         "no agents should run for an invalid suite, saw: {:?}",
         fake.seen()
+    );
+}
+
+/// A fixture with a `MultiTool.toml` at the repository root and a requirements
+/// file nested several levels down under a service directory — the monorepo
+/// shape MULTI-1834 targets.
+fn write_manifest_fixture() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("MultiTool.toml"), "").unwrap();
+    fs::create_dir_all(dir.path().join("services/keystore")).unwrap();
+    fs::write(
+        dir.path().join("services/keystore/CHECKS.md"),
+        "# Requirement Keystore Scoped\ndo it\n",
+    )
+    .unwrap();
+    dir
+}
+
+/// MULTI-1834 acceptance: scanning a *subdirectory* of a repository with a
+/// root manifest still clones the repository root, not the scanned
+/// subdirectory — root resolution is per requirements file, never the scan
+/// directory.
+#[tokio::test]
+async fn sandbox_clones_repository_root_not_scan_directory() {
+    let dir = write_manifest_fixture();
+    let scan_dir = dir.path().join("services/keystore");
+
+    let reqs = discover(&scan_dir).await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].root, dir.path());
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let cfg = configuration();
+    let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+    let outcomes = run_to_outcomes(&cfg, fake, sandbox.clone(), &reqs, null_backend())
+        .await
+        .unwrap();
+    assert!(outcomes[0].satisfied);
+
+    // The sandbox cloned the repository root, not the scanned subdirectory.
+    assert_eq!(sandbox.sources(), vec![dir.path().to_path_buf()]);
+}
+
+/// MULTI-1834 acceptance: scanning from the repository root itself is
+/// unchanged — the sandbox still clones that same root.
+#[tokio::test]
+async fn sandbox_clones_repository_root_when_scanning_from_root() {
+    let dir = write_manifest_fixture();
+
+    let reqs = discover(dir.path()).await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].root, dir.path());
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let cfg = configuration();
+    let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+    let outcomes = run_to_outcomes(&cfg, fake, sandbox.clone(), &reqs, null_backend())
+        .await
+        .unwrap();
+    assert!(outcomes[0].satisfied);
+    assert_eq!(sandbox.sources(), vec![dir.path().to_path_buf()]);
+}
+
+/// MULTI-1834 acceptance: a retried check clones the repository root **once
+/// per attempt**, not once for the whole check.
+#[tokio::test]
+async fn sandbox_clones_repository_root_once_per_attempt() {
+    let dir = write_manifest_fixture();
+    let scan_dir = dir.path().join("services/keystore");
+    let reqs = discover(&scan_dir).await.unwrap();
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let cfg = configuration(); // max_attempts = 3
+    // Silent on attempt 1, reports on attempt 2 — exercises the retry path.
+    let fake = Arc::new(FakeExecutor::new().with_silent_until(0, 2, true, Some("ok")));
+    let outcomes = run_to_outcomes(&cfg, fake, sandbox.clone(), &reqs, null_backend())
+        .await
+        .unwrap();
+    assert!(outcomes[0].satisfied);
+
+    // Each attempt gets its own sandbox clone, and both clone the repository
+    // root — not the scan directory.
+    assert_eq!(
+        sandbox.sources(),
+        vec![dir.path().to_path_buf(), dir.path().to_path_buf()]
     );
 }

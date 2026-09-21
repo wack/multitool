@@ -51,6 +51,57 @@ Because a clean failure is exit `1`, you can gate CI on it directly:
 multi check || echo "requirements not met"
 ```
 
+## 🗂️ The repository root
+
+Each requirement is sandboxed at its own **repository root** — the nearest
+directory, at or above its `CHECKS.md`, that contains a MultiTool manifest
+(`MultiTool.toml`, `.json`, or `.jsonc`). The agent that validates a check can
+see everything under that root, and nothing outside it.
+
+Root resolution happens **per requirements file**, not from the directory you
+happen to invoke `multi check` from:
+
+```bash
+multi check                    # scans the whole tree
+multi check services/keystore  # scans only that subtree
+```
+
+Both invocations discover the same `CHECKS.md` files under the given
+directory and give each of their requirements the *same* sandbox — the
+`directory` argument only selects **which** requirements files run; it does
+not shrink what their agents can see. A check's verdict is therefore stable
+regardless of how the command was invoked.
+
+**Monorepos**: a `MultiTool.toml` per service scopes that service's
+requirements to just that service, even when `multi check` runs from the top
+of the monorepo:
+
+```
+repo/
+├── MultiTool.toml                 # repo-level manifest (optional)
+└── services/
+    ├── keystore/
+    │   ├── MultiTool.toml         # keystore's own manifest
+    │   └── CHECKS.md              # sandboxed to services/keystore/
+    └── metricstore/
+        └── CHECKS.md              # no manifest of its own — see below
+```
+
+`services/keystore/CHECKS.md`'s requirements are sandboxed to
+`services/keystore/` — the nearest manifest — while
+`services/metricstore/CHECKS.md` falls back to the rule below.
+
+**No manifest anywhere above a `CHECKS.md`**: its requirements fall back to
+the directory `multi check` was scanned from. This is exactly the behavior
+from before this rule existed, so manifest-less projects keep working
+unchanged.
+
+Because the sandbox can now span more than the directory a requirement
+happens to live in, the agent's instructions also state where the requirement
+was declared, as a path relative to the repository root (e.g. "This
+requirement is declared in `services/keystore/CHECKS.md`") — so the agent
+still knows where to focus even inside a larger sandbox.
+
 ## ✍️ Authoring `CHECKS.md`
 
 `CHECKS.md` files are ordinary Markdown. Two header patterns carry metadata;

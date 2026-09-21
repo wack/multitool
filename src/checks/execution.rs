@@ -19,7 +19,7 @@
 //! parse-gates the whole suite before streaming a single check, so all jobs are
 //! always known by the time the workflow starts.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use cersei_workflows::{FnStep, RunStatus, StepRegistry, Workflow, WorkflowBuilder};
@@ -33,7 +33,7 @@ use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport};
 use crate::checks::messages::{
     CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete,
 };
-use crate::checks::model::{Check, CheckId, CheckOutcome, Verdict};
+use crate::checks::model::{CheckOutcome, Verdict};
 use crate::checks::presenter::{PresenterActor, UiEvent};
 use crate::checks::reporting::ReportingActor;
 use crate::checks::sandbox::Sandbox;
@@ -44,7 +44,6 @@ use crate::checks::trace_archive::{TraceCollector, TraceEntry};
 pub(crate) struct ExecutionActor {
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    working_dir: PathBuf,
     /// The bounded-concurrency cap handed to the `foreach` workflow (≥1).
     concurrency: usize,
     /// How many times to (re)run a check whose agent fails to report (≥1).
@@ -81,7 +80,6 @@ impl ExecutionActor {
     pub(crate) fn new(
         executor: Arc<dyn CheckExecutor + Send + Sync>,
         sandbox: Arc<dyn Sandbox + Send + Sync>,
-        working_dir: PathBuf,
         concurrency: usize,
         max_attempts: usize,
         reporting: ActorRef<ReportingActor>,
@@ -91,7 +89,6 @@ impl ExecutionActor {
         Self {
             executor,
             sandbox,
-            working_dir,
             concurrency: concurrency.max(1),
             max_attempts: max_attempts.max(1),
             reporting,
@@ -114,7 +111,6 @@ impl ExecutionActor {
 
         let executor = self.executor.clone();
         let sandbox = self.sandbox.clone();
-        let working_dir = self.working_dir.clone();
         let reporting = self.reporting.clone();
         let presenter = self.presenter.clone();
         let trace_collector = self.trace_collector.clone();
@@ -126,7 +122,6 @@ impl ExecutionActor {
             move |input: Value, _ctx| {
                 let executor = executor.clone();
                 let sandbox = sandbox.clone();
-                let working_dir = working_dir.clone();
                 let reporting = reporting.clone();
                 let presenter = presenter.clone();
                 let trace_collector = trace_collector.clone();
@@ -137,7 +132,6 @@ impl ExecutionActor {
                     execute_check_job(
                         executor,
                         sandbox,
-                        &working_dir,
                         &presenter,
                         &reporting,
                         trace_collector.as_ref(),
@@ -224,7 +218,6 @@ impl Message<DiscoveryComplete> for ExecutionActor {
 async fn execute_check_job(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    working_dir: &Path,
     presenter: &ActorRef<PresenterActor>,
     reporting: &ActorRef<ReportingActor>,
     trace_collector: Option<&Arc<TraceCollector>>,
@@ -237,15 +230,7 @@ async fn execute_check_job(
         // The agent is about to run: mark the check Running.
         let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
 
-        let mut result = run_one(
-            executor.clone(),
-            sandbox.clone(),
-            job.id,
-            job.check.clone(),
-            working_dir,
-            attempt,
-        )
-        .await;
+        let mut result = run_one(executor.clone(), sandbox.clone(), &job, attempt).await;
 
         // Harvest this attempt's trace *before* signalling completion, so it is
         // collected even for retried attempts (whose outcome never reaches
@@ -305,20 +290,35 @@ fn has_verdict(outcome: Option<&Result<AgentOutcome>>) -> bool {
 /// the sandbox down. The executor owns the agent lifecycle (the in-process
 /// executor cancels its agent the instant it reports; the legacy fallback runs
 /// the subprocess to completion or timeout).
+///
+/// The sandbox clones `job.root` — the requirement's repository root
+/// (MULTI-1834), resolved per requirements file during discovery — not the
+/// directory `multi check` was scanned from. MULTI-1818's lazy sandbox lease
+/// will replace this eager `sandbox.create` call; `job.root` is the value it
+/// will lease.
 async fn run_one(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    id: CheckId,
-    check: Check,
-    working_dir: &Path,
+    job: &CheckJob,
     attempt: usize,
 ) -> Result<AgentOutcome> {
-    let handle = sandbox.create(working_dir).await?;
+    let handle = sandbox.create(&job.root).await?;
+
+    // The declaring file's path relative to the repository root, e.g.
+    // `services/keystore/CHECKS.md` — stated in the instructions so the agent
+    // retains the scoping a smaller, per-scan-directory sandbox used to
+    // provide for free (the sandbox now spans the whole repository root).
+    let declared_in = job
+        .filepath
+        .strip_prefix(&job.root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| job.filepath.clone());
 
     let request = crate::checks::executor::AgentRunRequest {
-        check_id: id,
-        check,
+        check_id: job.id,
+        check: job.check.clone(),
         working_dir: handle.path().to_path_buf(),
+        declared_in,
         attempt: u32::try_from(attempt).unwrap_or(u32::MAX),
     };
 
@@ -390,7 +390,7 @@ fn turns_suffix(turns: u32) -> String {
 mod tests {
     use crate::checks::config::configuration;
     use crate::checks::executor::FakeExecutor;
-    use crate::checks::model::{Check, Requirement, Verdict};
+    use crate::checks::model::{Check, Requirement, RootSource, Verdict};
     use crate::checks::run_to_outcomes;
     use crate::checks::sandbox::NoopSandbox;
     use std::path::PathBuf;
@@ -407,6 +407,8 @@ mod tests {
                     prompt: p.to_string(),
                 })
                 .collect(),
+            root: PathBuf::from("."),
+            root_source: RootSource::ScanDirectory,
         }
     }
 
@@ -429,7 +431,6 @@ mod tests {
             &cfg,
             executor.clone(),
             Arc::new(NoopSandbox),
-            &PathBuf::from("."),
             &reqs,
             crate::checks::presenter::null_backend(),
         )
@@ -458,7 +459,6 @@ mod tests {
             &cfg,
             Arc::new(executor),
             Arc::new(NoopSandbox),
-            &PathBuf::from("."),
             &reqs,
             crate::checks::presenter::null_backend(),
         )
@@ -479,7 +479,6 @@ mod tests {
             &cfg,
             executor.clone(),
             Arc::new(NoopSandbox),
-            &PathBuf::from("."),
             &reqs,
             crate::checks::presenter::null_backend(),
         )

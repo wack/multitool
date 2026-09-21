@@ -27,6 +27,9 @@ pub struct CheckJob {
     pub req_title: String,
     /// The `CHECKS.md` that declared the requirement.
     pub filepath: PathBuf,
+    /// The requirement's repository root (MULTI-1834): what execution
+    /// sandboxes for this check — see [`crate::checks::model::Requirement::root`].
+    pub root: PathBuf,
     /// The check itself (title + prompt).
     pub check: Check,
 }
