@@ -117,10 +117,18 @@ figment = { version = "0.10", default-features = false, features = [
 pretty_assertions.workspace = true
 static_assertions.workspace = true
 tempfile = "3.8"
+# Local mock HTTP server for the `jev` HTTP client tests (happy path, retries,
+# error status codes) — no mock-server crate existed in the repo already.
+wiremock = "0.6"
 
 [features]
 proxy = ["dep:pingora"]
 errorlogs = []
+# The Jev decision engine (MULTI-1819+): a typed HTTP client for TypeSafe's
+# System One API. Off by default. reqwest's `json` feature is off in the
+# default build and is enabled only through this feature, so the default
+# build's dependency graph is unaffected.
+jev = ["reqwest/json"]
 
 # The profile that 'dist' will build with
 [profile.dist]

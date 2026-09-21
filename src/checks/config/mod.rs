@@ -12,6 +12,7 @@
 //! [`CerseiExecutor`].
 
 mod file;
+mod jev;
 mod models;
 mod providers;
 mod schema;
@@ -29,6 +30,15 @@ use miette::{Result, miette};
 use crate::checks::executor::BoxedExecutor;
 use crate::checks::executor::cersei::CerseiExecutor;
 
+// `JevConfig` is consumed outside this module only by
+// `crate::checks::jev::JevClient::from_config`, which exists solely under
+// `--features jev`; in the default build this re-export has no non-test
+// reader. `resolve_jev` has no non-test reader in *either* build yet:
+// MULTI-1825 ("Decide `multi check` with Jev under the `jev` feature") is the
+// ticket that calls it to build the `JevConfig` fed to that client. Both are
+// exercised today by this module's tests and by `jev.rs`'s own tests.
+#[allow(unused_imports)]
+pub use jev::{JevConfig, resolve_jev};
 pub use providers::{ProviderFactory, ProviderRegistry};
 pub use schema::{CliOverrides, Effort, ProviderKind};
 
@@ -218,7 +228,10 @@ mod tests {
 
     use super::*;
     use figment::Jail;
-    use schema::{ChecksSection, ProviderOverrides, ProvidersSection, RootFileConfig};
+    use schema::{
+        ChecksSection, CliChecksOverrides, CliJevOverrides, JevSection, ProviderOverrides,
+        ProvidersSection, RootFileConfig,
+    };
 
     fn file_with(provider: ProviderKind, model: &str) -> RootFileConfig {
         RootFileConfig {
@@ -229,6 +242,7 @@ mod tests {
                 concurrency: None,
                 trace_archive: None,
                 providers: ProvidersSection::default(),
+                jev: JevSection::default(),
             },
         }
     }
@@ -341,5 +355,109 @@ model = "claude-totally-made-up"
             Some("https://example.test"),
         );
         assert_eq!(providers.base_url(ProviderKind::OpenAi), None);
+    }
+
+    #[test]
+    fn jev_table_is_read_from_file() {
+        Jail::expect_with(|jail| {
+            jail.create_file(
+                "MultiTool.toml",
+                r#"
+[checks.jev]
+model = "jev-preview"
+threshold = 0.9
+base_url = "https://jev.example"
+"#,
+            )?;
+            let file = file::load_file_layer();
+            let checks = resolve_layers(file, CliOverrides::default()).unwrap();
+            assert_eq!(checks.jev.model.as_deref(), Some("jev-preview"));
+            assert_eq!(checks.jev.threshold, Some(0.9));
+            assert_eq!(checks.jev.base_url.as_deref(), Some("https://jev.example"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn jev_env_beats_file() {
+        Jail::expect_with(|jail| {
+            // `MULTI_CHECKS_JEV_MODEL`/`MULTI_CHECKS_JEV_THRESHOLD` map cleanly
+            // onto `checks.jev.{model,threshold}` via the `_` split: each is a
+            // single-word field, so the split produces exactly the right nesting.
+            jail.set_env("MULTI_CHECKS_JEV_MODEL", "jev-preview");
+            jail.set_env("MULTI_CHECKS_JEV_THRESHOLD", "0.5");
+
+            let mut file = RootFileConfig::default();
+            file.checks.jev.model = Some("jev-latest".to_string());
+            file.checks.jev.threshold = Some(0.75);
+
+            let checks = resolve_layers(file, CliOverrides::default()).unwrap();
+            assert_eq!(checks.jev.model.as_deref(), Some("jev-preview"));
+            assert_eq!(checks.jev.threshold, Some(0.5));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn jev_flag_beats_env_and_file() {
+        Jail::expect_with(|jail| {
+            jail.set_env("MULTI_CHECKS_JEV_MODEL", "jev-preview");
+
+            let mut file = RootFileConfig::default();
+            file.checks.jev.model = Some("jev-latest".to_string());
+
+            let overrides = CliOverrides {
+                checks: CliChecksOverrides {
+                    jev: CliJevOverrides {
+                        model: Some("jev-flag-override".to_string()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            };
+
+            let checks = resolve_layers(file, overrides).unwrap();
+            assert_eq!(checks.jev.model.as_deref(), Some("jev-flag-override"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn jev_base_url_env_var_does_not_apply_across_the_underscore_split() {
+        // Known limitation, pre-existing for `[checks.providers.*].base_url`
+        // and inherited here: `Env::prefixed("MULTI_").split("_")` replaces
+        // *every* underscore with a path separator, so `MULTI_CHECKS_JEV_BASE_URL`
+        // maps to `checks.jev.base.url`, not `checks.jev.base_url` (whose own
+        // name contains an underscore). `base_url` is therefore reachable via
+        // file (and, structurally, a future CLI flag) but not via this env var
+        // naming scheme — matching how provider `base_url` overrides are
+        // documented as file-only in `guides/checks.md`.
+        Jail::expect_with(|jail| {
+            jail.set_env("MULTI_CHECKS_JEV_BASE_URL", "https://jev.example");
+            let checks =
+                resolve_layers(RootFileConfig::default(), CliOverrides::default()).unwrap();
+            assert_eq!(checks.jev.base_url, None);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn jev_config_resolves_from_merged_layers() {
+        Jail::expect_with(|jail| {
+            jail.create_file(
+                "MultiTool.toml",
+                r#"
+[checks.jev]
+threshold = 0.6
+"#,
+            )?;
+            let file = file::load_file_layer();
+            let checks = resolve_layers(file, CliOverrides::default()).unwrap();
+            let jev_config = resolve_jev(&checks.jev).expect("valid threshold");
+            assert_eq!(jev_config.model, jev::DEFAULT_MODEL);
+            assert_eq!(jev_config.threshold, 0.6);
+            assert_eq!(jev_config.base_url, jev::DEFAULT_BASE_URL);
+            Ok(())
+        });
     }
 }

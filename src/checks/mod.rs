@@ -28,6 +28,8 @@ pub mod config;
 mod discovery;
 mod execution;
 pub mod executor;
+#[cfg(feature = "jev")]
+pub mod jev;
 mod messages;
 pub mod model;
 mod presenter;
