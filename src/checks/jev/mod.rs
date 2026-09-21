@@ -13,14 +13,15 @@
 //! check` with Jev) build on.
 #![cfg(feature = "jev")]
 
-// No caller outside this module's own tests reaches `client`/`error`/`types`/
-// `plan_file` yet: MULTI-1822 ("Replay frozen tool calls in-host and classify
-// plan freshness") and MULTI-1824 (`multi plan`) are the tickets that wire
-// `plan_file`'s `PlanStore`/`PlanFile` into a real planner, same as
-// MULTI-1823/1825 do for `client`. Until one of them adds a real caller,
-// nothing from any of the four is re-exported at this module's top level —
-// add `pub use` here (and narrow this comment) once something needs it.
+// MULTI-1822 ("Replay frozen tool calls in-host and classify plan freshness")
+// wires `plan_file`'s `PlanCall`/checksum helpers into `replay`, and
+// MULTI-1824 (`multi plan`) will wire `plan_file`'s `PlanStore`/`PlanFile`
+// into a real planner, same as MULTI-1823/1825 do for `client`. Until one of
+// those adds a caller from *outside* this module, nothing from any of the
+// five submodules is re-exported at this module's top level — add `pub use`
+// here (and narrow this comment) once something needs it.
 mod client;
 mod error;
 mod plan_file;
+mod replay;
 mod types;

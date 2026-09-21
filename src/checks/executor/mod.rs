@@ -10,7 +10,11 @@
 pub mod cersei;
 #[cfg(test)]
 mod fake;
-mod jail;
+// `pub(crate)` (not private): MULTI-1822's `checks::jev::replay` reuses
+// `Jailed` verbatim to replay a plan's frozen calls through the same
+// boundary check a check's live agent is confined by, rather than
+// duplicating that logic — see `jail`'s module docs and `replay`'s.
+pub(crate) mod jail;
 pub mod judge;
 mod tool_capture;
 mod trace;
