@@ -17,15 +17,16 @@
 // wires `plan_file`'s `PlanCall`/checksum helpers into `replay`, and
 // MULTI-1823 ("Build the Jev verification question from replayed evidence")
 // wires `client`/`error`/`types`/`plan_file::Reading` into the new `verify`
-// module. MULTI-1824 (`multi plan`) will wire `plan_file`'s
-// `PlanStore`/`PlanFile` into a real planner, and MULTI-1825 (`multi check`)
-// will call `verify::verify`. Until one of those adds a caller from
-// *outside* this module, nothing from any of the six submodules is
-// re-exported at this module's top level — add `pub use` here (and narrow
-// this comment) once something needs it.
-mod client;
-mod error;
-mod plan_file;
-mod replay;
+// module. MULTI-1824 (`multi plan`) is the first CROSS-MODULE consumer —
+// `crate::checks::plan` reaches `client`/`error`/`plan_file`/`replay`/`verify`
+// directly (`pub(crate) mod`, not individual `pub use` re-exports: each
+// module's own items are already `pub`, so widening the module path itself is
+// the one visibility change a cross-module caller needs). `types` stays
+// private: nothing outside this module touches the wire shapes directly,
+// only through `client`/`verify`.
+pub(crate) mod client;
+pub(crate) mod error;
+pub(crate) mod plan_file;
+pub(crate) mod replay;
 mod types;
-mod verify;
+pub(crate) mod verify;

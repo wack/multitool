@@ -404,7 +404,13 @@ impl Drop for AbortOnDrop {
 /// which only happens if the process's current directory is unavailable): it
 /// degrades to just the file's name, dropping directory context rather than
 /// leaking the host path.
-fn declared_in_relative_to_root(filepath: &Path, root: &Path) -> PathBuf {
+///
+/// `pub(crate)` (not private): `crate::checks::plan` (MULTI-1824, under
+/// `--features jev`) needs the exact same root-relative `declared_in` — both
+/// for the agent's instructions (via `AgentRunRequest`, identically to `multi
+/// check`) and for the Jev verification request's `state.requirement.declared_in`
+/// (MULTI-1823) — and reuses this rather than duplicating it.
+pub(crate) fn declared_in_relative_to_root(filepath: &Path, root: &Path) -> PathBuf {
     let absolute = std::path::absolute(filepath).unwrap_or_else(|_| filepath.to_path_buf());
     absolute
         .strip_prefix(root)

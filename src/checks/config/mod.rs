@@ -30,16 +30,12 @@ use miette::{Result, miette};
 use crate::checks::executor::BoxedExecutor;
 use crate::checks::executor::cersei::CerseiExecutor;
 
-// `JevConfig` is consumed outside this module by
-// `crate::checks::jev::JevClient::from_config`, but that only exists under
-// `--features jev`; in a default build this re-export is unavoidably unused
-// (verified: `cargo clippy` warns without the allow, with default features
-// only — clean with `--features jev`). `resolve_jev` has no caller outside
-// this module's own tests in *either* build yet — MULTI-1825 ("Decide `multi
-// check` with Jev under the `jev` feature") adds one — so it is *not*
-// re-exported; reach it as `jev::resolve_jev` from within this module (e.g.
-// in tests) until something outside needs it at `config::resolve_jev`.
-#[allow(unused_imports)]
+// `JevConfig` is used unconditionally below, as `load_jev`'s return type —
+// `load_jev` itself exists to serve `multi plan` (MULTI-1824,
+// `--features jev`), but the function is defined (and this import used)
+// regardless of that feature, so no `#[allow(unused_imports)]` is needed
+// (contrast `resolve_jev`, just below, which stays un-re-exported since
+// nothing outside this module calls it directly).
 pub use jev::JevConfig;
 pub use providers::{ProviderFactory, ProviderRegistry};
 pub use schema::{CliOverrides, Effort, ProviderKind};
@@ -227,6 +223,25 @@ pub fn load(overrides: CliOverrides) -> Result<Resolved> {
         providers: registry,
         factory,
     })
+}
+
+/// Resolve `[checks.jev]` alone from the standard `flag > env > file` merge —
+/// the same layers [`load`] merges, without touching [`Config`]/[`Resolved`]
+/// at all. Used only by `multi plan` (MULTI-1824, `--features jev`):
+/// `multi check`'s [`load`]/[`Resolved`] deliberately do **not** carry this.
+/// Folding it into `load` instead (so both commands shared one merge) would
+/// have made `multi check` start validating `checks.jev.threshold` in every
+/// build — a malformed `[checks.jev]` table was never checked on that path
+/// before this ticket (see [`jev::resolve_jev`]'s own doc comment: it "has no
+/// caller outside this module's own tests in *either* build yet"), and
+/// starting to reject one now would be a default-build behavior change this
+/// ticket doesn't call for. The one cost is that `multi plan` merges the
+/// config file/env twice (once here, once via its own `load` call) — cheap,
+/// and not a duplicated *validation* concern, since the two merges validate
+/// disjoint fields.
+pub fn load_jev(overrides: CliOverrides) -> Result<JevConfig> {
+    let checks = resolve_layers(file::load_file_layer(), overrides)?;
+    jev::resolve_jev(&checks.jev)
 }
 
 /// The hardcoded default [`Config`], with no file/env/flag loading. Used as the
