@@ -2,11 +2,12 @@
 //! (<https://docs.typesafe.ai/api.md>).
 //!
 //! `Question`/`Answer` are modeled as enums tagged by TypeSafe's own `"type"`
-//! discriminant, with exactly one variant (`Noul`) implemented today. This is
-//! deliberate groundwork for MULTI-1823, which sends a Noul **and** a Choice
-//! question in the same request: adding `Question::Choice`/`Answer::Choice`
-//! variants alongside `Noul` is additive (new variants, new match arms) rather
-//! than a reshape of callers already sending Noul questions.
+//! discriminant. `Noul` (MULTI-1819) and `Choice` (MULTI-1823, added to
+//! support `crate::checks::jev::verify`'s single request carrying both a Noul
+//! `satisfied` question and a record-only Choice `reading` question over the
+//! same state — see <https://docs.typesafe.ai/primitives/choice.md>) are both
+//! implemented; `Score` (<https://docs.typesafe.ai/primitives/score.md>) is
+//! not, since nothing in this milestone asks one.
 
 use std::collections::HashMap;
 
@@ -29,13 +30,11 @@ pub struct SystemOneRequest {
 
 /// One question in a [`SystemOneRequest`]. Internally tagged by TypeSafe's
 /// `"type"` field (e.g. `{"type": "noul", "instructions": ..., "criteria": ...}`).
-///
-/// Only [`Question::Noul`] is implemented; see the module docs for why this is
-/// an enum despite the single variant.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Question {
     Noul(NoulQuestion),
+    Choice(ChoiceQuestion),
 }
 
 /// A Noul (yes/no) question (<https://docs.typesafe.ai/primitives/noul.md>):
@@ -59,6 +58,21 @@ pub struct NoulCriteria {
     pub when_false: String,
 }
 
+/// A Choice question (<https://docs.typesafe.ai/primitives/choice.md>):
+/// selects one option from a fixed set. Unlike [`NoulQuestion`], `criteria`
+/// is required — it's how the option set itself is expressed, not just a
+/// clarification of it: `{"type": "choice", "instructions": ..., "criteria":
+/// {"option_a": "description", "option_b": "description"}}`, up to 255
+/// options.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChoiceQuestion {
+    /// The question being asked (e.g. "Which team should handle this?").
+    pub instructions: String,
+    /// Option name -> description, up to 255 entries
+    /// (<https://docs.typesafe.ai/primitives/choice.md>).
+    pub criteria: HashMap<String, String>,
+}
+
 /// A successful `200` response from `POST /v1/systemone`
 /// (<https://docs.typesafe.ai/api.md#response-schema>).
 #[derive(Debug, Clone, Deserialize)]
@@ -78,6 +92,7 @@ pub struct SystemOneResponse {
 #[derive(Debug, Clone)]
 pub enum Answer {
     Noul(NoulAnswer),
+    Choice(ChoiceAnswer),
 }
 
 /// Hand-rolled rather than `#[serde(tag = "type")]`: this crate also depends
@@ -110,7 +125,10 @@ impl<'de> Deserialize<'de> for Answer {
             "noul" => serde_json::from_value(value)
                 .map(Answer::Noul)
                 .map_err(D::Error::custom),
-            other => Err(D::Error::unknown_variant(other, &["noul"])),
+            "choice" => serde_json::from_value(value)
+                .map(Answer::Choice)
+                .map_err(D::Error::custom),
+            other => Err(D::Error::unknown_variant(other, &["noul", "choice"])),
         }
     }
 }
@@ -119,6 +137,23 @@ impl<'de> Deserialize<'de> for Answer {
 #[derive(Debug, Clone, Deserialize)]
 pub struct NoulAnswer {
     pub noul: f64,
+}
+
+/// A Choice answer (<https://docs.typesafe.ai/primitives/choice.md>): the
+/// option with the highest probability, the full probability distribution
+/// over every option named in the question's `criteria`, and a derived
+/// `confidence` (<https://docs.typesafe.ai/confidence.md>) — "the answer's
+/// `confidence` property collapses that shape into a single number from 0 to
+/// 1, so you can threshold on it without doing the math yourself."
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChoiceAnswer {
+    /// The selected option (the key with the highest probability).
+    pub choice: String,
+    /// `0.0..=1.0`; derived from how concentrated `probabilities` is on
+    /// [`Self::choice`] — a flatter distribution means lower confidence.
+    pub confidence: f64,
+    /// Every option's probability, summing to `1.0`.
+    pub probabilities: HashMap<String, f64>,
 }
 
 /// Token usage for one `/v1/systemone` request. `output_tokens` is part of the
@@ -188,5 +223,77 @@ mod tests {
             Some(Answer::Noul(NoulAnswer { noul })) => assert_eq!(*noul, 0.99),
             other => panic!("expected a Noul answer, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn choice_question_serializes_to_the_documented_shape() {
+        // The example request from https://docs.typesafe.ai/primitives/choice.md
+        let mut criteria = HashMap::new();
+        criteria.insert(
+            "returns".to_string(),
+            "Exchanges, wrong or damaged items".to_string(),
+        );
+        criteria.insert(
+            "shipping".to_string(),
+            "Delivery status, delays, lost packages".to_string(),
+        );
+        criteria.insert(
+            "billing".to_string(),
+            "Charges, invoices, payment problems".to_string(),
+        );
+        let question = Question::Choice(ChoiceQuestion {
+            instructions: "Which team should handle this?".to_string(),
+            criteria,
+        });
+        let value = serde_json::to_value(&question).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "type": "choice",
+                "instructions": "Which team should handle this?",
+                "criteria": {
+                    "returns": "Exchanges, wrong or damaged items",
+                    "shipping": "Delivery status, delays, lost packages",
+                    "billing": "Charges, invoices, payment problems",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn choice_answer_deserializes_the_documented_example() {
+        // The example response from https://docs.typesafe.ai/primitives/choice.md
+        let raw = serde_json::json!({
+            "model": "jev-1.13.0",
+            "answers": {
+                "department": {
+                    "type": "choice",
+                    "choice": "returns",
+                    "confidence": 1.0,
+                    "probabilities": {"shipping": 0.0, "returns": 1.0, "billing": 0.0},
+                },
+            },
+            "usage": {"input_tokens": 328, "output_tokens": 34},
+        });
+        let response: SystemOneResponse = serde_json::from_value(raw).unwrap();
+        match response.answers.get("department") {
+            Some(Answer::Choice(answer)) => {
+                assert_eq!(answer.choice, "returns");
+                assert_eq!(answer.confidence, 1.0);
+                assert_eq!(answer.probabilities.get("returns"), Some(&1.0));
+            }
+            other => panic!("expected a Choice answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_answer_type_is_rejected() {
+        let raw = serde_json::json!({
+            "model": "jev-1.13.0",
+            "answers": {"q": {"type": "score", "score": 3.0}},
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        });
+        let err = serde_json::from_value::<SystemOneResponse>(raw).unwrap_err();
+        assert!(err.to_string().contains("score"), "got: {err}");
     }
 }

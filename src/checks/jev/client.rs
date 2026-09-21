@@ -76,7 +76,7 @@ impl JevClient {
 
     /// Construct a client from a resolved [`JevConfig`] (`checks.jev.base_url`,
     /// defaulted to TypeSafe's production origin — see
-    /// `crate::checks::config::resolve_jev`).
+    /// `crate::checks::config::jev::resolve_jev`).
     pub fn from_config(config: &JevConfig) -> Result<Self, JevError> {
         Self::new(config.base_url.clone())
     }

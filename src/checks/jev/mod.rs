@@ -15,13 +15,17 @@
 
 // MULTI-1822 ("Replay frozen tool calls in-host and classify plan freshness")
 // wires `plan_file`'s `PlanCall`/checksum helpers into `replay`, and
-// MULTI-1824 (`multi plan`) will wire `plan_file`'s `PlanStore`/`PlanFile`
-// into a real planner, same as MULTI-1823/1825 do for `client`. Until one of
-// those adds a caller from *outside* this module, nothing from any of the
-// five submodules is re-exported at this module's top level — add `pub use`
-// here (and narrow this comment) once something needs it.
+// MULTI-1823 ("Build the Jev verification question from replayed evidence")
+// wires `client`/`error`/`types`/`plan_file::Reading` into the new `verify`
+// module. MULTI-1824 (`multi plan`) will wire `plan_file`'s
+// `PlanStore`/`PlanFile` into a real planner, and MULTI-1825 (`multi check`)
+// will call `verify::verify`. Until one of those adds a caller from
+// *outside* this module, nothing from any of the six submodules is
+// re-exported at this module's top level — add `pub use` here (and narrow
+// this comment) once something needs it.
 mod client;
 mod error;
 mod plan_file;
 mod replay;
 mod types;
+mod verify;
