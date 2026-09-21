@@ -202,6 +202,7 @@ impl CheckExecutor for InterleavingExecutor {
             turns: 1,
             error: None,
             trace_jsonl: None,
+            tool_calls: Vec::new(),
         })
     }
 }

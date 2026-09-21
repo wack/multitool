@@ -552,6 +552,7 @@ mod tests {
             turns: 1,
             error: None,
             trace_jsonl: None,
+            tool_calls: Vec::new(),
         };
         let header = TraceHeader {
             check_id: 3,
