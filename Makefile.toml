@@ -43,6 +43,19 @@ workspace = false
 command = "cargo"
 args = ["clippy", "--all-targets", "--workspace", "--locked", "--", "-D", "warnings"]
 
+# The jev decision engine (MULTI-1819+) lives behind the `jev` Cargo feature,
+# off by default, so it rots unless CI also builds, lints, and tests it
+# (MULTI-1821). Byte-for-byte [tasks.clippy] plus `--features jev`. Run
+# separately from `clippy` (rather than folded into it with a matrix of
+# feature sets) so the two feature sets stay independently attributable in CI
+# output and either one can fail on its own.
+[tasks.clippy-jev]
+description = "Canonical clippy command for the jev feature — shared by CI and bacon."
+category = "Development"
+workspace = false
+command = "cargo"
+args = ["clippy", "--all-targets", "--workspace", "--locked", "--features", "jev", "--", "-D", "warnings"]
+
 [tasks.ci-flow]
 dependencies = [
   "pre-ci-flow",
@@ -71,6 +84,42 @@ args = [
   "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)",
   "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
 ]
+
+# Same intent as [tasks.clippy-jev]: exercise the `jev`-feature build so it
+# doesn't rot behind the flag (MULTI-1821). `--features jev` only exists on
+# the root `multitool` package, not on the `crates/multi-core` workspace
+# member, so this task deliberately does NOT reuse [tasks.test]'s
+# `workspace = true` (which has cargo-make invoke the command once per member
+# directory — inside `crates/multi-core` alone, `--features jev` errors with
+# "the package 'multi-core' does not contain this feature"). Instead, like
+# `clippy`, it sets `workspace = false` and passes `--workspace` explicitly on
+# a single invocation from the repo root: cargo accepts `--features jev`
+# there because at least one selected package (`multitool`) declares it, and
+# nextest still collects every workspace member's tests (verified locally:
+# `cargo nextest run --locked --workspace --features jev` runs multi-core's
+# test alongside multitool's).
+[tasks.test-jev]
+workspace = false
+description = "Run our test suite with the jev feature enabled"
+command = "cargo"
+args = [
+  "nextest",
+  "run",
+  "--locked",
+  "--workspace",
+  "--features",
+  "jev",
+  "@@remove-empty(CARGO_MAKE_CARGO_VERBOSE_FLAGS)",
+  "@@split(CARGO_MAKE_CARGO_BUILD_TEST_FLAGS, )",
+]
+
+# Bundles clippy-jev + test-jev behind one task so CI's jev job (see
+# on-push.yml / on-merge.yml) has a single command to call, mirroring how
+# `ci-flow` bundles the default-feature checks. Kept separate from `ci-flow`
+# — not appended to its dependency list — so the jev checks run as their own
+# parallel CI job instead of serializing after build/docs/coverage.
+[tasks.ci-jev-flow]
+dependencies = ["clippy-jev", "test-jev"]
 
 [tasks.help]
 command = "cargo"
