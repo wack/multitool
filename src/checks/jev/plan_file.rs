@@ -45,6 +45,17 @@
 //!
 //! ## Determinism
 //!
+//! Deterministic output is a property of [`PlanStore::write`], not of
+//! whatever order a caller happens to assemble a [`PlanFile`] in —
+//! MULTI-1824's planner collects results from bounded-concurrency tasks, so
+//! assembly order will vary run to run. `write` stable-sorts a cloned plan's
+//! `requirements` by `(source, ordinal)` and each requirement's `checks` by
+//! `ordinal` before rendering; [`PlanFile::to_toml_string`] itself renders
+//! whatever order it's handed, verbatim. A call's order within its check is
+//! left untouched — replay order is meaningful, not an artifact to sort away
+//! — only exact duplicates are removed (see
+//! [`dedup_calls_preserving_order`]).
+//!
 //! `serde_json`'s `preserve_order` feature is enabled in this workspace
 //! (transitively — verified with `cargo metadata`), so [`serde_json::Value`]
 //! objects iterate in *insertion* order, not sorted order. A captured tool
@@ -163,8 +174,9 @@ impl PlanFile {
 
     /// Hand-render this plan as TOML text (see the module docs for why this
     /// isn't `toml::to_string`). `[[requirement]]` blocks are emitted in
-    /// `self.requirements`' order — callers are expected to supply that in a
-    /// stable order (e.g. by `ordinal`); this function does not re-sort it.
+    /// `self.requirements`' order, verbatim — this function does not sort
+    /// anything; [`PlanStore::write`] establishes the canonical, deterministic
+    /// order on a cloned plan before calling this.
     fn to_toml_string(&self) -> Result<String, PlanError> {
         let mut out = String::new();
         write_kv(&mut out, "version", &self.version)?;
@@ -207,7 +219,14 @@ impl PlanRequirement {
 
 /// One `[[requirement.check]]` block: a single check's frozen evidence and
 /// plan-time verdict.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+///
+/// Deserialized via [`RawPlanCheck`] + `TryFrom`, not derived directly: the
+/// wire schema's `decider`/`agent_reason` pairing (`decider = "jev"` must not
+/// carry an `agent_reason`; `decider = "agent"` must carry one) is a
+/// cross-field constraint `#[derive(Deserialize)]` can't express, and folding
+/// `agent_reason` into [`Decider::Agent`] makes the invalid pairing
+/// unrepresentable in memory too — see [`Decider`].
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlanCheck {
     pub title: String,
     /// This check's position within its requirement. Titles are not unique
@@ -217,22 +236,16 @@ pub struct PlanCheck {
     /// Hash of `title` + the check's prompt (see [`prompt_xxh64`]); a
     /// mismatch invalidates this entry — see [`PlanFile::lookup`].
     pub prompt_xxh64: String,
-    /// Which decision engine settled this check the last time it ran.
+    /// Which decision engine settled this check the last time it ran (and,
+    /// for [`Decider::Agent`], why).
     pub decider: Decider,
     /// The reasoning agent's verdict at plan time (`true` = satisfied).
     pub verdict: bool,
     /// The agent's optional explanation of `verdict`.
-    #[serde(default)]
     pub evidence: Option<String>,
     /// The Jev calibration recorded while establishing `decider`, if Jev was
     /// consulted at all (see [`JevCalibration`]).
-    #[serde(default)]
     pub jev: Option<JevCalibration>,
-    /// Why a reasoning agent (not Jev) decided this check. Present only when
-    /// `decider == Decider::Agent`.
-    #[serde(default)]
-    pub agent_reason: Option<AgentReason>,
-    #[serde(rename = "call", default)]
     pub calls: Vec<PlanCall>,
 }
 
@@ -242,7 +255,7 @@ impl PlanCheck {
         write_kv(out, "title", &self.title)?;
         write_kv(out, "ordinal", &self.ordinal)?;
         write_kv(out, "prompt_xxh64", &self.prompt_xxh64)?;
-        write_kv(out, "decider", &self.decider)?;
+        write_kv(out, "decider", self.decider.wire_str())?;
         write_kv(out, "verdict", &self.verdict)?;
         if let Some(evidence) = &self.evidence {
             write_kv(out, "evidence", evidence)?;
@@ -250,8 +263,8 @@ impl PlanCheck {
         if let Some(jev) = &self.jev {
             write_kv(out, "jev", jev)?;
         }
-        if let Some(reason) = &self.agent_reason {
-            write_kv(out, "agent_reason", reason)?;
+        if let Decider::Agent(reason) = self.decider {
+            write_kv(out, "agent_reason", &reason)?;
         }
         for call in &self.calls {
             call.render(out)?;
@@ -260,18 +273,115 @@ impl PlanCheck {
     }
 }
 
-/// Which decision engine settled a check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// The literal on-disk shape of a `[[requirement.check]]` block's
+/// `decider`/`agent_reason` fields plus everything else — used only to parse
+/// a check before [`PlanCheck::try_from`] validates the `decider`/
+/// `agent_reason` pairing (see [`PlanCheck`]) and converts to the
+/// enforced-shape type.
+#[derive(Debug, Deserialize)]
+struct RawPlanCheck {
+    title: String,
+    ordinal: u32,
+    prompt_xxh64: String,
+    decider: DeciderTag,
+    verdict: bool,
+    #[serde(default)]
+    evidence: Option<String>,
+    #[serde(default)]
+    jev: Option<JevCalibration>,
+    #[serde(default)]
+    agent_reason: Option<AgentReason>,
+    #[serde(rename = "call", default)]
+    call: Vec<PlanCall>,
+}
+
+impl TryFrom<RawPlanCheck> for PlanCheck {
+    type Error = String;
+
+    fn try_from(raw: RawPlanCheck) -> Result<Self, Self::Error> {
+        let decider = match (raw.decider, raw.agent_reason) {
+            (DeciderTag::Jev, None) => Decider::Jev,
+            (DeciderTag::Jev, Some(_)) => {
+                return Err(
+                    "a check with `decider = \"jev\"` must not carry an `agent_reason`".to_string(),
+                );
+            }
+            (DeciderTag::Agent, Some(reason)) => Decider::Agent(reason),
+            (DeciderTag::Agent, None) => {
+                return Err(
+                    "a check with `decider = \"agent\"` is missing `agent_reason`".to_string(),
+                );
+            }
+        };
+        Ok(PlanCheck {
+            title: raw.title,
+            ordinal: raw.ordinal,
+            prompt_xxh64: raw.prompt_xxh64,
+            decider,
+            verdict: raw.verdict,
+            evidence: raw.evidence,
+            jev: raw.jev,
+            calls: raw.call,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for PlanCheck {
+    /// Deserializes via [`RawPlanCheck`] — see [`PlanCheck`]'s docs on why a
+    /// plain derive can't express the `decider`/`agent_reason` constraint.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let raw = RawPlanCheck::deserialize(deserializer)?;
+        PlanCheck::try_from(raw).map_err(D::Error::custom)
+    }
+}
+
+/// Which decision engine settled a check — and, for [`Decider::Agent`], why
+/// (PRD objective #3: Jev only decides checks it has demonstrated it can
+/// decide; the ticket's closed set of reasons live on [`AgentReason`], and
+/// MULTI-1824 always records one). Folding the reason into this variant
+/// (rather than a separate `Option<AgentReason>` field on [`PlanCheck`])
+/// makes `decider = "jev"` + a reason, or `decider = "agent"` + no reason,
+/// unrepresentable in memory — not just rejected at parse time (see
+/// [`RawPlanCheck`]'s `TryFrom` for the on-disk-side enforcement of the same
+/// constraint).
+///
+/// Rendered on the wire as two separate keys (`decider = "jev" | "agent"`,
+/// and `agent_reason = "..."` only for `Agent`) — see [`Decider::wire_str`]
+/// and [`PlanCheck::render`] — not as a single tagged value, so this type
+/// intentionally isn't `Serialize`/`Deserialize` itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decider {
+    Jev,
+    Agent(AgentReason),
+}
+
+impl Decider {
+    /// The `decider` key's wire value alone (`agent_reason`, when present,
+    /// is a separate key — see [`PlanCheck::render`]).
+    fn wire_str(self) -> &'static str {
+        match self {
+            Decider::Jev => "jev",
+            Decider::Agent(_) => "agent",
+        }
+    }
+}
+
+/// The wire-level `decider` tag alone (`"jev"` | `"agent"`), used only by
+/// [`RawPlanCheck`] before it's paired with `agent_reason` to build the
+/// enforced-shape [`Decider`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DeciderTag {
     Jev,
     Agent,
 }
 
 /// Why a check fell back to the reasoning agent instead of being settled by
-/// Jev alone (PRD objective #3: Jev only decides checks it has demonstrated
-/// it can decide). Present on a [`PlanCheck`] only when `decider ==
-/// Decider::Agent`.
+/// Jev alone — see [`Decider::Agent`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentReason {
     /// Jev's verdict disagreed with the reasoning agent's at plan time.
@@ -707,7 +817,19 @@ fn relativize_path(raw: &str, sandbox_root: &Path) -> Result<String, PlanError> 
     if relative.as_os_str().is_empty() {
         return Ok(".".to_string());
     }
-    Ok(relative.to_string_lossy().into_owned())
+    Ok(join_forward_slash(relative))
+}
+
+/// Join `path`'s components with `/`, regardless of the host platform's own
+/// separator. A plan is committed and portable across machines (see the
+/// module docs), so a stored path must not depend on
+/// `std::path::MAIN_SEPARATOR` — `Path::to_string_lossy` would otherwise emit
+/// `\`-joined paths on a platform where that's the native separator.
+fn join_forward_slash(path: &Path) -> String {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Lexically normalize `path`: resolve `.`/`..` components without touching
@@ -829,11 +951,22 @@ impl PlanStore {
     /// never observes a partially-written plan and a crash mid-write leaves
     /// the previous plan (or none) intact.
     ///
-    /// Exact duplicate calls within a check are de-duplicated first,
-    /// preserving first-occurrence order (see [`dedup_calls_preserving_order`]).
+    /// Output is deterministic regardless of the order `plan.requirements`
+    /// (and each requirement's `checks`) arrive in — a cloned copy is
+    /// stable-sorted first: requirements by `(source, ordinal)`, checks by
+    /// `ordinal`. This matters because MULTI-1824's planner assembles a plan
+    /// from bounded-concurrency tasks, whose completion (and thus arrival)
+    /// order varies run to run; without normalizing it here, two runs over an
+    /// unchanged suite would produce spuriously different bytes. A call's
+    /// order within its check is left as given (replay order is meaningful);
+    /// exact duplicate calls are de-duplicated first, preserving
+    /// first-occurrence order (see [`dedup_calls_preserving_order`]).
     pub fn write(dir: &Path, plan: &PlanFile) -> Result<(), PlanError> {
         let mut plan = plan.clone();
+        plan.requirements
+            .sort_by(|a, b| (a.source.as_str(), a.ordinal).cmp(&(b.source.as_str(), b.ordinal)));
         for requirement in &mut plan.requirements {
+            requirement.checks.sort_by_key(|check| check.ordinal);
             for check in &mut requirement.checks {
                 check.calls = dedup_calls_preserving_order(std::mem::take(&mut check.calls));
             }
@@ -972,7 +1105,7 @@ mod tests {
                 title: "Only Keystore signs JWTs".to_string(),
                 ordinal: 0,
                 prompt_xxh64: prompt_xxh64("Only Keystore signs JWTs", "check body"),
-                decider: Decider::Agent,
+                decider: Decider::Agent(AgentReason::ControlFailed),
                 verdict: true,
                 evidence: Some("Keystore alone imports the signing key".to_string()),
                 jev: Some(JevCalibration {
@@ -981,7 +1114,6 @@ mod tests {
                     control_noul: 0.04,
                     reading: Reading::Satisfied,
                 }),
-                agent_reason: Some(AgentReason::ControlFailed),
                 calls: vec![
                     PlanCall::Read {
                         input: json!({"file_path": "src/auth/sign.rs"}),
@@ -995,6 +1127,21 @@ mod tests {
                 ],
             }],
         }])
+    }
+
+    /// A minimal, otherwise-empty check with the given `ordinal` — for tests
+    /// that only care about requirement/check *ordering*, not content.
+    fn minimal_check(ordinal: u32, title: &str) -> PlanCheck {
+        PlanCheck {
+            title: title.to_string(),
+            ordinal,
+            prompt_xxh64: prompt_xxh64(title, ""),
+            decider: Decider::Jev,
+            verdict: true,
+            evidence: None,
+            jev: None,
+            calls: vec![],
+        }
     }
 
     // -- schema / rendering ---------------------------------------------------
@@ -1068,6 +1215,81 @@ mod tests {
         assert_eq!(loaded, plan);
     }
 
+    /// A true write → load round trip is exactly where a hand-written
+    /// renderer breaks: every scalar/key here must be emitted through the
+    /// `toml` crate's own escaping (never a manually `format!`-quoted
+    /// string), or this test fails to reparse to the same value.
+    #[test]
+    fn round_trips_adversarial_strings_and_shapes() {
+        let dir = TempDir::new().unwrap();
+
+        let requirement_title = "Weird req title with ]] and # and = and \"double\" 'single'";
+        let check_title = "Matches fn\\s+sign_\\w+\\(.*\"\\) and a windows path C:\\path\\to\\file";
+        let evidence = "line one\n\tindented line two\r\nline three, trailing space \nlast line — emoji: 🎉🚀 — control: \u{1}\u{7}\u{1b} end";
+
+        let input = json!({
+            "file_path": "a.rs",
+            "nested": {
+                "obj": {"c": "d", "n": -7},
+                "arr": [1, -2, 3.5, true, "s"],
+            },
+            "empty_string": "",
+            "padded": "  leading and trailing space  ",
+            "quotes": "she said \"hi\" and it's a \\ backslash",
+            "regex": "fn\\s+sign_\\w+\\(.*\"\\)",
+            "windows_path": "C:\\path\\to\\file",
+            "control_chars": "tab\tnewline\nreturn\rbell\u{7}esc\u{1b}",
+            "emoji": "🎉🚀🧵",
+            "key with space": 1,
+            "key.with.dot": 2,
+            "negative": -42,
+            "float": -3.5,
+        });
+
+        let plan = PlanFile::new(vec![
+            PlanRequirement {
+                title: requirement_title.to_string(),
+                source: "CHECKS.md".to_string(),
+                ordinal: 0,
+                checks: vec![
+                    PlanCheck {
+                        title: check_title.to_string(),
+                        ordinal: 0,
+                        prompt_xxh64: prompt_xxh64(check_title, evidence),
+                        decider: Decider::Agent(AgentReason::TruncatedDiscovery),
+                        verdict: false,
+                        evidence: Some(evidence.to_string()),
+                        jev: None,
+                        calls: vec![
+                            PlanCall::Read {
+                                input: input.clone(),
+                                xxh64: "0000000000000000".to_string(),
+                            },
+                            // Empty `input` (`{}`).
+                            PlanCall::Glob {
+                                input: json!({}),
+                                xxh64: "1111111111111111".to_string(),
+                            },
+                        ],
+                    },
+                    // A check with zero calls.
+                    minimal_check(1, "no calls"),
+                ],
+            },
+            // A requirement with zero checks.
+            PlanRequirement {
+                title: "empty requirement".to_string(),
+                source: "CHECKS.md".to_string(),
+                ordinal: 1,
+                checks: vec![],
+            },
+        ]);
+
+        PlanStore::write(dir.path(), &plan).unwrap();
+        let loaded = PlanStore::load(dir.path()).unwrap().expect("plan exists");
+        assert_eq!(loaded, plan);
+    }
+
     #[test]
     fn missing_plan_file_loads_as_none() {
         let dir = TempDir::new().unwrap();
@@ -1098,6 +1320,45 @@ mod tests {
         let a = std::fs::read_to_string(dir_a.path().join(PLAN_FILE_NAME)).unwrap();
         let b = std::fs::read_to_string(dir_b.path().join(PLAN_FILE_NAME)).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn write_output_is_independent_of_requirement_and_check_assembly_order() {
+        // Two requirements (by `(source, ordinal)`), each with two checks
+        // (by `ordinal`), assembled in two different orders — arrival order
+        // varies run to run once MULTI-1824's planner collects results from
+        // bounded-concurrency tasks, so `write` itself must normalize it.
+        let req_a = PlanRequirement {
+            title: "Req A".to_string(),
+            source: "CHECKS.md".to_string(),
+            ordinal: 0,
+            checks: vec![minimal_check(0, "A check 0"), minimal_check(1, "A check 1")],
+        };
+        let req_b = PlanRequirement {
+            title: "Req B".to_string(),
+            source: "CHECKS.md".to_string(),
+            ordinal: 1,
+            checks: vec![minimal_check(0, "B check 0"), minimal_check(1, "B check 1")],
+        };
+
+        let canonical = PlanFile::new(vec![req_a.clone(), req_b.clone()]);
+
+        let mut req_a_shuffled = req_a;
+        req_a_shuffled.checks.reverse();
+        let mut req_b_shuffled = req_b;
+        req_b_shuffled.checks.reverse();
+        let shuffled = PlanFile::new(vec![req_b_shuffled, req_a_shuffled]);
+
+        let dir_canonical = TempDir::new().unwrap();
+        let dir_shuffled = TempDir::new().unwrap();
+        PlanStore::write(dir_canonical.path(), &canonical).unwrap();
+        PlanStore::write(dir_shuffled.path(), &shuffled).unwrap();
+
+        let canonical_bytes =
+            std::fs::read_to_string(dir_canonical.path().join(PLAN_FILE_NAME)).unwrap();
+        let shuffled_bytes =
+            std::fs::read_to_string(dir_shuffled.path().join(PLAN_FILE_NAME)).unwrap();
+        assert_eq!(canonical_bytes, shuffled_bytes);
     }
 
     #[test]
@@ -1190,6 +1451,63 @@ mod tests {
         let err = PlanStore::load(dir.path()).unwrap_err();
         assert!(matches!(err, PlanError::Parse { .. }));
         assert!(err.to_string().contains(PLAN_FILE_NAME));
+    }
+
+    /// A minimal, otherwise-valid `[[requirement.check]]` block with `body`
+    /// spliced in verbatim for its `decider`/`agent_reason` lines — for
+    /// testing that invalid pairing is rejected on load.
+    fn minimal_plan_toml_with_check_body(body: &str) -> String {
+        format!(
+            "version = 1\n\n\
+             [[requirement]]\n\
+             title = \"R\"\n\
+             source = \"CHECKS.md\"\n\
+             ordinal = 0\n\n\
+             [[requirement.check]]\n\
+             title = \"C\"\n\
+             ordinal = 0\n\
+             prompt_xxh64 = \"0000000000000000\"\n\
+             verdict = true\n\
+             {body}\n"
+        )
+    }
+
+    #[test]
+    fn jev_decider_with_an_agent_reason_is_rejected_on_load() {
+        let dir = TempDir::new().unwrap();
+        let toml = minimal_plan_toml_with_check_body(
+            "decider = \"jev\"\nagent_reason = \"control failed\"",
+        );
+        std::fs::write(dir.path().join(PLAN_FILE_NAME), toml).unwrap();
+
+        let err = PlanStore::load(dir.path()).unwrap_err();
+        assert!(matches!(err, PlanError::Parse { .. }));
+        assert!(err.to_string().contains(PLAN_FILE_NAME));
+    }
+
+    #[test]
+    fn agent_decider_without_an_agent_reason_is_rejected_on_load() {
+        let dir = TempDir::new().unwrap();
+        let toml = minimal_plan_toml_with_check_body("decider = \"agent\"");
+        std::fs::write(dir.path().join(PLAN_FILE_NAME), toml).unwrap();
+
+        let err = PlanStore::load(dir.path()).unwrap_err();
+        assert!(matches!(err, PlanError::Parse { .. }));
+        assert!(err.to_string().contains(PLAN_FILE_NAME));
+    }
+
+    #[test]
+    fn jev_decider_without_an_agent_reason_loads_fine() {
+        // Sanity check that `minimal_plan_toml_with_check_body` itself
+        // produces a valid plan when the pairing IS correct, so the two
+        // rejection tests above are testing the pairing rule and not some
+        // unrelated fixture mistake.
+        let dir = TempDir::new().unwrap();
+        let toml = minimal_plan_toml_with_check_body("decider = \"jev\"");
+        std::fs::write(dir.path().join(PLAN_FILE_NAME), toml).unwrap();
+
+        let loaded = PlanStore::load(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.requirements[0].checks[0].decider, Decider::Jev);
     }
 
     // -- relativize -----------------------------------------------------------
@@ -1345,6 +1663,21 @@ mod tests {
         assert_eq!(input["head_limit"], json!(5));
         assert!(input["ratio"].is_f64());
         assert_eq!(input["ratio"], json!(5.0));
+    }
+
+    // -- path joining -----------------------------------------------------------
+
+    #[test]
+    fn join_forward_slash_joins_multiple_components_with_forward_slashes() {
+        assert_eq!(
+            join_forward_slash(Path::new("services/keystore/src/sign.rs")),
+            "services/keystore/src/sign.rs"
+        );
+    }
+
+    #[test]
+    fn join_forward_slash_of_a_single_component_has_no_slash() {
+        assert_eq!(join_forward_slash(Path::new("a.rs")), "a.rs");
     }
 
     // -- checksum helpers -----------------------------------------------------------
