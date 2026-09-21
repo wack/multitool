@@ -21,12 +21,15 @@ use async_trait::async_trait;
 use miette::Result;
 
 pub use judge::{CheckReport, JUDGE_TOOL};
-// `ReadOnlyTool` isn't named outside tests yet (only `ToolCall`, whose `tool`
-// field carries it, is): re-exporting it here too would be an unused `pub use`
-// in the default build. Test code reaches it via `tool_capture::ReadOnlyTool`
-// directly; widen this re-export once a non-test caller needs the variant
-// (e.g. MULTI-1820's plan writer).
 pub use tool_capture::ToolCall;
+// `ReadOnlyTool` (MULTI-1820's plan schema reuses it as the call-site `tool`
+// enum) has no non-test consumer in the default build — only
+// `crate::checks::jev::plan_file`, which exists only under `--features jev` —
+// so re-exporting it unconditionally would be an unused `pub use` outside
+// that feature. Test code within this crate reaches it via
+// `tool_capture::ReadOnlyTool` directly regardless of this gate.
+#[cfg(feature = "jev")]
+pub use tool_capture::ReadOnlyTool;
 
 use crate::checks::model::{Check, CheckId};
 

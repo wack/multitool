@@ -94,6 +94,15 @@ cersei-tools = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 cersei-types = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 cersei-workflows = { git = "https://github.com/wack/cersei.git", branch = "trunk" }
 textwrap = "0.16"
+# The jev decision engine's `.check-plan.toml` checksums (MULTI-1820): xxHash64
+# of normalized replay output / prompt text, seed 0 (matching
+# `crates/multi-core`'s xxHash32 convention). Optional — pulled in only by the
+# `jev` feature (`dep:twox-hash` below) — so the default build's dependency
+# graph is unaffected; `workspace.dependencies.twox-hash` already carries
+# `xxhash32` for `crates/multi-core`, and enabling `xxhash64` there too is an
+# unavoidable side effect of Cargo's additive feature unification for a
+# workspace dependency (see `src/checks/jev/plan_file.rs`'s module docs).
+twox-hash = { workspace = true, optional = true, features = ["xxhash64"] }
 
 [workspace.dependencies]
 pretty_assertions = "1.4"
@@ -101,7 +110,7 @@ static_assertions = "1.1"
 base64 = "0.22"
 ignore = "0.4"
 tokio-util = { version = "0.7", features = ["io"] }
-twox-hash = { version = "2.1", features = ["xxhash32"] }
+twox-hash = { version = "2.1", features = ["xxhash32", "xxhash64"] }
 tokio = { version = "1.37.0", features = ["full"] }
 miette = { version = "7", features = ["fancy"] }
 tokio-stream = { version = "0.1", features = ["time"] }
@@ -128,7 +137,7 @@ errorlogs = []
 # System One API. Off by default. reqwest's `json` feature is off in the
 # default build and is enabled only through this feature, so the default
 # build's dependency graph is unaffected.
-jev = ["reqwest/json"]
+jev = ["reqwest/json", "dep:twox-hash"]
 
 # The profile that 'dist' will build with
 [profile.dist]
