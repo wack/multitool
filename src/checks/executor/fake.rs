@@ -188,7 +188,11 @@ mod tests {
                 title: "t".into(),
                 prompt: "p".into(),
             },
-            working_dir: std::path::PathBuf::from("."),
+            source_dir: std::path::PathBuf::from("."),
+            sandbox: crate::checks::sandbox::SandboxLease::new(
+                std::sync::Arc::new(crate::checks::sandbox::RecordingSandbox::new()),
+                std::path::PathBuf::from("."),
+            ),
             declared_in: std::path::PathBuf::from("CHECKS.md"),
             attempt: 1,
         }

@@ -486,6 +486,7 @@ impl CheckExecutor for NeverAcquiresExecutor {
             turns: 0,
             error: None,
             trace_jsonl: None,
+            tool_calls: Vec::new(),
         })
     }
 }
