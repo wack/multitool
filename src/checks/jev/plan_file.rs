@@ -56,13 +56,19 @@
 //! — only exact duplicates are removed (see
 //! [`dedup_calls_preserving_order`]).
 //!
-//! `serde_json`'s `preserve_order` feature is enabled in this workspace
-//! (transitively — verified with `cargo metadata`), so [`serde_json::Value`]
-//! objects iterate in *insertion* order, not sorted order. A captured tool
-//! call's key order reflects whatever order the calling agent happened to
-//! supply arguments in, which is not a property we want leaking into a
-//! committed plan's diffs. [`json_to_toml`] therefore sorts object keys
-//! explicitly. Integer-vs-float is preserved through the `toml::Value`
+//! `serde_json::Value`'s `Map` is **not** order-preserving in this
+//! workspace's actual dependency resolution — `toml`'s own `preserve_order`
+//! feature appears in `cargo tree`'s output, but that unification doesn't
+//! reach this crate's use of `serde_json::Value` (established empirically in
+//! MULTI-1823; see `crate::checks::jev::verify`'s
+//! `serialized_request_is_byte_stable` test docs for the same finding). A
+//! captured tool call's key order is therefore already effectively
+//! randomized per process rather than reflecting the calling agent's
+//! argument order — either way, it's not a property we want leaking into a
+//! committed plan's diffs, so [`json_to_toml`] sorts object keys explicitly
+//! regardless (this sort is a deliberate determinism choice, not a
+//! workaround that depends on which ordering behavior actually holds).
+//! Integer-vs-float is preserved through the `toml::Value`
 //! round trip via [`serde_json::Number`]'s own `as_i64`/`as_u64`/`as_f64`
 //! accessors (safe regardless of this crate's `arbitrary_precision`
 //! `serde_json` feature, which is also transitively enabled and would
@@ -415,7 +421,15 @@ pub struct JevCalibration {
     pub model: String,
     pub noul: f64,
     pub control_noul: f64,
-    pub reading: Reading,
+    /// The record-only Choice answer's reading, when Jev returned one that
+    /// parsed (`verify::ChoiceOutcome` — "Choice never gates" — can
+    /// legitimately be missing or malformed). `None` is omitted from the
+    /// rendered inline table entirely (`#[serde(skip_serializing_if)]`)
+    /// rather than a caller fabricating a reading Jev never actually gave —
+    /// a plan must only ever record what Jev said, never a synthesized
+    /// stand-in for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<Reading>,
 }
 
 /// The record-only Choice reading paired with a [`JevCalibration`].
@@ -1112,7 +1126,7 @@ mod tests {
                     model: "jev-1.13.0".to_string(),
                     noul: 0.93,
                     control_noul: 0.04,
-                    reading: Reading::Satisfied,
+                    reading: Some(Reading::Satisfied),
                 }),
                 calls: vec![
                     PlanCall::Read {
@@ -1213,6 +1227,42 @@ mod tests {
         let loaded = PlanStore::load(dir.path()).unwrap().expect("plan exists");
 
         assert_eq!(loaded, plan);
+    }
+
+    /// A calibration with no parseable Choice answer records `reading =
+    /// None` — never a fabricated stand-in (MULTI-1824 review) — and that
+    /// must round-trip too: the key is omitted from the rendered inline
+    /// table entirely, and loading it back must not require the key to be
+    /// present.
+    #[test]
+    fn round_trips_a_calibration_with_no_reading() {
+        let dir = TempDir::new().unwrap();
+        let mut plan = sample_plan();
+        plan.requirements[0].checks[0].jev = Some(JevCalibration {
+            model: "jev-1.13.0".to_string(),
+            noul: 0.93,
+            control_noul: 0.04,
+            reading: None,
+        });
+
+        let rendered = plan.to_toml_string().unwrap();
+        assert!(
+            rendered
+                .contains(r#"jev = { model = "jev-1.13.0", noul = 0.93, control_noul = 0.04 }"#)
+        );
+        assert!(!rendered.contains("reading"));
+
+        PlanStore::write(dir.path(), &plan).unwrap();
+        let loaded = PlanStore::load(dir.path()).unwrap().expect("plan exists");
+        assert_eq!(loaded, plan);
+        assert_eq!(
+            loaded.requirements[0].checks[0]
+                .jev
+                .as_ref()
+                .unwrap()
+                .reading,
+            None
+        );
     }
 
     /// A true write → load round trip is exactly where a hand-written

@@ -57,7 +57,7 @@ async fn planned_for(root: &std::path::Path, check: &Check, relative_file: &str)
             model: "jev-1.13.0".to_string(),
             noul: 0.95,
             control_noul: 0.02,
-            reading: Reading::Satisfied,
+            reading: Some(Reading::Satisfied),
         }),
         calls: vec![PlanCall::Read {
             input: json!({ "file_path": relative_file }),
@@ -98,10 +98,10 @@ async fn first_run_plans_every_check_second_run_reuses_all() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    let code = run_with_planner(&term, &reqs, fake1.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs, fake1.clone(), 2, false)
         .await
         .unwrap();
-    assert_eq!(code, 0);
+    assert_eq!(report.exit_code, 0);
     let mut seen = fake1.seen();
     seen.sort_unstable();
     assert_eq!(seen, vec![0, 1], "first run plans every check");
@@ -116,10 +116,10 @@ async fn first_run_plans_every_check_second_run_reuses_all() {
     // planner is invoked zero times.
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new());
-    let code2 = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
         .await
         .unwrap();
-    assert_eq!(code2, 0);
+    assert_eq!(report2.exit_code, 0);
     assert!(
         fake2.seen().is_empty(),
         "an immediate second run invokes the planner zero times"
@@ -149,10 +149,10 @@ async fn editing_a_read_file_replans_only_the_affected_check() {
     let reqs2 = discover(dir.path()).await.unwrap();
     let replanned_a = planned_for(dir.path(), &reqs2[0].checks[0], "src/a.rs").await;
     let fake2 = Arc::new(FakePlanner::new().with_planned(0, replanned_a));
-    let code = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
         .await
         .unwrap();
-    assert_eq!(code, 0);
+    assert_eq!(report.exit_code, 0);
     assert_eq!(
         fake2.seen(),
         vec![0],
@@ -189,10 +189,10 @@ async fn editing_a_checks_prompt_replans_it() {
     assert_ne!(reqs2[0].checks[1].prompt, reqs[0].checks[1].prompt);
     let replanned_b = planned_for(dir.path(), &reqs2[0].checks[1], "src/b.rs").await;
     let fake2 = Arc::new(FakePlanner::new().with_planned(1, replanned_b));
-    let code = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
         .await
         .unwrap();
-    assert_eq!(code, 0);
+    assert_eq!(report.exit_code, 0);
     assert_eq!(
         fake2.seen(),
         vec![1],
@@ -223,10 +223,10 @@ async fn force_replans_every_check_even_when_fresh() {
             .with_planned(0, planned_a)
             .with_planned(1, planned_b),
     );
-    let code = run_with_planner(&term, &reqs2, fake2.clone(), 2, true)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true)
         .await
         .unwrap();
-    assert_eq!(code, 0);
+    assert_eq!(report.exit_code, 0);
     let mut seen = fake2.seen();
     seen.sort_unstable();
     assert_eq!(
@@ -272,22 +272,29 @@ async fn truncated_discovery_entry_is_reused_not_replanned() {
 
     let fake1 = Arc::new(FakePlanner::new().with_planned(0, planned));
     let term = plain_terminal();
-    let code = run_with_planner(&term, &reqs, fake1.clone(), 1, false)
+    let report = run_with_planner(&term, &reqs, fake1.clone(), 1, false)
         .await
         .unwrap();
-    assert_eq!(code, 0);
+    assert_eq!(report.exit_code, 0);
     assert_eq!(fake1.seen(), vec![0]);
+    // MULTI-1824 acceptance: the summary reports the truncated count on the
+    // planning run too, not only on a reuse run.
+    assert_eq!(report.truncated_count, 1);
+    assert_eq!(report.total_checks, 1);
 
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new());
-    let code2 = run_with_planner(&term, &reqs2, fake2.clone(), 1, false)
+    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 1, false)
         .await
         .unwrap();
-    assert_eq!(code2, 0);
+    assert_eq!(report2.exit_code, 0);
     assert!(
         fake2.seen().is_empty(),
         "a truncated entry is reused, not replanned, on an unchanged tree"
     );
+    // ...and on the reuse run — the same acceptance bullet, checked on both.
+    assert_eq!(report2.truncated_count, 1);
+    assert_eq!(report2.total_checks, 1);
 }
 
 /// The summary line's truncated-call detection, unit-tested directly: a
@@ -327,6 +334,33 @@ fn entry_has_truncated_call_detects_either_outcome_kind() {
     )));
 }
 
+#[test]
+fn summary_line_reports_the_truncated_count_when_positive() {
+    assert_eq!(
+        summary_line(2, 5),
+        Some("2 of 5 checks have truncated discovery".to_string())
+    );
+}
+
+#[test]
+fn summary_line_is_absent_when_the_truncated_count_is_zero() {
+    assert_eq!(summary_line(0, 5), None);
+}
+
+#[test]
+fn refused_message_names_the_file_and_mentions_the_manifest() {
+    let path = std::path::Path::new("services/legacy/CHECKS.md");
+    let message = refused_message(path);
+    assert!(
+        message.contains("services/legacy/CHECKS.md"),
+        "names the file: {message}"
+    );
+    assert!(
+        message.contains("MultiTool.toml"),
+        "mentions the manifest: {message}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Root refusal
 // ---------------------------------------------------------------------------
@@ -359,11 +393,14 @@ async fn requirements_file_without_a_manifest_is_refused_other_files_still_plann
     let planned_ok = planned_for(good_req.root.as_path(), &good_req.checks[0], "src/ok.rs").await;
     let fake = Arc::new(FakePlanner::new().with_planned(0, planned_ok));
     let term = plain_terminal();
-    let code = run_with_planner(&term, &reqs, fake.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs, fake.clone(), 2, false)
         .await
         .unwrap();
 
-    assert_eq!(code, 1, "the refused file makes the run exit non-zero");
+    assert_eq!(
+        report.exit_code, 1,
+        "the refused file makes the run exit non-zero"
+    );
     assert_eq!(
         fake.seen(),
         vec![0],
@@ -381,6 +418,191 @@ async fn requirements_file_without_a_manifest_is_refused_other_files_still_plann
             .unwrap()
             .is_none(),
         "no plan file is written for the refused directory"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Preserving/dropping entries (MULTI-1824 review)
+// ---------------------------------------------------------------------------
+
+/// MULTI-1824 review (major): a per-check planning failure must not delete a
+/// previously good entry. Check A's evidence goes stale (forcing a re-plan
+/// attempt), but the planner errors on it this run — its old entry must
+/// survive byte-identically, and check B (untouched, still fresh) must still
+/// reuse without ever reaching the planner.
+#[tokio::test]
+async fn a_planning_error_preserves_the_stale_entry_instead_of_deleting_it() {
+    let dir = TempDir::new().unwrap();
+    write_two_check_fixture(dir.path());
+    let reqs = discover(dir.path()).await.unwrap();
+    let planned_a = planned_for(dir.path(), &reqs[0].checks[0], "src/a.rs").await;
+    let planned_b = planned_for(dir.path(), &reqs[0].checks[1], "src/b.rs").await;
+    let fake1 = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a)
+            .with_planned(1, planned_b),
+    );
+    let term = plain_terminal();
+    run_with_planner(&term, &reqs, fake1, 2, false)
+        .await
+        .unwrap();
+    let before = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+
+    // Make check A's evidence stale, but the planner errors when asked to
+    // replan it (a transient Jev failure, an agent that never reports, or
+    // the new escaping-call error are all the same shape from here).
+    std::fs::write(dir.path().join("src/a.rs"), "fn a() { /* changed */ }\n").unwrap();
+    let reqs2 = discover(dir.path()).await.unwrap();
+    let fake2 = Arc::new(FakePlanner::new().with_error(0, "transient Jev failure"));
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        report.exit_code, 1,
+        "a check that could not be planned exits non-zero"
+    );
+    assert_eq!(
+        fake2.seen(),
+        vec![0],
+        "only check A (stale) was attempted; check B stayed fresh and reused"
+    );
+
+    let after = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+    assert_eq!(
+        before, after,
+        "check A's stale-but-preserved entry keeps the file byte-identical"
+    );
+}
+
+/// The `--force` variant of the same fix: forcing a re-plan and then having
+/// it error must still preserve the old entry — `--force` means "re-plan",
+/// not "delete on failure".
+#[tokio::test]
+async fn a_planning_error_under_force_still_preserves_the_old_entry() {
+    let dir = TempDir::new().unwrap();
+    write_two_check_fixture(dir.path());
+    let reqs = discover(dir.path()).await.unwrap();
+    let planned_a = planned_for(dir.path(), &reqs[0].checks[0], "src/a.rs").await;
+    let planned_b = planned_for(dir.path(), &reqs[0].checks[1], "src/b.rs").await;
+    let fake1 = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a.clone())
+            .with_planned(1, planned_b),
+    );
+    let term = plain_terminal();
+    run_with_planner(&term, &reqs, fake1, 2, false)
+        .await
+        .unwrap();
+
+    let reqs2 = discover(dir.path()).await.unwrap();
+    // Force re-plans both; script only check B to succeed, leave check A
+    // erroring even though its evidence never changed.
+    let fake2 = Arc::new(
+        FakePlanner::new()
+            .with_error(0, "transient Jev failure")
+            .with_planned(
+                1,
+                planned_for(dir.path(), &reqs2[0].checks[1], "src/b.rs").await,
+            ),
+    );
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true)
+        .await
+        .unwrap();
+    assert_eq!(report.exit_code, 1);
+    let mut seen = fake2.seen();
+    seen.sort_unstable();
+    assert_eq!(seen, vec![0, 1], "force attempts both checks");
+
+    let plan = plan_file::PlanStore::load(dir.path()).unwrap().unwrap();
+    let check_a = plan.requirements[0]
+        .checks
+        .iter()
+        .find(|c| c.title == "A")
+        .expect("check A's old entry survives the forced-but-failed replan");
+    assert_eq!(check_a, &planned_a.into_plan_check(0));
+}
+
+#[tokio::test]
+async fn a_check_removed_from_checksmd_is_dropped_from_the_plan() {
+    let dir = TempDir::new().unwrap();
+    write_two_check_fixture(dir.path());
+    let reqs = discover(dir.path()).await.unwrap();
+    let planned_a = planned_for(dir.path(), &reqs[0].checks[0], "src/a.rs").await;
+    let planned_b = planned_for(dir.path(), &reqs[0].checks[1], "src/b.rs").await;
+    let fake1 = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a)
+            .with_planned(1, planned_b),
+    );
+    let term = plain_terminal();
+    run_with_planner(&term, &reqs, fake1, 2, false)
+        .await
+        .unwrap();
+
+    // Remove check B from CHECKS.md entirely.
+    std::fs::write(
+        dir.path().join("CHECKS.md"),
+        "# Requirement Demo\n## Check A\nCheck A prompt\n",
+    )
+    .unwrap();
+
+    let reqs2 = discover(dir.path()).await.unwrap();
+    assert_eq!(reqs2[0].checks.len(), 1);
+    let fake2 = Arc::new(FakePlanner::new());
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+        .await
+        .unwrap();
+    assert_eq!(report.exit_code, 0);
+    assert!(
+        fake2.seen().is_empty(),
+        "check A's evidence is unchanged, so it's reused"
+    );
+
+    let plan = plan_file::PlanStore::load(dir.path()).unwrap().unwrap();
+    assert_eq!(plan.requirements.len(), 1);
+    assert_eq!(
+        plan.requirements[0].checks.len(),
+        1,
+        "check B's entry was dropped along with the check itself"
+    );
+    assert_eq!(plan.requirements[0].checks[0].title, "A");
+}
+
+/// MULTI-1824 review: an aborting run (a bad/missing Jev credential) must
+/// leave every existing `.check-plan.toml` completely untouched.
+#[tokio::test]
+async fn aborting_run_leaves_existing_plan_files_byte_identical() {
+    let dir = TempDir::new().unwrap();
+    write_two_check_fixture(dir.path());
+    let reqs = discover(dir.path()).await.unwrap();
+    let planned_a = planned_for(dir.path(), &reqs[0].checks[0], "src/a.rs").await;
+    let planned_b = planned_for(dir.path(), &reqs[0].checks[1], "src/b.rs").await;
+    let fake1 = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a)
+            .with_planned(1, planned_b),
+    );
+    let term = plain_terminal();
+    run_with_planner(&term, &reqs, fake1, 2, false)
+        .await
+        .unwrap();
+    let before = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+
+    // Make check A's evidence stale (so it's attempted this run), and script
+    // an abort-worthy failure for it.
+    std::fs::write(dir.path().join("src/a.rs"), "fn a() { /* changed */ }\n").unwrap();
+    let reqs2 = discover(dir.path()).await.unwrap();
+    let fake2 = Arc::new(FakePlanner::new().with_abort(0, "missing key"));
+    let err = run_with_planner(&term, &reqs2, fake2, 2, false)
+        .await
+        .expect_err("an abort-worthy error must fail the whole run");
+    assert!(err.downcast_ref::<planner::AbortPlanRun>().is_some());
+
+    let after = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+    assert_eq!(
+        before, after,
+        "an aborting run must not touch existing plan files at all"
     );
 }
 

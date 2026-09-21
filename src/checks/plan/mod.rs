@@ -129,14 +129,15 @@ pub async fn run(
         resolved.config.max_attempts,
     ));
 
-    run_with_planner(
+    let report = run_with_planner(
         terminal,
         &requirements,
         planner,
         resolved.config.concurrency,
         force,
     )
-    .await
+    .await?;
+    Ok(report.exit_code)
 }
 
 // ---------------------------------------------------------------------------
@@ -244,11 +245,7 @@ fn partition_checks(
                     refused.push(RefusedCheck {
                         requirement_title: req.title.clone(),
                         check_title: check.title.clone(),
-                        message: format!(
-                            "no MultiTool.toml manifest found above `{}`; add one at the \
-                             repository root to plan this file",
-                            req.filepath.display(),
-                        ),
+                        message: refused_message(&req.filepath),
                     });
                 }
             }
@@ -279,24 +276,31 @@ fn partition_checks(
     (descriptors, refused, valid_dirs)
 }
 
+/// The diagnostic recorded for every check under a [`RootSource::ScanDirectory`]
+/// requirements file — see the module docs' "Repository roots" section.
+/// Names the offending file and tells the user how to fix it; pulled out as
+/// its own pure function so it's directly unit-testable.
+fn refused_message(filepath: &Path) -> String {
+    format!(
+        "no MultiTool.toml manifest found above `{}`; add one at the repository root to plan this file",
+        filepath.display(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Caching: load existing plans, look up cached entries
 // ---------------------------------------------------------------------------
 
 /// Load the existing `.check-plan.toml` (if any) beside every directory in
-/// `valid_dirs`, once each. Empty (no directory is ever loaded) when `force`
-/// is set — every check is then (re)planned from scratch, since
-/// [`cached_entry`] looks entries up in this map and finds nothing for an
-/// absent key. A load failure (corrupt file, unknown version) aborts the
-/// whole run — see the module docs.
-fn load_existing_plans(
-    valid_dirs: &[PathBuf],
-    force: bool,
-) -> Result<HashMap<PathBuf, plan_file::PlanFile>> {
+/// `valid_dirs`, once each — **unconditionally**, regardless of `--force`.
+/// Besides the freshness *lookup* ([`cached_entry`], which `--force` does
+/// bypass), [`build_plan_files`] also needs this to preserve an existing
+/// entry for a check whose (re-)planning fails this run rather than deleting
+/// it: `--force` means "re-plan", not "delete on failure" — see the module
+/// docs. A load failure (corrupt file, unknown version) aborts the whole run
+/// rather than silently discarding whatever was already committed.
+fn load_existing_plans(valid_dirs: &[PathBuf]) -> Result<HashMap<PathBuf, plan_file::PlanFile>> {
     let mut out = HashMap::new();
-    if force {
-        return Ok(out);
-    }
     for dir in valid_dirs {
         if let Some(loaded) = plan_file::PlanStore::load(dir)? {
             out.insert(dir.clone(), loaded);
@@ -306,11 +310,17 @@ fn load_existing_plans(
 }
 
 /// The existing plan entry for `descriptor`, if `existing` has a plan for its
-/// directory and that plan has a matching, hash-valid entry.
+/// directory and that plan has a matching, hash-valid entry — `None`
+/// unconditionally when `force` is set, so every check is (re)planned from
+/// scratch regardless of what `existing` holds.
 fn cached_entry(
     descriptor: &CheckDescriptor,
     existing: &HashMap<PathBuf, plan_file::PlanFile>,
+    force: bool,
 ) -> Option<plan_file::PlanCheck> {
+    if force {
+        return None;
+    }
     let plan = existing.get(&descriptor.dir)?;
     let hash = plan_file::prompt_xxh64(&descriptor.check.title, &descriptor.check.prompt);
     plan.lookup(
@@ -376,6 +386,20 @@ async fn process_check(
     }
 }
 
+/// The result of one `multi plan` run: the process exit code plus the
+/// summary counts a caller can inspect directly — used by tests to assert
+/// on the truncated-discovery count without capturing stdout (see
+/// [`summary_line`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunReport {
+    pub exit_code: i32,
+    /// How many checks' final entry carries at least one truncated call —
+    /// see [`entry_has_truncated_call`].
+    pub truncated_count: usize,
+    /// Every check considered this run, including refused-file checks.
+    pub total_checks: usize,
+}
+
 /// The injectable core of `multi plan`, driven directly by tests with a
 /// [`FakePlanner`] (or a real [`AgentPlanner`] over a `FakeExecutor` + mock
 /// Jev). See the module docs for the full contract.
@@ -385,19 +409,24 @@ pub(crate) async fn run_with_planner(
     planner: Arc<dyn Planner + Send + Sync>,
     concurrency: usize,
     force: bool,
-) -> Result<i32> {
+) -> Result<RunReport> {
     if requirements.is_empty() {
         terminal.write_stdout_line("No requirements found.")?;
-        return Ok(0);
+        return Ok(RunReport {
+            exit_code: 0,
+            truncated_count: 0,
+            total_checks: 0,
+        });
     }
 
     let groups = group_by_directory(requirements);
     let (descriptors, refused, valid_dirs) = partition_checks(&groups);
-    let existing = load_existing_plans(&valid_dirs, force)?;
+    // Loaded unconditionally, even under `--force` — see the doc comment.
+    let existing = load_existing_plans(&valid_dirs)?;
 
     let cached: Vec<Option<plan_file::PlanCheck>> = descriptors
         .iter()
-        .map(|d| cached_entry(d, &existing))
+        .map(|d| cached_entry(d, &existing, force))
         .collect();
 
     let processed: Vec<ProcessedCheck> = stream::iter(descriptors.into_iter().zip(cached))
@@ -411,7 +440,8 @@ pub(crate) async fn run_with_planner(
 
     // Abort the whole run on the first `AbortPlanRun`-marked failure — a bad
     // or missing Jev credential must not silently read as every check
-    // disagreeing with the agent. No plan file is written in this case.
+    // disagreeing with the agent. No plan file is written in this case
+    // (checked before any write below).
     let abort_index = processed.iter().position(|p| {
         matches!(&p.outcome, LineOutcome::Error(e) if e.downcast_ref::<planner::AbortPlanRun>().is_some())
     });
@@ -446,10 +476,8 @@ pub(crate) async fn run_with_planner(
         .filter(|p| entry_has_truncated_call(&p.outcome))
         .count();
     let total_checks = refused.len() + processed.len();
-    if truncated_count > 0 {
-        terminal.write_stdout_line(&format!(
-            "{truncated_count} of {total_checks} checks have truncated discovery"
-        ))?;
+    if let Some(line) = summary_line(truncated_count, total_checks) {
+        terminal.write_stdout_line(&line)?;
     }
 
     let has_error = !refused.is_empty()
@@ -458,7 +486,9 @@ pub(crate) async fn run_with_planner(
             .any(|p| matches!(p.outcome, LineOutcome::Error(_)));
 
     // -- write: one `.check-plan.toml` per directory, exactly once --------
-    let mut files = build_plan_files(&processed);
+    // Seeded from `existing` so a check whose (re-)planning errored this run
+    // keeps its previous entry instead of losing it — see `build_plan_files`.
+    let mut files = build_plan_files(&processed, &existing);
     for dir in &valid_dirs {
         files
             .entry(dir.clone())
@@ -468,7 +498,11 @@ pub(crate) async fn run_with_planner(
         plan_file::PlanStore::write(dir, file)?;
     }
 
-    Ok(if has_error { 1 } else { 0 })
+    Ok(RunReport {
+        exit_code: if has_error { 1 } else { 0 },
+        truncated_count,
+        total_checks,
+    })
 }
 
 /// Whether a processed check's final entry carries at least one
@@ -498,12 +532,34 @@ type RequirementChecks = (String, Vec<plan_file::PlanCheck>);
 /// `(source, req_ordinal)` — see [`build_plan_files`].
 type DirectoryRequirements = HashMap<(String, u32), RequirementChecks>;
 
-/// Assemble one [`plan_file::PlanFile`] per directory from `processed`'s
-/// surviving entries (an errored check contributes no entry — dropped, the
-/// same as a check no longer present in `CHECKS.md`). [`plan_file::PlanStore::write`]
-/// re-sorts requirements/checks deterministically on its own, so insertion
-/// order here doesn't matter.
-fn build_plan_files(processed: &[ProcessedCheck]) -> HashMap<PathBuf, plan_file::PlanFile> {
+/// Assemble one [`plan_file::PlanFile`] per directory from `processed`.
+///
+/// A check successfully `Reused` or freshly `Planned` this run contributes
+/// its new entry. A check whose planning **errored** this run does *not*
+/// contribute nothing — that used to be this function's behavior, and it was
+/// a bug (MULTI-1824 review): omitting it here meant a single transient
+/// failure (a Jev `Transport`/`Exhausted` blip, an agent that never reports,
+/// or the escaping-call error `entry_from_outcome` now raises) silently
+/// **deleted** whatever entry that check already had, destroying its cached
+/// verdict/calibration for no reason connected to that entry's own
+/// freshness. The ticket only calls for dropping entries for checks no
+/// longer present in `CHECKS.md` at all — which this function never even
+/// sees, since `processed` is built from the *current* discovery pass (see
+/// [`partition_checks`]), not from `existing`. So an errored check instead
+/// looks up whatever entry `existing` already had at its exact
+/// `(source, req_ordinal, check_ordinal)` position ([`find_existing_entry`],
+/// deliberately **not** gated on `prompt_xxh64` still matching — an entry
+/// preserved this way may be stale, and that's fine: `multi check` handles a
+/// stale entry safely by replaying and escalating; a *missing* one loses the
+/// cached verdict/calibration outright). This preservation applies
+/// regardless of `--force`: force means "re-plan", not "delete on failure".
+///
+/// [`plan_file::PlanStore::write`] re-sorts requirements/checks
+/// deterministically on its own, so insertion order here doesn't matter.
+fn build_plan_files(
+    processed: &[ProcessedCheck],
+    existing: &HashMap<PathBuf, plan_file::PlanFile>,
+) -> HashMap<PathBuf, plan_file::PlanFile> {
     let mut by_dir: HashMap<PathBuf, DirectoryRequirements> = HashMap::new();
 
     for p in processed {
@@ -512,7 +568,14 @@ fn build_plan_files(processed: &[ProcessedCheck]) -> HashMap<PathBuf, plan_file:
             LineOutcome::Planned(planned) => {
                 Some(planned.clone().into_plan_check(p.descriptor.check_ordinal))
             }
-            LineOutcome::Error(_) => None,
+            LineOutcome::Error(_) => existing.get(&p.descriptor.dir).and_then(|plan| {
+                find_existing_entry(
+                    plan,
+                    &p.descriptor.source,
+                    p.descriptor.req_ordinal,
+                    p.descriptor.check_ordinal,
+                )
+            }),
         };
         let Some(entry) = entry else { continue };
 
@@ -543,6 +606,29 @@ fn build_plan_files(processed: &[ProcessedCheck]) -> HashMap<PathBuf, plan_file:
         .collect()
 }
 
+/// Look up an existing plan's entry by raw position
+/// `(source, req_ordinal, check_ordinal)` alone — unlike
+/// [`plan_file::PlanFile::lookup`], this does **not** require the stored
+/// `prompt_xxh64` to still match the check's current content. See
+/// [`build_plan_files`]'s docs: the point of this lookup is to preserve
+/// whatever was already there across a planning *failure*, stale or not —
+/// not to validate freshness (that's [`cached_entry`]'s job, for the reuse
+/// path).
+fn find_existing_entry(
+    plan: &plan_file::PlanFile,
+    source: &str,
+    req_ordinal: u32,
+    check_ordinal: u32,
+) -> Option<plan_file::PlanCheck> {
+    plan.requirements
+        .iter()
+        .find(|r| r.source == source && r.ordinal == req_ordinal)?
+        .checks
+        .iter()
+        .find(|c| c.ordinal == check_ordinal)
+        .cloned()
+}
+
 // ---------------------------------------------------------------------------
 // Output formatting
 // ---------------------------------------------------------------------------
@@ -567,6 +653,16 @@ fn line_for(p: &ProcessedCheck) -> String {
 
 fn format_error_line(requirement_title: &str, check_title: &str, message: &str) -> String {
     format!("error      {requirement_title} :: {check_title}: {message}")
+}
+
+/// The `N of M checks have truncated discovery` summary line, or `None` when
+/// `truncated_count == 0` — the ticket: always shown "when N > 0", including
+/// on a run that only reused entries (a truncated call is excluded from
+/// freshness, so its owning entry is `reused`, not replanned, every time —
+/// see the module docs).
+fn summary_line(truncated_count: usize, total_checks: usize) -> Option<String> {
+    (truncated_count > 0)
+        .then(|| format!("{truncated_count} of {total_checks} checks have truncated discovery"))
 }
 
 /// The wire-string spelling of each [`AgentReason`], matching

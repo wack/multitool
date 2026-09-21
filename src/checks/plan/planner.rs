@@ -62,15 +62,13 @@ use thiserror::Error;
 
 use crate::checks::config::JevConfig;
 use crate::checks::executor::{
-    AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, ToolCall,
+    AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, ReadOnlyTool, ToolCall,
 };
 use crate::checks::jev::client::JevClient;
 use crate::checks::jev::error::JevError;
-use crate::checks::jev::plan_file::{
-    self, AgentReason, Decider, JevCalibration, PlanCall, Reading,
-};
+use crate::checks::jev::plan_file::{self, AgentReason, Decider, JevCalibration, PlanCall};
 use crate::checks::jev::replay;
-use crate::checks::jev::verify::{self, Agreement, ChoiceOutcome, Evidence, Expected, JevDecision};
+use crate::checks::jev::verify::{self, Agreement, Evidence, Expected, JevDecision};
 use crate::checks::model::{Check, CheckId};
 use crate::checks::sandbox::{Sandbox, SandboxLease};
 
@@ -329,21 +327,11 @@ pub async fn entry_from_outcome(
         ));
     }
 
-    let replayed = replay_captured_calls(&outcome.tool_calls, ctx.sandbox_root, ctx.root).await;
-
-    if replayed.is_empty() {
-        // Every captured call was dropped for escaping the sandbox root —
-        // defensive only: the live jail already rejects an out-of-sandbox
-        // path at call time, so this is unreachable in practice. Treated
-        // like zero calls rather than panicking.
-        return Ok(no_calibration_entry(
-            check,
-            &prompt_hash,
-            &report,
-            AgentReason::NoToolCalls,
-            vec![],
-        ));
-    }
+    // `?`: any call that fails to relativize aborts this check's planning
+    // entirely rather than silently dropping the call — see
+    // `replay_captured_calls`'s docs on why a partial evidence set is the
+    // dangerous direction here.
+    let replayed = replay_captured_calls(&outcome.tool_calls, ctx.sandbox_root, ctx.root).await?;
 
     if replayed.iter().any(|r| r.missing || r.truncated) {
         // The plan cannot guard against a moved/deleted file or a Grep/Glob
@@ -456,30 +444,79 @@ fn no_calibration_entry(
 }
 
 /// Relativize every captured call against `sandbox_root`, then replay it
-/// in-host against `root`. A call whose relativized path escapes
-/// `sandbox_root` is dropped (logged at `warn`) rather than failing the
-/// whole check — defensive only, see [`entry_from_outcome`]'s docs.
+/// in-host against `root`.
+///
+/// A call that fails to relativize (its path escapes `sandbox_root`, or its
+/// input isn't shaped the way the tool always produces it) is **not**
+/// dropped — that used to be this function's behavior, and it was a bug: a
+/// successfully captured call can only fail to relativize if something is
+/// genuinely wrong (the live jail already rejects an out-of-sandbox path at
+/// call time — see `crate::checks::executor::jail::Jailed` — and an errored
+/// call is never captured in the first place, per
+/// `crate::checks::executor::tool_capture`'s docs), so silently dropping it
+/// would freeze an *incomplete* evidence set under the check's title as if
+/// it were complete. That is the dangerous direction for this engine: Jev
+/// (or a future re-planning pass) would trust a plan that looks fine but
+/// omits evidence a full run actually depended on. Failing the whole check
+/// instead means it is reported `error` and no entry — complete or
+/// incomplete — is ever written for it (see
+/// `crate::checks::plan::build_plan_files`, which also preserves whatever
+/// entry already existed rather than deleting it on this kind of failure).
 async fn replay_captured_calls(
     calls: &[ToolCall],
     sandbox_root: &Path,
     root: &Path,
-) -> Vec<replay::ReplayedCall> {
+) -> Result<Vec<replay::ReplayedCall>> {
     let mut out = Vec::with_capacity(calls.len());
     for call in calls {
-        let relative = match plan_file::relativize(call.tool, &call.input, sandbox_root) {
-            Ok(v) => v,
-            Err(err) => {
-                tracing::warn!(
-                    ?err,
-                    tool = ?call.tool,
-                    "dropping a captured tool call that does not relativize against the sandbox root",
-                );
-                continue;
-            }
-        };
+        let relative = plan_file::relativize(call.tool, &call.input, sandbox_root)
+            .map_err(|err| escaped_call_report(call.tool, &err))?;
         out.push(replay::replay_call(call.tool, &relative, root).await);
     }
-    out
+    Ok(out)
+}
+
+/// Build the per-check diagnostic for a captured call that failed to
+/// relativize (see [`replay_captured_calls`]'s docs on why this aborts the
+/// check rather than dropping the call). Always names the tool; for a
+/// [`plan_file::PlanError::PathEscape`], also names the offending path —
+/// but **never** as an absolute host path (a sandbox clone lives under a
+/// process-specific temp directory, and the escaping path may itself be an
+/// arbitrary absolute host path, e.g. `/etc/passwd`): [`sanitize_escaped_path`]
+/// renders it root-relative when the raw string happens to still share
+/// `sandbox_root`'s own prefix (the common case — an in-bounds-looking path
+/// that only escapes after `..` resolution), and a generic, non-specific
+/// placeholder otherwise.
+fn escaped_call_report(tool: ReadOnlyTool, err: &plan_file::PlanError) -> miette::Report {
+    match err {
+        plan_file::PlanError::PathEscape { path, root } => {
+            let sanitized = sanitize_escaped_path(path, root);
+            miette!(
+                "a captured `{tool:?}` call's path escaped the repository root ({sanitized}); \
+                 this should be unreachable (the sandbox jail rejects an escape at call time) — \
+                 treating this check as unplannable rather than freezing incomplete evidence"
+            )
+        }
+        other => miette!(
+            "a captured `{tool:?}` call could not be relativized against the repository root \
+             ({other}); treating this check as unplannable rather than freezing incomplete evidence"
+        ),
+    }
+}
+
+/// Render a [`plan_file::PlanError::PathEscape`]'s raw `path` safely for a
+/// diagnostic — see [`escaped_call_report`]. Strips `root`'s own string form
+/// as a literal prefix when `path` happens to start with it (the escape is
+/// then some interior `..` climbing back out, so the stripped suffix is
+/// root-relative and safe to print); otherwise `path` shares nothing with
+/// `root` at all (e.g. an unrelated absolute host path), and this returns a
+/// placeholder that names no host-specific detail.
+fn sanitize_escaped_path(path: &str, root: &Path) -> String {
+    let root_str = root.to_string_lossy();
+    match path.strip_prefix(root_str.as_ref()) {
+        Some(rest) => format!("<repository root>{rest}"),
+        None => "<a path outside the repository root>".to_string(),
+    }
 }
 
 /// Ask Jev to reproduce the agent's verdict over the replayed evidence, then
@@ -563,7 +600,12 @@ fn decide_from_calibration(
     };
 
     let agreement_main = verify::agreement(expected, main_noul, threshold);
-    let reading = reading_from_choice_or_noul(choice, main_noul, threshold);
+    // Never fabricated: `None` when Jev's Choice answer was missing or
+    // malformed (`verify::ChoiceOutcome` — "Choice never gates" — allows
+    // this), recorded as `None` (the field is omitted from the rendered
+    // plan entirely) rather than a synthesized stand-in for what Jev didn't
+    // actually say (MULTI-1824 review).
+    let reading = choice.map(|c| c.reading);
 
     let control_noul = match control {
         JevDecision::Satisfied { noul, .. } | JevDecision::NotVerified { noul, .. } => Some(*noul),
@@ -602,34 +644,6 @@ fn decide_from_calibration(
     }
 }
 
-/// The record-only [`Reading`] to store alongside a calibration: the actual
-/// Choice answer paired with the main verdict when it parsed
-/// (`verify::ChoiceOutcome` — "Choice never gates", see that module's docs,
-/// so it may legitimately be missing or malformed), falling back to a
-/// reading derived deterministically from `noul` alone when it didn't.
-/// [`JevCalibration::reading`] is a required field, so *something*
-/// deterministic must always be recordable.
-fn reading_from_choice_or_noul(
-    choice: Option<ChoiceOutcome>,
-    noul: f64,
-    threshold: f64,
-) -> Reading {
-    choice
-        .map(|c| c.reading)
-        .unwrap_or_else(|| reading_from_noul(noul, threshold))
-}
-
-fn reading_from_noul(noul: f64, threshold: f64) -> Reading {
-    let low = 1.0 - threshold;
-    if noul >= threshold {
-        Reading::Satisfied
-    } else if noul <= low {
-        Reading::Violated
-    } else {
-        Reading::Insufficient
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -642,6 +656,7 @@ mod tests {
     use crate::checks::executor::{FakeExecutor, ReadOnlyTool as Tool};
     use crate::checks::jev::error::TYPESAFE_API_KEY_VAR;
     use crate::checks::jev::plan_file::Reading as R;
+    use crate::checks::jev::verify::ChoiceOutcome;
     use crate::checks::model::Check;
     use crate::checks::sandbox::RecordingSandbox;
 
@@ -763,24 +778,34 @@ mod tests {
         assert!(jev.is_none(), "no complete (noul, control_noul) pair");
     }
 
+    /// MULTI-1824 review: a plan must never claim Jev said something it
+    /// didn't — when the record-only Choice answer is missing (both
+    /// `satisfied`/`not_verified` helpers script `choice: None`), the
+    /// recorded `reading` must be `None`, never a noul-band-derived
+    /// stand-in.
     #[test]
-    fn reading_falls_back_to_noul_band_when_choice_is_missing() {
-        assert_eq!(reading_from_choice_or_noul(None, 0.9, 0.75), R::Satisfied);
-        assert_eq!(reading_from_choice_or_noul(None, 0.1, 0.75), R::Violated);
+    fn reading_is_none_when_the_choice_answer_is_missing() {
+        let (_, jev) =
+            decide_from_calibration(Expected::Pass, 0.75, &satisfied(0.9), &not_verified(0.1));
         assert_eq!(
-            reading_from_choice_or_noul(None, 0.5, 0.75),
-            R::Insufficient
+            jev.unwrap().reading,
+            None,
+            "never fabricate a reading Jev didn't actually give"
         );
     }
 
     #[test]
-    fn reading_prefers_the_actual_choice_answer_when_present() {
-        let choice = Some(ChoiceOutcome {
-            reading: R::Violated,
-            confidence: 0.9,
-        });
-        // noul alone would say Satisfied, but the real Choice answer wins.
-        assert_eq!(reading_from_choice_or_noul(choice, 0.9, 0.75), R::Violated);
+    fn reading_records_the_actual_choice_answer_when_present() {
+        let main = JevDecision::Satisfied {
+            noul: 0.9,
+            model: "jev-1.13.0".to_string(),
+            choice: Some(ChoiceOutcome {
+                reading: R::Violated,
+                confidence: 0.9,
+            }),
+        };
+        let (_, jev) = decide_from_calibration(Expected::Pass, 0.75, &main, &not_verified(0.1));
+        assert_eq!(jev.unwrap().reading, Some(R::Violated));
     }
 
     // -- entry_from_outcome: no-tool-calls / truncated short circuits ------
@@ -864,6 +889,68 @@ mod tests {
         assert!(planned.jev.is_none());
         assert_eq!(planned.calls.len(), 1);
         assert!(matches!(planned.calls[0], PlanCall::Truncated { .. }));
+    }
+
+    // -- entry_from_outcome: an escaping captured call errors the check ----
+
+    /// MULTI-1824 review (blocker): a captured call that fails to
+    /// relativize must error the whole check, never be silently dropped —
+    /// dropping it would freeze an incomplete evidence set under the
+    /// check's title as if it were complete, which is the dangerous
+    /// direction for this engine.
+    #[tokio::test]
+    async fn a_captured_call_that_escapes_the_sandbox_root_errors_the_check_not_drops_the_call() {
+        let dir = TempDir::new().unwrap();
+        let client = JevClient::new("https://unused.invalid").unwrap();
+        let cfg = jev_config(0.75, "https://unused.invalid");
+        let calls = vec![ToolCall {
+            tool: Tool::Read,
+            input: json!({"file_path": "/etc/passwd"}),
+        }];
+        let outcome = outcome_with_calls(true, calls);
+        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+
+        let err = entry_from_outcome(&check(), &outcome, &ec)
+            .await
+            .expect_err("an escaping captured call must error the check, not drop it");
+        let message = err.to_string();
+        assert!(message.contains("Read"), "names the tool: {message}");
+        assert!(
+            !message.contains(dir.path().to_string_lossy().as_ref()),
+            "must never leak the sandbox's absolute host path: {message}"
+        );
+    }
+
+    /// The sanitized-but-informative half of the same fix: when the
+    /// escaping path happens to still share the sandbox root's own prefix
+    /// (a `..` climb rather than a wholly unrelated absolute path), the
+    /// diagnostic renders it root-relative — never the raw absolute host
+    /// path.
+    #[tokio::test]
+    async fn an_escape_sharing_the_root_prefix_renders_root_relative_not_absolute() {
+        let dir = TempDir::new().unwrap();
+        let client = JevClient::new("https://unused.invalid").unwrap();
+        let cfg = jev_config(0.75, "https://unused.invalid");
+        let escaping = format!("{}/../outside.txt", dir.path().display());
+        let calls = vec![ToolCall {
+            tool: Tool::Read,
+            input: json!({"file_path": escaping}),
+        }];
+        let outcome = outcome_with_calls(true, calls);
+        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+
+        let err = entry_from_outcome(&check(), &outcome, &ec)
+            .await
+            .expect_err("an escaping captured call must error the check");
+        let message = err.to_string();
+        assert!(
+            message.contains("<repository root>"),
+            "root-relative rendering: {message}"
+        );
+        assert!(
+            !message.contains(dir.path().to_string_lossy().as_ref()),
+            "must never leak the sandbox's absolute host path: {message}"
+        );
     }
 
     // -- entry_from_outcome: full calibration path (wiremock Jev) -----------
