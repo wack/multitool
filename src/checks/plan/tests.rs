@@ -98,7 +98,7 @@ async fn first_run_plans_every_check_second_run_reuses_all() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    let report = run_with_planner(&term, &reqs, fake1.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs, fake1.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -116,7 +116,7 @@ async fn first_run_plans_every_check_second_run_reuses_all() {
     // planner is invoked zero times.
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new());
-    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report2.exit_code, 0);
@@ -139,7 +139,7 @@ async fn editing_a_read_file_replans_only_the_affected_check() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -149,7 +149,7 @@ async fn editing_a_read_file_replans_only_the_affected_check() {
     let reqs2 = discover(dir.path()).await.unwrap();
     let replanned_a = planned_for(dir.path(), &reqs2[0].checks[0], "src/a.rs").await;
     let fake2 = Arc::new(FakePlanner::new().with_planned(0, replanned_a));
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -173,7 +173,7 @@ async fn editing_a_checks_prompt_replans_it() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -189,7 +189,7 @@ async fn editing_a_checks_prompt_replans_it() {
     assert_ne!(reqs2[0].checks[1].prompt, reqs[0].checks[1].prompt);
     let replanned_b = planned_for(dir.path(), &reqs2[0].checks[1], "src/b.rs").await;
     let fake2 = Arc::new(FakePlanner::new().with_planned(1, replanned_b));
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -213,7 +213,7 @@ async fn force_replans_every_check_even_when_fresh() {
             .with_planned(1, planned_b.clone()),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -223,7 +223,7 @@ async fn force_replans_every_check_even_when_fresh() {
             .with_planned(0, planned_a)
             .with_planned(1, planned_b),
     );
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -272,7 +272,7 @@ async fn truncated_discovery_entry_is_reused_not_replanned() {
 
     let fake1 = Arc::new(FakePlanner::new().with_planned(0, planned));
     let term = plain_terminal();
-    let report = run_with_planner(&term, &reqs, fake1.clone(), 1, false)
+    let report = run_with_planner(&term, &reqs, fake1.clone(), 1, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -284,7 +284,7 @@ async fn truncated_discovery_entry_is_reused_not_replanned() {
 
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new());
-    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 1, false)
+    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 1, false, None)
         .await
         .unwrap();
     assert_eq!(report2.exit_code, 0);
@@ -393,7 +393,7 @@ async fn requirements_file_without_a_manifest_is_refused_other_files_still_plann
     let planned_ok = planned_for(good_req.root.as_path(), &good_req.checks[0], "src/ok.rs").await;
     let fake = Arc::new(FakePlanner::new().with_planned(0, planned_ok));
     let term = plain_terminal();
-    let report = run_with_planner(&term, &reqs, fake.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs, fake.clone(), 2, false, None)
         .await
         .unwrap();
 
@@ -443,7 +443,7 @@ async fn a_planning_error_preserves_the_stale_entry_instead_of_deleting_it() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
     let before = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
@@ -454,7 +454,7 @@ async fn a_planning_error_preserves_the_stale_entry_instead_of_deleting_it() {
     std::fs::write(dir.path().join("src/a.rs"), "fn a() { /* changed */ }\n").unwrap();
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new().with_error(0, "transient Jev failure"));
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
 
@@ -491,7 +491,7 @@ async fn a_planning_error_under_force_still_preserves_the_old_entry() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -506,7 +506,7 @@ async fn a_planning_error_under_force_still_preserves_the_old_entry() {
                 planned_for(dir.path(), &reqs2[0].checks[1], "src/b.rs").await,
             ),
     );
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 1);
@@ -536,7 +536,7 @@ async fn a_check_removed_from_checksmd_is_dropped_from_the_plan() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -550,7 +550,7 @@ async fn a_check_removed_from_checksmd_is_dropped_from_the_plan() {
     let reqs2 = discover(dir.path()).await.unwrap();
     assert_eq!(reqs2[0].checks.len(), 1);
     let fake2 = Arc::new(FakePlanner::new());
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -584,7 +584,7 @@ async fn aborting_run_leaves_existing_plan_files_byte_identical() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
     let before = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
@@ -594,7 +594,7 @@ async fn aborting_run_leaves_existing_plan_files_byte_identical() {
     std::fs::write(dir.path().join("src/a.rs"), "fn a() { /* changed */ }\n").unwrap();
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new().with_abort(0, "missing key"));
-    let err = run_with_planner(&term, &reqs2, fake2, 2, false)
+    let err = run_with_planner(&term, &reqs2, fake2, 2, false, None)
         .await
         .expect_err("an abort-worthy error must fail the whole run");
     assert!(err.downcast_ref::<planner::AbortPlanRun>().is_some());
@@ -640,7 +640,7 @@ async fn planning_from_repo_root_or_a_subdirectory_is_byte_identical() {
     )
     .await;
     let fake_root = Arc::new(FakePlanner::new().with_planned(0, planned.clone()));
-    run_with_planner(&term, &reqs_root, fake_root, 1, false)
+    run_with_planner(&term, &reqs_root, fake_root, 1, false, None)
         .await
         .unwrap();
     let from_root = std::fs::read_to_string(&plan_path).unwrap();
@@ -651,7 +651,7 @@ async fn planning_from_repo_root_or_a_subdirectory_is_byte_identical() {
         .await
         .unwrap();
     let fake_sub = Arc::new(FakePlanner::new().with_planned(0, planned));
-    run_with_planner(&term, &reqs_sub, fake_sub, 1, false)
+    run_with_planner(&term, &reqs_sub, fake_sub, 1, false, None)
         .await
         .unwrap();
     let from_sub = std::fs::read_to_string(&plan_path).unwrap();
@@ -678,7 +678,7 @@ async fn abort_worthy_planner_error_aborts_the_run_and_writes_nothing() {
             ),
     );
     let term = plain_terminal();
-    let err = run_with_planner(&term, &reqs, fake, 2, false)
+    let err = run_with_planner(&term, &reqs, fake, 2, false, None)
         .await
         .expect_err("an abort-worthy Jev error must fail the whole run");
     assert!(err.downcast_ref::<planner::AbortPlanRun>().is_some());
@@ -775,14 +775,14 @@ async fn reused_entry_makes_zero_jev_calls() {
         Arc::new(AgentPlanner::new(executor.clone(), sandbox, client, cfg, 3));
     let term = plain_terminal();
 
-    with_api_key(|| run_with_planner(&term, &reqs, real_planner.clone(), 2, false))
+    with_api_key(|| run_with_planner(&term, &reqs, real_planner.clone(), 2, false, None))
         .await
         .unwrap();
     let after_first_run = server.received_requests().await.unwrap().len();
     assert!(after_first_run > 0, "planning must call Jev");
 
     let reqs2 = discover(dir.path()).await.unwrap();
-    with_api_key(|| run_with_planner(&term, &reqs2, real_planner, 2, false))
+    with_api_key(|| run_with_planner(&term, &reqs2, real_planner, 2, false, None))
         .await
         .unwrap();
     let after_second_run = server.received_requests().await.unwrap().len();

@@ -63,7 +63,7 @@ use thiserror::Error;
 use crate::checks::config::JevConfig;
 use crate::checks::executor::PlanIdentity;
 use crate::checks::executor::{
-    AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, ReadOnlyTool, ToolCall,
+    AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, ProgressSink, ReadOnlyTool, ToolCall,
 };
 use crate::checks::jev::client::JevClient;
 use crate::checks::jev::error::JevError;
@@ -71,6 +71,7 @@ use crate::checks::jev::plan_file::{self, AgentReason, Decider, JevCalibration, 
 use crate::checks::jev::replay;
 use crate::checks::jev::verify::{self, Agreement, Evidence, Expected, JevDecision};
 use crate::checks::model::{Check, CheckId, RootSource};
+use crate::checks::plan::presenter::{PlanEventSink, PlanUiEvent};
 use crate::checks::sandbox::{Sandbox, SandboxLease};
 
 #[cfg(test)]
@@ -81,9 +82,10 @@ pub mod fake;
 /// title) to run the agent and build the Jev verification request.
 #[derive(Debug)]
 pub struct PlanRequest {
-    /// Run-unique id, mirroring [`AgentRunRequest::check_id`] — used only for
-    /// session-id namespacing (see [`AgentPlanner::run_agent`]); `multi plan`
-    /// has no live UI yet (MULTI-1829), so nothing routes progress by it.
+    /// Run-unique id, mirroring [`AgentRunRequest::check_id`] — used for
+    /// session-id namespacing (see [`AgentPlanner::run_agent`]) and, when
+    /// [`Self::sink`] is `Some` (MULTI-1829), as this check's row id in the
+    /// live presenter's tree.
     pub check_id: CheckId,
     pub check: Check,
     /// The owning requirement's title, sent to Jev as `state.requirement.title`.
@@ -118,6 +120,12 @@ pub struct PlanRequest {
     /// [`RootSource::Manifest`] in practice, but carried explicitly rather
     /// than assumed at the point it's used.
     pub root_source: RootSource,
+    /// Where [`AgentPlanner::plan_check`] reports its own live-UI milestones
+    /// (MULTI-1829): `Planning`/`Retrying`/`Progress` around the agent run,
+    /// and `Calibrating` before asking Jev. `None` whenever planning has no
+    /// live UI — every test in this module and in `plan::tests`, and
+    /// `plan::process_check`'s own callers when there's no presenter.
+    pub sink: Option<PlanEventSink>,
 }
 
 /// One check's planned entry — everything
@@ -237,11 +245,49 @@ impl AgentPlanner {
     /// actually read here — it's still populated accurately from `req`,
     /// rather than a placeholder, so every `AgentRunRequest` this crate
     /// builds carries meaningful plan identity regardless of caller.
+    /// When `req.sink` is `Some` (MULTI-1829), also drives the live UI for
+    /// this check's `Planning`/`Retrying` transitions and forwards real
+    /// in-flight [`crate::checks::executor::AgentProgress`], the exact same
+    /// way `crate::checks::execution::run_one` does for `multi check`: one
+    /// [`ProgressSink`]/receiver pair per attempt, a forwarder task that
+    /// fire-and-forgets each update as a [`PlanUiEvent::Progress`], wrapped in
+    /// an [`AbortOnDrop`] guard so it can never delay or block settlement —
+    /// it is deliberately never awaited on its own.
     async fn run_agent(&self, req: &PlanRequest) -> Result<(PathBuf, AgentOutcome)> {
         let mut attempt: u32 = 1;
         loop {
+            if let Some(sink) = &req.sink {
+                sink.send(PlanUiEvent::Planning {
+                    id: req.check_id,
+                    attempt,
+                })
+                .await;
+            }
+
             let lease = SandboxLease::new(self.sandbox.clone(), req.root.clone());
             let sandbox_root = lease.acquire().await?.to_path_buf();
+
+            let (progress, _forwarder_guard) = match &req.sink {
+                Some(sink) => {
+                    let (progress, mut updates) = ProgressSink::channel();
+                    let sink = sink.clone();
+                    let check_id = req.check_id;
+                    let forwarder = tokio::spawn(async move {
+                        while let Some(update) = updates.recv().await {
+                            sink.send(PlanUiEvent::Progress {
+                                id: check_id,
+                                attempt,
+                                turn: update.turn,
+                                max_turns: update.max_turns,
+                                activity: update.activity,
+                            })
+                            .await;
+                        }
+                    });
+                    (Some(progress), Some(AbortOnDrop(forwarder)))
+                }
+                None => (None, None),
+            };
 
             let request = AgentRunRequest {
                 check_id: req.check_id,
@@ -250,10 +296,7 @@ impl AgentPlanner {
                 sandbox: lease,
                 declared_in: req.declared_in.clone(),
                 attempt,
-                // `multi plan` has no live UI yet (MULTI-1829): progress is
-                // display-only and this pipeline has no presenter to forward
-                // it to.
-                progress: None,
+                progress,
                 plan: PlanIdentity {
                     dir: req.plan_dir.clone(),
                     source: req.plan_source.clone(),
@@ -279,8 +322,29 @@ impl AgentPlanner {
                     self.max_attempts,
                 ));
             }
+            if let Some(sink) = &req.sink {
+                sink.send(PlanUiEvent::Retrying {
+                    id: req.check_id,
+                    attempt,
+                })
+                .await;
+            }
             attempt += 1;
         }
+    }
+}
+
+/// Aborts the wrapped task when dropped — the plan-side twin of
+/// `crate::checks::execution::AbortOnDrop`, kept as its own small copy rather
+/// than widened/reused across the `execution.rs` boundary this ticket stays
+/// out of (see this module's own docs on why `run_agent`'s retry loop is
+/// replicated rather than shared). Ensures the progress-forwarder task
+/// (MULTI-1829) never outlives the attempt it belongs to.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
@@ -288,6 +352,19 @@ impl AgentPlanner {
 impl Planner for AgentPlanner {
     async fn plan_check(&self, req: PlanRequest) -> Result<PlannedCheck> {
         let (sandbox_root, outcome) = self.run_agent(&req).await?;
+        // MULTI-1829: about to calibrate against Jev — but only when there's
+        // actually evidence to calibrate over (cheap, already-available
+        // check; `entry_from_outcome`'s own, more complete gate — zero tool
+        // calls *or* any call that replays as missing/truncated — also skips
+        // calibration for a truncated-discovery outcome this cannot detect
+        // without replaying, an acceptable, narrow display-only gap since a
+        // truncated check settles almost immediately after this fires).
+        if let Some(sink) = &req.sink
+            && !outcome.tool_calls.is_empty()
+        {
+            sink.send(PlanUiEvent::Calibrating { id: req.check_id })
+                .await;
+        }
         // Owned so `EntryContext::declared_in` can borrow a `&str` that
         // outlives the `to_string_lossy()` temporary.
         let declared_in = req.declared_in.to_string_lossy().into_owned();
@@ -1210,6 +1287,7 @@ mod tests {
             req_ordinal: 0,
             check_ordinal: 0,
             root_source: RootSource::Manifest,
+            sink: None,
         };
 
         let via_plan_check = with_api_key(|| planner.plan_check(req)).await.unwrap();
@@ -1249,6 +1327,7 @@ mod tests {
             req_ordinal: 0,
             check_ordinal: 0,
             root_source: RootSource::Manifest,
+            sink: None,
         };
 
         let err = planner.plan_check(req).await.unwrap_err();
@@ -1288,6 +1367,7 @@ mod tests {
             req_ordinal: 0,
             check_ordinal: 0,
             root_source: RootSource::Manifest,
+            sink: None,
         };
 
         let planned = with_api_key(|| planner.plan_check(req)).await.unwrap();
