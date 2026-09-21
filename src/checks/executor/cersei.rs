@@ -314,6 +314,10 @@ impl CheckExecutor for CerseiExecutor {
                 error: None,
                 trace_jsonl: None,
                 tool_calls: tool_calls.finish(),
+                // This executor always runs the agent — `decided_by` is
+                // always its default (`DecidedBy::Agent`); only
+                // `JevExecutor` ever sets `Cached`/`Jev`.
+                ..Default::default()
             },
             Ok(Err(err)) => {
                 let reported = verdict.is_some();
@@ -326,6 +330,7 @@ impl CheckExecutor for CerseiExecutor {
                     error: (!reported).then(|| err.to_string()),
                     trace_jsonl: None,
                     tool_calls: tool_calls.finish(),
+                    ..Default::default()
                 }
             }
             Err(_elapsed) => AgentOutcome {
@@ -336,6 +341,7 @@ impl CheckExecutor for CerseiExecutor {
                 error: Some(format!("agent timed out after {:?}", self.timeout)),
                 trace_jsonl: None,
                 tool_calls: tool_calls.finish(),
+                ..Default::default()
             },
         };
 

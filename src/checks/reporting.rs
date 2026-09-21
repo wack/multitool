@@ -27,6 +27,8 @@ use miette::Result;
 use tokio::sync::oneshot;
 
 use crate::Terminal;
+#[cfg(feature = "jev")]
+use crate::checks::messages::AbortRun;
 use crate::checks::messages::{CheckCompleted, DiscoveryFailed, ExecutionComplete};
 use crate::checks::model::{CheckId, CheckOutcome, RequirementOutcome};
 
@@ -152,6 +154,25 @@ impl Message<DiscoveryFailed> for ReportingActor {
     }
 }
 
+/// MULTI-1825, `--features jev` only: mirrors [`Message<DiscoveryFailed>`]
+/// exactly — a check's executor hit an unrecoverable Jev failure, so the
+/// whole run aborts with that diagnostic rather than producing a partial
+/// report. `try_finalize`'s idempotence (`self.result.take()`) means
+/// whichever of an `AbortRun` or a later, ordinary finalization arrives
+/// first wins; once this fires, every subsequent `CheckCompleted` this
+/// actor still receives from in-flight checks is folded into `accum` and
+/// simply never read.
+#[cfg(feature = "jev")]
+impl Message<AbortRun> for ReportingActor {
+    type Reply = ();
+
+    async fn handle(&mut self, msg: AbortRun, _ctx: &mut Context<Self, ()>) -> Self::Reply {
+        if let Some(tx) = self.result.take() {
+            let _ = tx.send(Err(msg.report));
+        }
+    }
+}
+
 /// Render `outcomes` and return the exit code (0 = all satisfied, 1 = any not).
 pub fn report(terminal: &Terminal, outcomes: &[RequirementOutcome]) -> Result<i32> {
     if outcomes.is_empty() {
@@ -228,7 +249,7 @@ fn format_failing_check(check: &CheckOutcome, color: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checks::model::{RequirementOutcome, Verdict};
+    use crate::checks::model::{DecidedBy, RequirementOutcome, Verdict};
     use std::path::PathBuf;
 
     fn outcome(title: &str, satisfied: bool, checks: Vec<CheckOutcome>) -> RequirementOutcome {
@@ -247,6 +268,7 @@ mod tests {
             title: "c".into(),
             verdict: Verdict::Failed,
             evidence: Some("bad".into()),
+            decided_by: DecidedBy::Agent,
         };
         let line = format_failing_check(&failing, false);
         assert!(line.contains("bad"));

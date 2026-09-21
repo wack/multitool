@@ -41,6 +41,13 @@ pub struct CheckSubcommand {
     /// Overrides `checks.trace_archive` from env/file.
     #[arg(long, value_name = "PATH")]
     trace_archive: Option<PathBuf>,
+
+    /// Skip the freshness cache and always consult Jev, even when a check's
+    /// frozen evidence replays byte-identical to its plan (jev builds only:
+    /// this flag does not exist in a default-feature build's clap surface).
+    #[cfg(feature = "jev")]
+    #[arg(long)]
+    no_cache: bool,
 }
 
 impl CheckSubcommand {
@@ -59,5 +66,21 @@ impl CheckSubcommand {
             self.concurrency.map(NonZeroUsize::get),
             self.trace_archive.clone(),
         )
+    }
+
+    /// Whether `--no-cache` was passed (jev builds only). Always `false` in
+    /// a default-feature build, where the flag doesn't exist in the clap
+    /// surface at all — this getter still exists there (rather than being
+    /// `#[cfg(feature = "jev")]` itself) so `crate::checks::run`'s call site
+    /// stays identical across both feature sets.
+    #[cfg(feature = "jev")]
+    pub fn no_cache(&self) -> bool {
+        self.no_cache
+    }
+
+    /// See the `#[cfg(feature = "jev")]` overload's docs.
+    #[cfg(not(feature = "jev"))]
+    pub fn no_cache(&self) -> bool {
+        false
     }
 }

@@ -434,7 +434,7 @@ fn leaf_glyph(state: &CheckState, frame: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checks::model::CheckOutcome;
+    use crate::checks::model::{CheckOutcome, DecidedBy};
     use crate::checks::reporting::{failing_check_text as report_text, format_requirement_plain};
 
     fn outcome(title: &str, satisfied: bool, checks: Vec<CheckOutcome>) -> RequirementOutcome {
@@ -455,6 +455,7 @@ mod tests {
             title: "c".into(),
             verdict: Verdict::Failed,
             evidence: Some("nope".into()),
+            decided_by: DecidedBy::Agent,
         };
         let out = outcome("R", false, vec![failing.clone()]);
 
@@ -551,6 +552,7 @@ mod tests {
             title: "c".into(),
             verdict: Verdict::Failed,
             evidence: Some(evidence.into()),
+            decided_by: DecidedBy::Agent,
         };
         let out = outcome("R", false, vec![failing]);
 

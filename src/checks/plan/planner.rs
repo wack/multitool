@@ -61,6 +61,7 @@ use miette::{Diagnostic, Result, miette};
 use thiserror::Error;
 
 use crate::checks::config::JevConfig;
+use crate::checks::executor::PlanIdentity;
 use crate::checks::executor::{
     AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, ReadOnlyTool, ToolCall,
 };
@@ -69,7 +70,7 @@ use crate::checks::jev::error::JevError;
 use crate::checks::jev::plan_file::{self, AgentReason, Decider, JevCalibration, PlanCall};
 use crate::checks::jev::replay;
 use crate::checks::jev::verify::{self, Agreement, Evidence, Expected, JevDecision};
-use crate::checks::model::{Check, CheckId};
+use crate::checks::model::{Check, CheckId, RootSource};
 use crate::checks::sandbox::{Sandbox, SandboxLease};
 
 #[cfg(test)]
@@ -96,6 +97,27 @@ pub struct PlanRequest {
     /// unsandboxed source directory both the agent's sandbox and the in-host
     /// replay are rooted at.
     pub root: PathBuf,
+    /// The directory `.check-plan.toml` lives beside — see
+    /// [`crate::checks::model::plan_dir_and_source`]. Populates
+    /// [`AgentRunRequest::plan`] (MULTI-1825), which this planner's own
+    /// executor never reads (see [`AgentPlanner::run_agent`]'s docs) but
+    /// which keeps every `AgentRunRequest` this crate ever builds carrying
+    /// accurate plan identity, not a placeholder.
+    pub plan_dir: PathBuf,
+    /// The declaring file's name (e.g. `"CHECKS.md"`).
+    pub plan_source: String,
+    /// This requirement's 0-based position within `plan_source`.
+    pub req_ordinal: u32,
+    /// This check's 0-based position within its requirement.
+    pub check_ordinal: u32,
+    /// How [`Self::root`] was determined (MULTI-1834). Every [`PlanRequest`]
+    /// reaching [`AgentPlanner::plan_check`] is for a check under a
+    /// manifest-derived root — `multi plan` refuses a
+    /// [`RootSource::ScanDirectory`] file's checks before ever building one
+    /// (see `crate::checks::plan`'s module docs) — so this is always
+    /// [`RootSource::Manifest`] in practice, but carried explicitly rather
+    /// than assumed at the point it's used.
+    pub root_source: RootSource,
 }
 
 /// One check's planned entry — everything
@@ -208,6 +230,13 @@ impl AgentPlanner {
     /// `Err` only when every attempt finished without a verdict — the
     /// ticket: "an agent that never reports a verdict after `max_attempts`
     /// ⇒ no plan entry, reported as `error`".
+    ///
+    /// `self.executor` (composed from
+    /// [`crate::checks::config::Resolved::build_agent_executor`]) is never a
+    /// `JevExecutor` (MULTI-1825), so [`AgentRunRequest::plan`] is never
+    /// actually read here — it's still populated accurately from `req`,
+    /// rather than a placeholder, so every `AgentRunRequest` this crate
+    /// builds carries meaningful plan identity regardless of caller.
     async fn run_agent(&self, req: &PlanRequest) -> Result<(PathBuf, AgentOutcome)> {
         let mut attempt: u32 = 1;
         loop {
@@ -225,6 +254,14 @@ impl AgentPlanner {
                 // display-only and this pipeline has no presenter to forward
                 // it to.
                 progress: None,
+                plan: PlanIdentity {
+                    dir: req.plan_dir.clone(),
+                    source: req.plan_source.clone(),
+                    req_ordinal: req.req_ordinal,
+                    check_ordinal: req.check_ordinal,
+                    requirement_title: req.requirement_title.clone(),
+                    root_source: req.root_source,
+                },
             };
 
             let outcome = self.executor.run_check(request).await?;
@@ -821,6 +858,7 @@ mod tests {
             error: None,
             trace_jsonl: None,
             tool_calls: calls,
+            ..Default::default()
         }
     }
 
@@ -1167,6 +1205,11 @@ mod tests {
             requirement_title: "R".to_string(),
             declared_in: PathBuf::from("CHECKS.md"),
             root: dir.path().to_path_buf(),
+            plan_dir: dir.path().to_path_buf(),
+            plan_source: "CHECKS.md".to_string(),
+            req_ordinal: 0,
+            check_ordinal: 0,
+            root_source: RootSource::Manifest,
         };
 
         let via_plan_check = with_api_key(|| planner.plan_check(req)).await.unwrap();
@@ -1201,6 +1244,11 @@ mod tests {
             requirement_title: "R".to_string(),
             declared_in: PathBuf::from("CHECKS.md"),
             root: dir.path().to_path_buf(),
+            plan_dir: dir.path().to_path_buf(),
+            plan_source: "CHECKS.md".to_string(),
+            req_ordinal: 0,
+            check_ordinal: 0,
+            root_source: RootSource::Manifest,
         };
 
         let err = planner.plan_check(req).await.unwrap_err();
@@ -1235,6 +1283,11 @@ mod tests {
             requirement_title: "R".to_string(),
             declared_in: PathBuf::from("CHECKS.md"),
             root: dir.path().to_path_buf(),
+            plan_dir: dir.path().to_path_buf(),
+            plan_source: "CHECKS.md".to_string(),
+            req_ordinal: 0,
+            check_ordinal: 0,
+            root_source: RootSource::Manifest,
         };
 
         let planned = with_api_key(|| planner.plan_check(req)).await.unwrap();

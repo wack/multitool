@@ -8,7 +8,8 @@
 //! Titles are **not** unique across the set — requirements and checks are
 //! grouped by the file that declares them, never keyed on their titles.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// A stable identifier for a check within a single `multi check` run.
 ///
@@ -105,6 +106,33 @@ pub struct CheckOutcome {
     /// Optional explanation: the agent's reported `evidence`, or a synthesized
     /// reason when the check errored.
     pub evidence: Option<String>,
+    /// Which decision engine settled this check (MULTI-1825): the reasoning
+    /// agent, a fresh cached verdict replayed from `.check-plan.toml`, or a
+    /// Jev call. Carried straight through from
+    /// [`crate::checks::executor::AgentOutcome::decided_by`] by
+    /// [`crate::checks::execution::reconcile`]. Default [`DecidedBy::Agent`]
+    /// (the only decider that exists in the default build). No default-build
+    /// reader yet — rendering it is MULTI-1827.
+    pub decided_by: DecidedBy,
+}
+
+/// Which decision engine settled a check (MULTI-1825). See
+/// [`CheckOutcome::decided_by`] and
+/// [`crate::checks::executor::AgentOutcome::decided_by`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DecidedBy {
+    /// The reasoning agent ran and reported a verdict — every check in the
+    /// default build, and any `--features jev` check the frozen plan
+    /// couldn't (or wouldn't) settle without one.
+    #[default]
+    Agent,
+    /// The plan's frozen evidence replayed byte-identical (`Freshness::Fresh`):
+    /// the stored verdict was reused with zero model calls. `--features jev`
+    /// only.
+    Cached,
+    /// The plan's evidence had changed but Jev, consulted over the replayed
+    /// evidence, still agreed with the stored verdict. `--features jev` only.
+    Jev,
 }
 
 impl CheckOutcome {
@@ -125,6 +153,57 @@ pub struct RequirementOutcome {
     pub satisfied: bool,
     /// The per-check outcomes, in declaration order.
     pub check_outcomes: Vec<CheckOutcome>,
+}
+
+// ---------------------------------------------------------------------------
+// Plan identity (MULTI-1825)
+// ---------------------------------------------------------------------------
+
+/// The `(dir, source)` pair identifying which `.check-plan.toml` covers a
+/// requirements file: `dir` is `filepath`'s parent directory and `source` is
+/// its file name — the exact key
+/// [`crate::checks::jev::plan_file::PlanRequirement::source`] stores and
+/// [`crate::checks::jev::plan_file::PlanFile::lookup`] matches against.
+/// `pub(crate)`, not `#[cfg(feature = "jev")]`: unconditional so `multi
+/// check`'s `stream_requirements` (populating every `CheckJob`'s plan
+/// identity, MULTI-1825) and `multi plan`'s `group_by_directory`
+/// (MULTI-1824, `--features jev` only) derive it through the exact same
+/// function — the two commands must agree byte-for-byte on where a given
+/// requirement's plan lives.
+pub(crate) fn plan_dir_and_source(filepath: &Path) -> (PathBuf, String) {
+    let dir = filepath
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let source = filepath
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| filepath.display().to_string());
+    (dir, source)
+}
+
+/// Derive each requirement's plan-identity `(dir, source, ordinal)` triple —
+/// see [`plan_dir_and_source`]. `ordinal` is this requirement's 0-based
+/// position among every requirement sharing the same `(dir, source)` pair,
+/// i.e. its position within its own declaring file — the exact
+/// `req_ordinal` [`crate::checks::jev::plan_file::PlanFile::lookup`] keys
+/// on. Shared by `multi check`'s `stream_requirements` and `multi plan`'s
+/// `group_by_directory` so both commands compute the identical ordinal for
+/// the identical requirement.
+pub(crate) fn requirement_plan_identities(
+    requirements: &[Requirement],
+) -> Vec<(PathBuf, String, u32)> {
+    let mut ordinals: HashMap<(PathBuf, String), u32> = HashMap::new();
+    requirements
+        .iter()
+        .map(|req| {
+            let (dir, source) = plan_dir_and_source(&req.filepath);
+            let counter = ordinals.entry((dir.clone(), source.clone())).or_insert(0);
+            let ordinal = *counter;
+            *counter += 1;
+            (dir, source, ordinal)
+        })
+        .collect()
 }
 
 impl RequirementOutcome {
@@ -155,11 +234,13 @@ mod tests {
             title: "a".into(),
             verdict: Verdict::Satisfied,
             evidence: None,
+            decided_by: DecidedBy::Agent,
         };
         let fail = CheckOutcome {
             title: "b".into(),
             verdict: Verdict::Failed,
             evidence: Some("nope".into()),
+            decided_by: DecidedBy::Agent,
         };
 
         let all_pass = RequirementOutcome::aggregate(

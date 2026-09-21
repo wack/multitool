@@ -276,7 +276,7 @@ pub(crate) fn null_backend() -> Box<dyn RenderBackend> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checks::model::Verdict;
+    use crate::checks::model::{DecidedBy, Verdict};
     use kameo::actor::Spawn;
     use std::sync::{Arc, Mutex};
 
@@ -312,6 +312,7 @@ mod tests {
                     title: "c".into(),
                     verdict: Verdict::Satisfied,
                     evidence: None,
+                    decided_by: DecidedBy::Agent,
                 },
             })
             .await
