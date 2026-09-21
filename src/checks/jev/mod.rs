@@ -13,12 +13,14 @@
 //! check` with Jev) build on.
 #![cfg(feature = "jev")]
 
-// No caller outside this module's own tests reaches `client`/`error`/`types`
-// yet: MULTI-1823 ("Build the Jev verification question from replayed
-// evidence") and MULTI-1825 ("Decide `multi check` with Jev under the `jev`
-// feature") are the tickets that wire this client into `multi check`. Until
-// one of them adds a real caller, nothing is re-exported at this module's top
-// level — add `pub use` here (and drop this comment) once something needs it.
+// No caller outside this module's own tests reaches `client`/`error`/`types`/
+// `plan_file` yet: MULTI-1822 ("Replay frozen tool calls in-host and classify
+// plan freshness") and MULTI-1824 (`multi plan`) are the tickets that wire
+// `plan_file`'s `PlanStore`/`PlanFile` into a real planner, same as
+// MULTI-1823/1825 do for `client`. Until one of them adds a real caller,
+// nothing from any of the four is re-exported at this module's top level —
+// add `pub use` here (and narrow this comment) once something needs it.
 mod client;
 mod error;
+mod plan_file;
 mod types;
