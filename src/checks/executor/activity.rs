@@ -57,14 +57,16 @@ const MAX_ACTIVITY_LEN: usize = 80;
 /// than a misleading or panicking one.
 ///
 /// Every primary argument — including Grep/Glob's pattern, which is
-/// frequently absolute-path-shaped (a glob pattern like
-/// `/private/var/.../sandbox-xyz/src/**/*.rs`, or a search `path` folded
-/// into `pattern`'s display) — is run through the same two-stage sanitizer
-/// before it's handed to the sink: [`derelativize`] first (never an absolute
-/// sandbox — or other host — path survives), then [`sanitize_for_display`]
-/// (no control characters, bounded length). A plain, already-relative
-/// string (the common case for both a `Read` path and a `Grep`/`Glob`
-/// pattern) passes through `derelativize` unchanged.
+/// frequently absolute-path-shaped, or has an absolute path *embedded* in
+/// it (a glob pattern like `/private/var/.../sandbox-xyz/src/**/*.rs`, an
+/// alternation like `{/tmp/sandbox-xyz/a,/tmp/sandbox-xyz/b}/*.rs`, or a
+/// search pattern like `foo|/tmp/sandbox-xyz/src/x`) — is run through the
+/// same two-stage sanitizer before it's handed to the sink: [`derelativize`]
+/// first (no spelling of the sandbox root survives anywhere in the result,
+/// whole-string or embedded), then [`sanitize_for_display`] (no control
+/// characters, bounded length). A plain string with no trace of the sandbox
+/// root anywhere in it (the common case for both a `Read` path and a
+/// `Grep`/`Glob` pattern) passes through both unchanged.
 pub fn render_activity(name: &str, input: &Value, sandbox_root: &Path) -> Option<String> {
     match name {
         READ => {
@@ -89,14 +91,26 @@ pub fn render_activity(name: &str, input: &Value, sandbox_root: &Path) -> Option
 /// Render `raw` — a tool's primary argument exactly as the agent supplied
 /// it (a `Read` `file_path`, or a `Grep`/`Glob` `pattern`, which is
 /// frequently absolute-path-shaped even though it's a pattern rather than a
-/// path) — relative to `sandbox_root`.
+/// path) — relative to `sandbox_root`, guaranteeing no spelling of the root
+/// survives anywhere in the result.
 ///
-/// An already-relative string is returned as-is: it can't name anything
-/// outside the working directory it would be resolved against, and — for a
-/// pattern like `**/*.rs` or a search term like `sign_jwt` — is not a path
-/// at all. An absolute one renders as `.` when it names the root itself, a
-/// relative remainder when it names something under the root, and
-/// [`OUTSIDE_SANDBOX`] when it names anything else.
+/// Two passes:
+/// 1. Whole-string handling. An already-relative string is left as the
+///    starting point for pass 2: it can't name anything outside the working
+///    directory it would be resolved against, and — for a pattern like
+///    `**/*.rs` or a search term like `sign_jwt` — usually isn't a path at
+///    all. An absolute one renders as `.` when it names the root itself, a
+///    relative remainder when it names something under the root, and
+///    [`OUTSIDE_SANDBOX`] when it names anything else.
+/// 2. [`scrub_embedded_root`]. Pass 1 only ever judges the string *as a
+///    whole* (`Path::is_absolute` / `strip_prefix`), so it does nothing for
+///    a string that isn't absolute from its very first character but still
+///    has the sandbox root embedded partway through — a `Grep` pattern like
+///    `foo|/private/var/.../sandbox-xyz/src/x`, or a `Glob` alternation
+///    `{/tmp/sandbox-xyz/a,/tmp/sandbox-xyz/b}/*.rs` (MULTI-1828 code
+///    review). Run unconditionally, after pass 1, on whatever pass 1
+///    produced — including the placeholder/relative outputs, where it is
+///    simply a no-op.
 ///
 /// `Path`/`PathBuf` here are used purely as a slash-splitting string
 /// primitive, not a claim that `raw` is a filesystem path: a glob pattern's
@@ -105,21 +119,54 @@ pub fn render_activity(name: &str, input: &Value, sandbox_root: &Path) -> Option
 /// `/tmp/sandbox-xyz/**/*.rs` correctly yields `**/*.rs`.
 fn derelativize(raw: &str, sandbox_root: &Path) -> String {
     let path = Path::new(raw);
-    if !path.is_absolute() {
-        return raw.to_string();
-    }
+    let whole = if path.is_absolute() {
+        let candidate = lexical_normalize(path);
+        root_spellings(sandbox_root)
+            .into_iter()
+            .find_map(|root| {
+                candidate.strip_prefix(&root).ok().map(|rel| {
+                    if rel.as_os_str().is_empty() {
+                        ".".to_string()
+                    } else {
+                        rel.display().to_string()
+                    }
+                })
+            })
+            .unwrap_or_else(|| OUTSIDE_SANDBOX.to_string())
+    } else {
+        raw.to_string()
+    };
+    scrub_embedded_root(&whole, sandbox_root)
+}
 
-    let candidate = lexical_normalize(path);
-    for root in root_spellings(sandbox_root) {
-        if let Ok(rel) = candidate.strip_prefix(&root) {
-            return if rel.as_os_str().is_empty() {
-                ".".to_string()
-            } else {
-                rel.display().to_string()
-            };
-        }
+/// Scrub every occurrence, anywhere in `text`, of every known spelling of
+/// `sandbox_root` (MULTI-1828 code review) — the pass [`derelativize`]'s
+/// whole-string handling can't cover, since a string that isn't absolute
+/// *as a whole* is never even inspected there, even though the root can
+/// still be embedded partway through it (a `Grep` alternation, a `Glob`
+/// brace expansion, or free text around an absolute path).
+///
+/// Spellings are scrubbed longest-first (by rendered length) so a shorter
+/// spelling that is a textual prefix of a longer one — `/var/…` of
+/// `/private/var/…` — can't half-eat it and leave a mangled `/private`
+/// behind. For each spelling: `<root>/` is replaced with nothing (leaving
+/// the root-relative remainder in place), then any bare `<root>` left over
+/// (no trailing separator — the root named with nothing after it) is
+/// replaced with `.`.
+fn scrub_embedded_root(text: &str, sandbox_root: &Path) -> String {
+    let mut spellings: Vec<String> = root_spellings(sandbox_root)
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect();
+    spellings.sort_by_key(|s| std::cmp::Reverse(s.len()));
+
+    let mut scrubbed = text.to_string();
+    for root in spellings {
+        let root_with_sep = format!("{root}/");
+        scrubbed = scrubbed.replace(&root_with_sep, "");
+        scrubbed = scrubbed.replace(&root, ".");
     }
-    OUTSIDE_SANDBOX.to_string()
+    scrubbed
 }
 
 /// The last-mile sanitizer every rendered primary argument passes through
@@ -347,41 +394,129 @@ mod tests {
         assert_eq!(rendered, "Grep \"<outside sandbox>\"");
     }
 
+    /// MULTI-1828 code review hole: the sandbox root can be *embedded*
+    /// mid-string in a `Grep` pattern that isn't absolute as a whole (an
+    /// alternation like `foo|/tmp/sandbox-xyz/src/x`) — `derelativize`'s
+    /// whole-string handling never even inspects such a string, so only the
+    /// embedded scrub catches it.
+    #[test]
+    fn grep_pattern_with_embedded_root_mid_string_is_scrubbed() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let input = serde_json::json!({ "pattern": "foo|/tmp/sandbox-xyz/src/x" });
+        assert_eq!(
+            render_activity(GREP, &input, root),
+            Some("Grep \"foo|src/x\"".to_string())
+        );
+    }
+
+    /// MULTI-1828 code review hole: every occurrence of an embedded root is
+    /// scrubbed, not just the first — a `Glob` brace alternation like
+    /// `{/tmp/sandbox-xyz/a,/tmp/sandbox-xyz/b}/*.rs` embeds the root twice.
+    #[test]
+    fn glob_pattern_with_multiple_embedded_roots_is_scrubbed() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let input =
+            serde_json::json!({ "pattern": "{/tmp/sandbox-xyz/a,/tmp/sandbox-xyz/b}/*.rs" });
+        assert_eq!(
+            render_activity(GLOB, &input, root),
+            Some("Glob \"{a,b}/*.rs\"".to_string())
+        );
+    }
+
+    /// MULTI-1828 code review hole: a bare embedded occurrence of the
+    /// sandbox root — no trailing separator, nothing after it — renders as
+    /// `.`, exactly like a whole-string match at the root.
+    #[test]
+    fn grep_pattern_with_bare_embedded_root_renders_dot() {
+        let root = Path::new("/tmp/sandbox-xyz");
+        let input = serde_json::json!({ "pattern": "found in /tmp/sandbox-xyz" });
+        assert_eq!(
+            render_activity(GREP, &input, root),
+            Some("Grep \"found in .\"".to_string())
+        );
+    }
+
+    /// MULTI-1828 code review hole: spellings are scrubbed longest-first so
+    /// the shorter `/var/…` alias can't half-eat an embedded longer
+    /// `/private/var/…` spelling and leave a mangled `/private` behind.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn embedded_root_scrub_prefers_the_longest_spelling_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let raw_root = tmp.path().to_path_buf();
+        let canonical_root = raw_root.canonicalize().unwrap();
+        assert_ne!(
+            raw_root, canonical_root,
+            "test fixture assumption: macOS temp dirs are reached through a symlink"
+        );
+
+        // The sandbox root is acquired in its raw spelling, but the agent's
+        // pattern embeds the longer, canonical spelling mid-string.
+        let embedded = format!("foo|{}/x", canonical_root.display());
+        let input = serde_json::json!({ "pattern": embedded });
+        let rendered = render_activity(GREP, &input, &raw_root).unwrap();
+        assert_eq!(rendered, "Grep \"foo|x\"");
+        assert!(!rendered.contains("/private"), "{rendered}");
+    }
+
     /// MULTI-1828 code review blocker (property-style): across a table of
     /// inputs spanning all three tools — relative, absolute-inside-root,
-    /// absolute-outside-root, and a lexical `..` escape — no rendered
-    /// activity ever contains the sandbox root string, and no argument
-    /// portion ever starts with `/`.
+    /// absolute-outside-root, a lexical `..` escape, and (the code-review
+    /// hole) a root embedded mid-string or repeated — no rendered activity
+    /// ever contains *any* known spelling of the sandbox root anywhere, and
+    /// no argument portion ever starts with `/`.
     #[test]
     fn no_rendered_activity_ever_leaks_the_sandbox_root_or_an_absolute_path() {
         let root = Path::new("/tmp/sandbox-xyz");
-        let root_str = root.to_str().unwrap();
+        let spellings: Vec<String> = root_spellings(root)
+            .iter()
+            .map(|r| r.display().to_string())
+            .collect();
         let cases: Vec<(&str, Value)> = vec![
             (READ, read_input("src/relative.rs")),
             (READ, read_input("/tmp/sandbox-xyz/src/main.rs")),
             (READ, read_input("/tmp/sandbox-xyz")),
             (READ, read_input("/etc/passwd")),
             (READ, read_input("/tmp/sandbox-xyz/../../etc/passwd")),
+            // Pathological nested duplicate: the root appears twice in one
+            // absolute path.
+            (READ, read_input("/tmp/sandbox-xyz/a/tmp/sandbox-xyz/b")),
             (GREP, serde_json::json!({ "pattern": "sign_jwt" })),
             (
                 GREP,
                 serde_json::json!({ "pattern": "/tmp/sandbox-xyz/secret" }),
             ),
             (GREP, serde_json::json!({ "pattern": "/etc/shadow" })),
+            // Mid-string / multi-occurrence embedded roots — the code-review
+            // hole: none of these are absolute *as a whole*.
+            (
+                GREP,
+                serde_json::json!({ "pattern": "foo|/tmp/sandbox-xyz/src/x" }),
+            ),
+            (
+                GREP,
+                serde_json::json!({ "pattern": "found in /tmp/sandbox-xyz" }),
+            ),
             (GLOB, serde_json::json!({ "pattern": "**/*.rs" })),
             (
                 GLOB,
                 serde_json::json!({ "pattern": "/tmp/sandbox-xyz/**/*.rs" }),
             ),
             (GLOB, serde_json::json!({ "pattern": "/var/**/*.rs" })),
+            (
+                GLOB,
+                serde_json::json!({ "pattern": "{/tmp/sandbox-xyz/a,/tmp/sandbox-xyz/b}/*.rs" }),
+            ),
         ];
 
         for (name, input) in cases {
             let rendered = render_activity(name, &input, root).unwrap();
-            assert!(
-                !rendered.contains(root_str),
-                "leaked the sandbox root in {rendered:?}"
-            );
+            for spelling in &spellings {
+                assert!(
+                    !rendered.contains(spelling.as_str()),
+                    "leaked sandbox-root spelling {spelling:?} in {rendered:?}"
+                );
+            }
             let (_, arg) = rendered
                 .split_once(' ')
                 .expect("every rendered activity has a tool-name prefix");
