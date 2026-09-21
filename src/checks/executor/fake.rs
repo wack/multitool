@@ -182,6 +182,7 @@ mod tests {
                 prompt: "p".into(),
             },
             working_dir: std::path::PathBuf::from("."),
+            declared_in: std::path::PathBuf::from("CHECKS.md"),
             attempt: 1,
         }
     }
