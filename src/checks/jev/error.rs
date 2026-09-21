@@ -7,18 +7,12 @@
 use miette::Diagnostic;
 use thiserror::Error;
 
-// `TYPESAFE_API_KEY_VAR`/`JevError` have no reader outside this file's own
-// tests yet, for the same reason as `client.rs` (see the note there):
-// MULTI-1823/1825 add the real caller. Remove these allows once they do.
-
 /// The environment variable carrying the TypeSafe API key. Resolved lazily by
 /// [`super::client::JevClient`] on the first request — never at construction,
 /// and never logged.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 pub const TYPESAFE_API_KEY_VAR: &str = "TYPESAFE_API_KEY";
 
 /// A failed Jev/TypeSafe SystemOne request.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 #[derive(Debug, Error, Diagnostic)]
 pub enum JevError {
     /// `TYPESAFE_API_KEY` is unset (or empty) when a request was attempted.

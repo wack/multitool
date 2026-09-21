@@ -13,21 +13,12 @@
 //! check` with Jev) build on.
 #![cfg(feature = "jev")]
 
+// No caller outside this module's own tests reaches `client`/`error`/`types`
+// yet: MULTI-1823 ("Build the Jev verification question from replayed
+// evidence") and MULTI-1825 ("Decide `multi check` with Jev under the `jev`
+// feature") are the tickets that wire this client into `multi check`. Until
+// one of them adds a real caller, nothing is re-exported at this module's top
+// level — add `pub use` here (and drop this comment) once something needs it.
 mod client;
 mod error;
 mod types;
-
-// Every re-export below has no caller outside this module's own tests yet:
-// MULTI-1823 ("Build the Jev verification question from replayed evidence")
-// and MULTI-1825 ("Decide `multi check` with Jev under the `jev` feature")
-// are the tickets that wire this client into `multi check`. Each item is
-// exercised today by `client`/`types`/`error`'s own `#[cfg(test)]` modules.
-#[allow(unused_imports)]
-pub use client::JevClient;
-#[allow(unused_imports)]
-pub use error::{JevError, TYPESAFE_API_KEY_VAR};
-#[allow(unused_imports)]
-pub use types::{
-    Answer, NoulAnswer, NoulCriteria, NoulQuestion, Question, SystemOneRequest, SystemOneResponse,
-    Usage,
-};

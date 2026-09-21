@@ -19,34 +19,40 @@ use crate::checks::config::JevConfig;
 use super::error::{JevError, TYPESAFE_API_KEY_VAR};
 use super::types::{SystemOneRequest, SystemOneResponse};
 
-// `JevClient` and everything it touches have no reader outside this file's
-// own tests yet: MULTI-1823 ("Build the Jev verification question from
-// replayed evidence") and MULTI-1825 ("Decide `multi check` with Jev under
-// the `jev` feature") are the tickets that call this client from `multi
-// check`. Each item below is exercised today by `tests` in this file. Remove
-// these allows once one of those tickets adds a real caller.
-
 /// Per-request timeout. TypeSafe questions are small (state capped at 32k
 /// tokens; see <https://docs.typesafe.ai/models.md>) and System One is a fast
 /// model, so a generous-but-bounded timeout catches a hung connection without
 /// being trigger-happy on a slow network.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How many attempts a request gets in total (the first try, plus retries) on
 /// `429`/`529` before giving up as [`JevError::Exhausted`].
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 const MAX_ATTEMPTS: u32 = 3;
 /// The delay before the first retry.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 /// The backoff delay is doubled after every retry, capped at this value.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 const MAX_BACKOFF: Duration = Duration::from_secs(5);
+
+/// Cap on the response body embedded in a [`JevError::Transport`] diagnostic
+/// for a status code we don't otherwise special-case (e.g. an upstream
+/// proxy's HTML error page can be arbitrarily large).
+const MAX_TRANSPORT_BODY_BYTES: usize = 512;
+
+/// Truncate `body` to [`MAX_TRANSPORT_BODY_BYTES`] on a char boundary,
+/// appending a marker noting how many bytes were dropped.
+fn truncate_body(body: &str) -> String {
+    if body.len() <= MAX_TRANSPORT_BODY_BYTES {
+        return body.to_string();
+    }
+    let mut end = MAX_TRANSPORT_BODY_BYTES;
+    while end > 0 && !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…[truncated {} bytes]", &body[..end], body.len() - end)
+}
 
 /// A ready-to-use TypeSafe SystemOne client. Cheap to construct: building one
 /// opens no connection and touches no credential (see the module docs).
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 pub struct JevClient {
     http: reqwest::Client,
     /// The TypeSafe SystemOne API origin, e.g. `https://api.typesafe.ai`. The
@@ -54,7 +60,6 @@ pub struct JevClient {
     base_url: String,
 }
 
-#[allow(dead_code)] // see the note above; removed by MULTI-1823/1825
 impl JevClient {
     /// Construct a client for TypeSafe's API at `base_url`. Never reads
     /// `TYPESAFE_API_KEY` — that happens lazily in [`Self::ask`].
@@ -137,7 +142,8 @@ impl JevClient {
                 _ => {
                     let body = response.text().await.unwrap_or_default();
                     return Err(JevError::Transport(format!(
-                        "unexpected status {status}: {body}"
+                        "unexpected status {status}: {}",
+                        truncate_body(&body)
                     )));
                 }
             }
@@ -358,6 +364,34 @@ mod tests {
             .await
             .expect_err("malformed body fails");
         assert!(matches!(err, JevError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn unlisted_status_is_transport_with_status_and_truncated_body() {
+        let server = MockServer::start().await;
+        let huge_body = "x".repeat(MAX_TRANSPORT_BODY_BYTES * 2);
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(500).set_body_string(huge_body.clone()))
+            .mount(&server)
+            .await;
+
+        let client = JevClient::new(server.uri()).unwrap();
+        let request = sample_request();
+        let err = with_api_key(Some("test-key"), || client.ask(&request))
+            .await
+            .expect_err("500 is not specially handled");
+        match err {
+            JevError::Transport(message) => {
+                assert!(message.contains("500"), "got: {message}");
+                assert!(
+                    message.len() < huge_body.len(),
+                    "body should have been truncated: {message}"
+                );
+                assert!(message.contains("truncated"), "got: {message}");
+            }
+            other => panic!("expected Transport, got {other:?}"),
+        }
     }
 
     #[tokio::test]

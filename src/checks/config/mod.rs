@@ -30,15 +30,17 @@ use miette::{Result, miette};
 use crate::checks::executor::BoxedExecutor;
 use crate::checks::executor::cersei::CerseiExecutor;
 
-// `JevConfig` is consumed outside this module only by
-// `crate::checks::jev::JevClient::from_config`, which exists solely under
-// `--features jev`; in the default build this re-export has no non-test
-// reader. `resolve_jev` has no non-test reader in *either* build yet:
-// MULTI-1825 ("Decide `multi check` with Jev under the `jev` feature") is the
-// ticket that calls it to build the `JevConfig` fed to that client. Both are
-// exercised today by this module's tests and by `jev.rs`'s own tests.
+// `JevConfig` is consumed outside this module by
+// `crate::checks::jev::JevClient::from_config`, but that only exists under
+// `--features jev`; in a default build this re-export is unavoidably unused
+// (verified: `cargo clippy` warns without the allow, with default features
+// only — clean with `--features jev`). `resolve_jev` has no caller outside
+// this module's own tests in *either* build yet — MULTI-1825 ("Decide `multi
+// check` with Jev under the `jev` feature") adds one — so it is *not*
+// re-exported; reach it as `jev::resolve_jev` from within this module (e.g.
+// in tests) until something outside needs it at `config::resolve_jev`.
 #[allow(unused_imports)]
-pub use jev::{JevConfig, resolve_jev};
+pub use jev::JevConfig;
 pub use providers::{ProviderFactory, ProviderRegistry};
 pub use schema::{CliOverrides, Effort, ProviderKind};
 
@@ -86,13 +88,39 @@ pub struct Config {
     pub trace_archive: Option<PathBuf>,
 }
 
+/// A single-variable env layer that maps `MULTI_CHECKS_JEV_BASE_URL` exactly
+/// onto `checks.jev.base_url`.
+///
+/// The generic `Env::prefixed("MULTI_").split("_")` layer can't reach this key:
+/// splitting on every `_` turns `CHECKS_JEV_BASE_URL` into the 4-level path
+/// `checks.jev.base.url`, not the 3-level `checks.jev.base_url` our schema
+/// actually has (`base_url` is one field, itself containing an underscore).
+/// `checks.jev.base_url` is deliberately the *only* way to point Jev at a
+/// different endpoint (there is no `TYPESAFE_BASE_URL`; see MULTI-1417), so an
+/// env override of it is a required capability, not an edge case — this layer
+/// exists specifically to provide it without touching the generic splitter (or
+/// the pre-existing, equally-affected `[checks.providers.*].base_url`, which
+/// is out of scope here).
+///
+/// Built from `Env::raw()` (no prefix stripping) rather than
+/// `Env::prefixed("MULTI_")`, so `.only()` matches the *whole* env var name
+/// exactly, then `.map()` rewrites that one match straight to the target key
+/// path (figment nests on `.`, so the mapped key already encodes
+/// `checks` → `jev` → `base_url`).
+fn jev_base_url_env_layer() -> Env {
+    Env::raw()
+        .only(&["MULTI_CHECKS_JEV_BASE_URL"])
+        .map(|_| "checks.jev.base_url".into())
+}
+
 /// Merge the three config layers and extract the resolved `[checks]` table.
 ///
-/// Merge order (low → high) is `file → MULTI_-prefixed env → flags`, giving
-/// `flag > env > file`. figment's own CLI example orders env-highest; we invert
-/// to flag-highest. The flag layer only serialises values the user actually
-/// passed (the CLI fields are `Option<T>` with no clap default), so an unset
-/// flag contributes nothing and does not clobber env/file.
+/// Merge order (low → high) is `file → MULTI_-prefixed env → the targeted
+/// `checks.jev.base_url` env layer → flags`, giving `flag > env > file`.
+/// figment's own CLI example orders env-highest; we invert to flag-highest.
+/// The flag layer only serialises values the user actually passed (the CLI
+/// fields are `Option<T>` with no clap default), so an unset flag contributes
+/// nothing and does not clobber env/file.
 fn resolve_layers(
     file_layer: schema::RootFileConfig,
     overrides: CliOverrides,
@@ -100,6 +128,7 @@ fn resolve_layers(
     let figment = Figment::new()
         .merge(Serialized::defaults(file_layer))
         .merge(Env::prefixed("MULTI_").split("_"))
+        .merge(jev_base_url_env_layer())
         .merge(Serialized::defaults(overrides));
 
     let root: schema::RootFileConfig = figment
@@ -423,20 +452,71 @@ base_url = "https://jev.example"
     }
 
     #[test]
-    fn jev_base_url_env_var_does_not_apply_across_the_underscore_split() {
-        // Known limitation, pre-existing for `[checks.providers.*].base_url`
-        // and inherited here: `Env::prefixed("MULTI_").split("_")` replaces
-        // *every* underscore with a path separator, so `MULTI_CHECKS_JEV_BASE_URL`
-        // maps to `checks.jev.base.url`, not `checks.jev.base_url` (whose own
-        // name contains an underscore). `base_url` is therefore reachable via
-        // file (and, structurally, a future CLI flag) but not via this env var
-        // naming scheme — matching how provider `base_url` overrides are
-        // documented as file-only in `guides/checks.md`.
+    fn jev_base_url_env_var_sets_base_url() {
+        // `MULTI_CHECKS_JEV_BASE_URL` reaches `checks.jev.base_url` via the
+        // targeted `jev_base_url_env_layer`, not the generic `_`-splitting
+        // layer (which can't: see that function's doc comment).
         Jail::expect_with(|jail| {
             jail.set_env("MULTI_CHECKS_JEV_BASE_URL", "https://jev.example");
             let checks =
                 resolve_layers(RootFileConfig::default(), CliOverrides::default()).unwrap();
-            assert_eq!(checks.jev.base_url, None);
+            assert_eq!(checks.jev.base_url.as_deref(), Some("https://jev.example"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn jev_base_url_env_beats_file() {
+        Jail::expect_with(|jail| {
+            jail.set_env("MULTI_CHECKS_JEV_BASE_URL", "https://env.example");
+
+            let mut file = RootFileConfig::default();
+            file.checks.jev.base_url = Some("https://file.example".to_string());
+
+            let checks = resolve_layers(file, CliOverrides::default()).unwrap();
+            assert_eq!(checks.jev.base_url.as_deref(), Some("https://env.example"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn jev_base_url_flag_beats_env() {
+        Jail::expect_with(|jail| {
+            jail.set_env("MULTI_CHECKS_JEV_BASE_URL", "https://env.example");
+
+            let overrides = CliOverrides {
+                checks: CliChecksOverrides {
+                    jev: CliJevOverrides {
+                        base_url: Some("https://flag.example".to_string()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            };
+
+            let checks = resolve_layers(RootFileConfig::default(), overrides).unwrap();
+            assert_eq!(checks.jev.base_url.as_deref(), Some("https://flag.example"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn jev_base_url_env_var_coexists_with_the_generic_splitter_stray_key() {
+        // The generic `Env::prefixed("MULTI_").split("_")` layer *also* reads
+        // `MULTI_CHECKS_JEV_BASE_URL`, but maps it to the unrelated key path
+        // `checks.jev.base.url` (see `jev_base_url_env_layer`'s doc comment).
+        // `JevSection` has no `#[serde(deny_unknown_fields)]` (matching every
+        // other config struct in this module — see e.g. `RootFileConfig`'s own
+        // doc comment), so that stray `base` key is silently ignored rather
+        // than breaking deserialization of the real `base_url` the targeted
+        // layer sets.
+        Jail::expect_with(|jail| {
+            jail.set_env("MULTI_CHECKS_JEV_BASE_URL", "https://jev.example");
+            let checks =
+                resolve_layers(RootFileConfig::default(), CliOverrides::default()).unwrap();
+            assert_eq!(checks.jev.base_url.as_deref(), Some("https://jev.example"));
+            assert_eq!(checks.jev.model, None);
+            assert_eq!(checks.jev.threshold, None);
             Ok(())
         });
     }
@@ -453,7 +533,7 @@ threshold = 0.6
             )?;
             let file = file::load_file_layer();
             let checks = resolve_layers(file, CliOverrides::default()).unwrap();
-            let jev_config = resolve_jev(&checks.jev).expect("valid threshold");
+            let jev_config = jev::resolve_jev(&checks.jev).expect("valid threshold");
             assert_eq!(jev_config.model, jev::DEFAULT_MODEL);
             assert_eq!(jev_config.threshold, 0.6);
             assert_eq!(jev_config.base_url, jev::DEFAULT_BASE_URL);

@@ -19,37 +19,23 @@ use miette::{Result, miette};
 
 use super::schema::JevSection;
 
-// Everything below has no reader outside this file's own tests yet: nothing
-// in the default build or the `jev`-feature build calls `resolve_jev` (or
-// touches `JevConfig`/the defaults it falls back to) until MULTI-1825
-// ("Decide `multi check` with Jev under the `jev` feature") wires it into
-// `multi check`'s decision path. rustc's dead-code reachability analysis
-// treats the whole subtree as unreached once its one entry point
-// (`resolve_jev`) is, so each item below needs its own narrow allow rather
-// than one at `resolve_jev` alone. Each is exercised today by this module's
-// `#[cfg(test)]` block. Remove these once MULTI-1825 lands.
-
 /// The default Jev model alias: TypeSafe's "most recent stable, official
 /// release; the default in client SDKs" (<https://docs.typesafe.ai/models.md>).
-#[allow(dead_code)] // see the note above; removed by MULTI-1825
 pub const DEFAULT_MODEL: &str = "jev-latest";
 
 /// The default confidence threshold gating a Jev-decided verdict. Values in
 /// `(0, 1]` are accepted; see [`resolve_jev`].
-#[allow(dead_code)] // see the note above; removed by MULTI-1825
 pub const DEFAULT_THRESHOLD: f64 = 0.75;
 
 /// The default TypeSafe SystemOne API origin
 /// (<https://docs.typesafe.ai/api.md>). `checks.jev.base_url` is the single
 /// source of truth for the endpoint, so this is the only hardcoded default —
 /// there is no separate `TYPESAFE_BASE_URL` environment variable.
-#[allow(dead_code)] // see the note above; removed by MULTI-1825
 pub const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
 
 /// The resolved, validated `[checks.jev]` settings: every field defaulted, and
 /// `threshold` checked to be in `(0, 1]`. Carries no credential — see the
 /// module docs.
-#[allow(dead_code)] // see the note above; removed by MULTI-1825
 #[derive(Debug, Clone, PartialEq)]
 pub struct JevConfig {
     /// The Jev model ID or alias to request.
@@ -67,7 +53,6 @@ pub struct JevConfig {
 /// # Errors
 ///
 /// Returns a diagnostic if `threshold` is set but outside `(0, 1]`.
-#[allow(dead_code)] // see the note above; removed by MULTI-1825
 pub fn resolve_jev(section: &JevSection) -> Result<JevConfig> {
     let model = section
         .model

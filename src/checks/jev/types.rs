@@ -12,14 +12,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-// None of these wire types has a reader outside this file's own tests yet,
-// for the same reason as `client.rs` (see the note there): MULTI-1823 builds
-// the real `SystemOneRequest`/reads real `SystemOneResponse`s. Remove these
-// allows once it does.
-
 /// A request to `POST {base_url}/v1/systemone`
 /// (<https://docs.typesafe.ai/api.md#request-schema>).
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemOneRequest {
     /// The content to evaluate: a plain string, or structured data (object /
@@ -38,7 +32,6 @@ pub struct SystemOneRequest {
 ///
 /// Only [`Question::Noul`] is implemented; see the module docs for why this is
 /// an enum despite the single variant.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Question {
@@ -47,7 +40,6 @@ pub enum Question {
 
 /// A Noul (yes/no) question (<https://docs.typesafe.ai/primitives/noul.md>):
 /// returns the probability that the answer is yes.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone, Serialize)]
 pub struct NoulQuestion {
     /// The yes/no question or statement to evaluate against `state`.
@@ -59,7 +51,6 @@ pub struct NoulQuestion {
 
 /// `criteria.true` / `criteria.false` clarifying a [`NoulQuestion`]'s yes/no
 /// semantics. Both fields are named after Rust keywords, hence the renames.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone, Serialize)]
 pub struct NoulCriteria {
     #[serde(rename = "true")]
@@ -70,7 +61,6 @@ pub struct NoulCriteria {
 
 /// A successful `200` response from `POST /v1/systemone`
 /// (<https://docs.typesafe.ai/api.md#response-schema>).
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone, Deserialize)]
 pub struct SystemOneResponse {
     /// The concrete model that actually answered (e.g. `jev-1.13.0`), which
@@ -85,7 +75,6 @@ pub struct SystemOneResponse {
 /// One answer in a [`SystemOneResponse`]. Tagged by TypeSafe's `"type"` field,
 /// mirroring [`Question`] — but deserialized by hand (see the `Deserialize`
 /// impl below) rather than via `#[serde(tag = "type")]`.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone)]
 pub enum Answer {
     Noul(NoulAnswer),
@@ -127,7 +116,6 @@ impl<'de> Deserialize<'de> for Answer {
 }
 
 /// A Noul answer: the probability (`0.0..=1.0`) that the answer is yes.
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone, Deserialize)]
 pub struct NoulAnswer {
     pub noul: f64,
@@ -138,7 +126,6 @@ pub struct NoulAnswer {
 /// milestone reads it, and adding an unread field back is a one-line change
 /// when a caller needs it (see `usage.input_tokens` logging in
 /// [`super::client`]).
-#[allow(dead_code)] // see the note above; removed by MULTI-1823
 #[derive(Debug, Clone, Deserialize)]
 pub struct Usage {
     pub input_tokens: u64,
