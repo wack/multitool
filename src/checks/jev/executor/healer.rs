@@ -20,7 +20,7 @@
 //! boxed — see [`HEAL_TIMEOUT`]) and merges the results with whatever
 //! `queue_refresh` already recorded.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -207,6 +207,25 @@ impl Healer {
 
         let mut built = Vec::with_capacity(pending.len());
         if !pending.is_empty() {
+            // A heads-up for a user whose report has already printed (code
+            // review): with `MAX_CONCURRENT_HEALS` concurrency, this can take
+            // up to `ceil(count / MAX_CONCURRENT_HEALS) * heal_timeout` in
+            // the worst case, well after the exit code is already decided —
+            // logged once, here, before any of that work starts, not
+            // repeated per check. Nothing is logged when there's nothing
+            // pending (including a `queue_refresh`-only run, which does no
+            // further I/O and never shows up here) or under `--frozen`
+            // (`finish` is never even called then — see `JevExecutor::finalize`).
+            let directories: HashSet<&PathBuf> =
+                pending.iter().map(|heal| &heal.ctx.identity.dir).collect();
+            let count = pending.len();
+            let directories = directories.len();
+            tracing::info!(
+                count,
+                directories,
+                "self-healing {count} plan entries across {directories} directories",
+            );
+
             let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_HEALS));
             let mut handles = Vec::with_capacity(pending.len());
             for heal in pending {

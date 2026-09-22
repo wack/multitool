@@ -1272,6 +1272,64 @@ fn build_evidence_excludes_missing_and_truncated_and_fills_windowed() {
 // Self-healing (MULTI-1826)
 // ---------------------------------------------------------------------------
 
+/// Captures an event's `message` field as text — used only by
+/// [`HealingStartedCounter`] below, to tell the "starting work" heads-up log
+/// apart from every other `INFO`-level event this module might emit (by
+/// message content, not just level/target).
+#[derive(Default)]
+struct MessageCapture(Option<String>);
+
+impl tracing::field::Visit for MessageCapture {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = Some(format!("{value:?}"));
+        }
+    }
+}
+
+/// A minimal `INFO`-level counter (mirrors [`WarnCounter`] above) that counts
+/// only the "starting work" heads-up log `Healer::finish` emits when it has
+/// pending agent-escalation entries to build (code review) — identified by
+/// its distinctive `"self-healing "` message prefix, so it's never confused
+/// with the *different*, past-tense `"self-healed "` summary
+/// `JevExecutor::finalize` logs after writing.
+#[derive(Clone, Default)]
+struct HealingStartedCounter(Arc<std::sync::atomic::AtomicUsize>);
+
+impl HealingStartedCounter {
+    fn count(&self) -> usize {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl tracing::Subscriber for HealingStartedCounter {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        if *event.metadata().level() != tracing::Level::INFO
+            || !event.metadata().target().contains("checks::jev::executor")
+        {
+            return;
+        }
+        let mut capture = MessageCapture::default();
+        event.record(&mut capture);
+        if capture
+            .0
+            .is_some_and(|msg| msg.starts_with("self-healing "))
+        {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
 /// The motivating scenario from the ticket: a sanitization call moves from
 /// `a.rs` to `b.rs`. The frozen plan still points at `a.rs`, whose content
 /// changed (the call moved away) — `ReadsStale`, live Jev `NotVerified`
@@ -1369,15 +1427,24 @@ async fn false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace
     // never block settlement) and only `finalize` is guaranteed to await it
     // to completion, so `TYPESAFE_API_KEY` must stay set for the whole span
     // in between, not just around `run_check` itself.
-    let outcome = with_api_key(|| async {
-        let outcome = exec.run_check(req).await.unwrap();
-        exec.finalize().await;
-        outcome
-    })
-    .await;
+    let started_counter = HealingStartedCounter::default();
+    let outcome = {
+        let _guard = tracing::subscriber::set_default(started_counter.clone());
+        with_api_key(|| async {
+            let outcome = exec.run_check(req).await.unwrap();
+            exec.finalize().await;
+            outcome
+        })
+        .await
+    };
     assert_eq!(outcome.decided_by, DecidedBy::Agent);
     assert!(outcome.verdict.as_ref().unwrap().success);
     assert_eq!(inner.seen(), vec![0]);
+    assert_eq!(
+        started_counter.count(),
+        1,
+        "one heads-up log for the one pending heal (code review)",
+    );
 
     let healed = PlanStore::load(dir.path())
         .unwrap()
@@ -1566,7 +1633,18 @@ async fn reads_stale_satisfied_refreshes_in_place_and_next_run_is_fully_cached()
     assert!(outcome.verdict.as_ref().unwrap().success);
     assert!(inner.seen().is_empty());
 
-    exec.finalize().await;
+    // A `queue_refresh`-only heal (no pending agent escalation) does no
+    // further work in `finish` — no heads-up log either (code review).
+    let started_counter = HealingStartedCounter::default();
+    {
+        let _guard = tracing::subscriber::set_default(started_counter.clone());
+        exec.finalize().await;
+    }
+    assert_eq!(
+        started_counter.count(),
+        0,
+        "nothing pending to build ⇒ no heads-up log",
+    );
 
     let healed = PlanStore::load(dir.path()).unwrap().unwrap();
     let entry = healed
