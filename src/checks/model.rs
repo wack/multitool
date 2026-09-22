@@ -135,6 +135,37 @@ pub enum DecidedBy {
     Jev,
 }
 
+impl DecidedBy {
+    /// The short tag shown beside a check whose decider wasn't the reasoning
+    /// agent (MULTI-1827): `None` for [`DecidedBy::Agent`] — the only variant
+    /// that occurs in the default build, so no default-build render path
+    /// ever produces a tag — `Some("cached")` / `Some("jev")` otherwise.
+    /// Shared by the live presenter (inline tree, heartbeat/TUI footer) and
+    /// the final report's failing-check line so the wording never drifts
+    /// between surfaces.
+    pub(crate) fn tag(self) -> Option<&'static str> {
+        match self {
+            DecidedBy::Agent => None,
+            DecidedBy::Cached => Some("cached"),
+            DecidedBy::Jev => Some("jev"),
+        }
+    }
+}
+
+/// The `N cached · N jev · N agent` decider-count line (MULTI-1827): shown by
+/// the inline TUI footer, the heartbeat summary, and the final report after
+/// the requirement list. `None` when every settled check counted so far was
+/// agent-decided (`cached == 0 && jev == 0`) — always true in the default
+/// build, so this line never appears there, and true in a `jev` run until its
+/// first cached/Jev-decided check settles.
+pub(crate) fn decided_by_summary(cached: usize, jev: usize, agent: usize) -> Option<String> {
+    if cached == 0 && jev == 0 {
+        None
+    } else {
+        Some(format!("{cached} cached · {jev} jev · {agent} agent"))
+    }
+}
+
 impl CheckOutcome {
     /// Whether this check was satisfied.
     pub fn is_satisfied(&self) -> bool {
@@ -261,5 +292,31 @@ mod tests {
         assert!(!Verdict::Errored.is_satisfied());
         assert!(!Verdict::Failed.is_satisfied());
         assert!(Verdict::Satisfied.is_satisfied());
+    }
+
+    /// MULTI-1827 acceptance: `Agent` never gets a tag — the default build's
+    /// only decider — while `Cached`/`Jev` get their exact ticket-specified
+    /// words.
+    #[test]
+    fn only_non_agent_deciders_get_a_tag() {
+        assert_eq!(DecidedBy::Agent.tag(), None);
+        assert_eq!(DecidedBy::Cached.tag(), Some("cached"));
+        assert_eq!(DecidedBy::Jev.tag(), Some("jev"));
+    }
+
+    /// MULTI-1827 acceptance: the decider-count summary is suppressed
+    /// whenever every settled check was agent-decided (the default build,
+    /// always), and rendered as `N cached · N jev · N agent` otherwise.
+    #[test]
+    fn decided_by_summary_is_gated_on_any_non_agent_decision() {
+        assert_eq!(decided_by_summary(0, 0, 5), None);
+        assert_eq!(
+            decided_by_summary(2, 1, 3),
+            Some("2 cached · 1 jev · 3 agent".to_string())
+        );
+        assert_eq!(
+            decided_by_summary(0, 1, 0),
+            Some("0 cached · 1 jev · 0 agent".to_string())
+        );
     }
 }

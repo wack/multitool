@@ -48,7 +48,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
-use crate::checks::model::{RequirementOutcome, Verdict};
+use crate::checks::model::{DecidedBy, RequirementOutcome, Verdict, decided_by_summary};
 use crate::checks::reporting::failing_check_text;
 
 use super::UiEvent;
@@ -156,7 +156,7 @@ impl InlineTuiBackend {
 
     /// Redraw the live region (gauge header + in-flight tree).
     fn draw_live(&mut self, state: &PresenterState) {
-        let lines = live_lines(state, &self.flushed, self.frame, GAUGE_WIDTH);
+        let lines = live_lines(state, &self.flushed, self.frame, GAUGE_WIDTH, self.color);
         let _ = self.terminal.draw(|f| {
             let area = f.area();
             f.render_widget(Paragraph::new(lines), area);
@@ -322,11 +322,17 @@ fn raw_or_styled(text: String, style: Option<Style>) -> Line<'static> {
 /// Build the live region: the gauge/tally header, then the in-flight tree grouped
 /// by requirement (flushed requirements excluded). Requirements with active work
 /// are ordered first so a bounded viewport never hides a running check.
+///
+/// `color` (MULTI-1827) governs only the extra dim styling a `Cached` row's
+/// skip glyph gets (see [`row_style`]); it does not touch anything else in
+/// this view — the header, the tree's structure/text, and every `Agent` row
+/// are rendered identically regardless, exactly as before this ticket.
 fn live_lines(
     state: &PresenterState,
     flushed: &HashSet<usize>,
     frame: u64,
     gauge_width: usize,
+    color: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
@@ -339,11 +345,20 @@ fn live_lines(
         .map(|t| t.to_string())
         .unwrap_or_else(|| "?".to_string());
     let elapsed = human_elapsed(state.run_started.elapsed());
-    lines.push(Line::raw(format!(
+    let mut header = format!(
         "checks  {bar} {done}/{total_str}   ✓{sat}  ✗{failed}  ⚠{errored}   · {} running · {elapsed} · {}",
         state.running(),
         state.model,
-    )));
+    );
+    // MULTI-1827: `N cached · N jev · N agent`, appended the instant the
+    // first non-agent-decided check settles (see `decided_by_summary`'s
+    // docs) — never in the default build, where every check is
+    // `DecidedBy::Agent` and this stays `None`.
+    let (cached, jev, agent) = state.decided_by_tallies();
+    if let Some(summary) = decided_by_summary(cached, jev, agent) {
+        header.push_str(&format!(" · {summary}"));
+    }
+    lines.push(Line::raw(header));
 
     // Order: requirements with any running/retrying check first (liveness), then
     // by declaration order. Flushed requirements are gone from the tree.
@@ -381,8 +396,16 @@ fn live_lines(
         for (j, row) in rows.iter().enumerate() {
             let last_child = j + 1 == rows.len();
             let child_branch = if last_child { "└─ " } else { "├─ " };
-            let glyph = leaf_glyph(&row.state, frame);
-            let label = format!("{cont}{child_branch}{glyph} {}", row.check_title);
+            // MULTI-1827: a settled row's decider — `None` until settled, and
+            // `Some(DecidedBy::Agent)` for every check in the default build,
+            // which `leaf_glyph`/`DecidedBy::tag` both treat exactly like `None`.
+            let decided_by = row.outcome.as_ref().map(|o| o.decided_by);
+            let glyph = leaf_glyph(&row.state, decided_by, frame);
+            let mut title = row.check_title.clone();
+            if let Some(tag) = decided_by.and_then(DecidedBy::tag) {
+                title.push_str(&format!(" [{tag}]"));
+            }
+            let label = format!("{cont}{child_branch}{glyph} {title}");
             let elapsed = row
                 .started
                 .map(|s| clock_elapsed(s.elapsed()))
@@ -401,7 +424,10 @@ fn live_lines(
                     text.push_str(&format!(" · {activity}"));
                 }
             }
-            lines.push(Line::raw(text));
+            lines.push(match row_style(color, &row.state, decided_by) {
+                Some(style) => Line::styled(text, style),
+                None => Line::raw(text),
+            });
         }
     }
 
@@ -420,8 +446,22 @@ fn live_lines(
     lines
 }
 
-/// The leaf glyph for a check: spinner while active, verdict mark once settled.
-fn leaf_glyph(state: &CheckState, frame: u64) -> String {
+/// The glyph for a check settled from the cache (MULTI-1827): distinct from
+/// every verdict mark below so a skipped check — no agent or Jev call at
+/// all — never reads as one an agent or Jev actually decided.
+const SKIP_GLYPH: &str = "⏭";
+
+/// The leaf glyph for a check: spinner while active, verdict mark once
+/// settled — except a check settled from the cache (MULTI-1827), which
+/// always shows [`SKIP_GLYPH`] instead of the verdict mark, since the point
+/// is that *nothing ran* to decide it. `Jev` keeps the ordinary verdict mark
+/// (only its tag, appended by the caller, says how it was decided); `Agent`
+/// (`None`, or `Some(DecidedBy::Agent)`) is unchanged from before this
+/// ticket.
+fn leaf_glyph(state: &CheckState, decided_by: Option<DecidedBy>, frame: u64) -> String {
+    if decided_by == Some(DecidedBy::Cached) {
+        return SKIP_GLYPH.to_string();
+    }
     match state {
         CheckState::Queued => "·".to_string(),
         CheckState::Running | CheckState::Retrying(_) => spinner_frame(frame).to_string(),
@@ -429,6 +469,29 @@ fn leaf_glyph(state: &CheckState, frame: u64) -> String {
         CheckState::Settled(Verdict::Failed) => "✗".to_string(),
         CheckState::Settled(Verdict::Errored) => "⚠".to_string(),
     }
+}
+
+/// The live-tree row style for a settled check (MULTI-1827): `None` — i.e.
+/// [`Line::raw`], byte-for-byte what this row rendered before this ticket —
+/// for every `Agent` row (the only kind in the default build) and whenever
+/// color is disabled. A `Cached` row otherwise gets a dim green/red matching
+/// its verdict: dim because nothing actually ran to decide it, but still
+/// colored by verdict so [`SKIP_GLYPH`] replacing the usual `✓`/`✗` doesn't
+/// cost the reader the pass/fail distinction the old glyph carried alone.
+/// `Jev` rows are left unstyled — only their tag marks them as non-agent.
+fn row_style(color: bool, state: &CheckState, decided_by: Option<DecidedBy>) -> Option<Style> {
+    if !color || decided_by != Some(DecidedBy::Cached) {
+        return None;
+    }
+    let CheckState::Settled(verdict) = state else {
+        return None;
+    };
+    let fg = if verdict.is_satisfied() {
+        Color::Green
+    } else {
+        Color::Red
+    };
+    Some(Style::new().fg(fg).add_modifier(Modifier::DIM))
 }
 
 #[cfg(test)]
@@ -474,7 +537,7 @@ mod tests {
     #[test]
     fn header_shows_the_model() {
         let state = PresenterState::new("claude-sonnet-4-6".into());
-        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, false);
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.ends_with("claude-sonnet-4-6"), "{header}");
     }
@@ -498,7 +561,7 @@ mod tests {
             activity: Some("Read src/auth/sign.rs".into()),
         });
 
-        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, false);
         let rendered: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -524,7 +587,7 @@ mod tests {
         });
         state.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
 
-        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH);
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, false);
         let rendered: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -580,5 +643,182 @@ mod tests {
         for word in evidence.split_whitespace() {
             assert!(joined.contains(word), "lost {word:?} from wrapped evidence");
         }
+    }
+
+    // -- MULTI-1827: decided-by rendering in the live tree -----------------
+
+    fn queued(state: &mut PresenterState, id: usize) {
+        state.apply(&UiEvent::CheckQueued {
+            id,
+            req_index: 0,
+            req_title: "R".into(),
+            check_title: "c".into(),
+        });
+    }
+
+    fn settle(state: &mut PresenterState, id: usize, verdict: Verdict, decided_by: DecidedBy) {
+        state.apply(&UiEvent::CheckSettled {
+            id,
+            outcome: CheckOutcome {
+                title: "c".into(),
+                verdict,
+                evidence: None,
+                decided_by,
+            },
+        });
+    }
+
+    fn rendered(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// One requirement, one check, freshly discovered and settled: `live_lines`
+    /// always produces exactly `[header, requirement line, check row]` — this is
+    /// the check row's index. (Searching for it by glyph is unreliable: the
+    /// header's own `✓{sat} ✗{failed}` tally can contain the very glyph a test
+    /// is looking for — see the MULTI-1827 code-review note below.)
+    const CHECK_ROW: usize = 2;
+
+    /// MULTI-1827 acceptance: a `Cached` row shows the distinct skip glyph
+    /// (never the ordinary `✓`) and a `cached` tag next to its title.
+    #[test]
+    fn cached_row_shows_skip_glyph_and_cached_tag() {
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        settle(&mut state, 0, Verdict::Satisfied, DecidedBy::Cached);
+
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, false);
+        let rows = rendered(&lines);
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        let row = &rows[CHECK_ROW];
+        assert!(row.contains(SKIP_GLYPH), "{row}");
+        assert!(row.contains("[cached]"), "{row}");
+        assert!(!row.contains('✓'), "{row}");
+    }
+
+    /// MULTI-1827 acceptance: a `Jev` row keeps the ordinary verdict glyph
+    /// (here `✗`, since the check failed) and gets a `jev` tag.
+    ///
+    /// Code-review note: an earlier version of this test located the row by
+    /// searching for `'✗'`, which — with exactly one failing check — also
+    /// matches the *header*'s own `✗1` tally (`rows[0]`), so the assertion
+    /// passed for the wrong reason. Indexing [`CHECK_ROW`] directly closes
+    /// that hole.
+    #[test]
+    fn jev_row_keeps_verdict_glyph_and_gets_jev_tag() {
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        settle(&mut state, 0, Verdict::Failed, DecidedBy::Jev);
+
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, false);
+        let rows = rendered(&lines);
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        let row = &rows[CHECK_ROW];
+        assert!(row.contains('✗'), "{row}");
+        assert!(row.contains("[jev]"), "{row}");
+        assert!(!row.contains(SKIP_GLYPH), "{row}");
+    }
+
+    /// MULTI-1827 acceptance: an `Agent` row — the only kind in the default
+    /// build — renders exactly as it did before this ticket: the ordinary
+    /// verdict glyph, no tag, `Line::raw` (no style), and the header carries
+    /// no decider-count summary at all.
+    ///
+    /// Note: this must index [`CHECK_ROW`] rather than search for `'✓'` — with
+    /// one satisfied check the header's own tally also reads `✓1`, so a naive
+    /// substring search matches the header (`rows[0]`) first and the
+    /// assertions below would pass against the wrong row for the wrong
+    /// reason (a header line is always `Line::raw`/untagged regardless of
+    /// this ticket).
+    #[test]
+    fn agent_row_and_header_render_identically_to_before() {
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        settle(&mut state, 0, Verdict::Satisfied, DecidedBy::Agent);
+
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, true);
+        let rows = rendered(&lines);
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        let row = &rows[CHECK_ROW];
+        assert!(row.contains('✓'), "{row}");
+        assert!(!row.contains("cached"), "{row}");
+        assert!(!row.contains("jev"), "{row}");
+        assert_eq!(
+            lines[CHECK_ROW].style,
+            Style::default(),
+            "agent row must be unstyled (Line::raw), byte-for-byte as before"
+        );
+        assert!(!rows[0].contains("cached"), "{}", rows[0]);
+        assert!(!rows[0].contains("jev"), "{}", rows[0]);
+    }
+
+    /// MULTI-1827 acceptance: color enabled, a `Cached` row's line style is a
+    /// dim green when satisfied and a dim red when failed — "still green/red
+    /// by verdict" even though the glyph itself no longer varies by verdict.
+    #[test]
+    fn cached_row_style_is_dim_and_colored_by_verdict() {
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        queued(&mut state, 1);
+        settle(&mut state, 0, Verdict::Satisfied, DecidedBy::Cached);
+        settle(&mut state, 1, Verdict::Failed, DecidedBy::Cached);
+
+        let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, true);
+        // Two requirement-tree rows beyond the header + the requirement line.
+        let styles: Vec<Style> = lines.iter().map(|l| l.style).collect();
+        assert!(
+            styles.contains(&Style::new().fg(Color::Green).add_modifier(Modifier::DIM)),
+            "{styles:?}"
+        );
+        assert!(
+            styles.contains(&Style::new().fg(Color::Red).add_modifier(Modifier::DIM)),
+            "{styles:?}"
+        );
+    }
+
+    /// MULTI-1827 acceptance ("respect the existing no-color path"): the
+    /// `cached`/`jev` tags are literal text, present whether or not color is
+    /// enabled — never conveyed only through the `Cached` row's dim styling.
+    #[test]
+    fn tags_are_plain_text_regardless_of_color() {
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        queued(&mut state, 1);
+        settle(&mut state, 0, Verdict::Satisfied, DecidedBy::Cached);
+        settle(&mut state, 1, Verdict::Satisfied, DecidedBy::Jev);
+
+        for color in [false, true] {
+            let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, color);
+            let joined = rendered(&lines).join("\n");
+            assert!(joined.contains("[cached]"), "color={color}: {joined}");
+            assert!(joined.contains("[jev]"), "color={color}: {joined}");
+        }
+    }
+
+    /// MULTI-1827 acceptance: the header's `N cached · N jev · N agent`
+    /// summary appears the instant the first non-agent-decided check
+    /// settles, not only once every check has, and is absent altogether for
+    /// an all-`Agent` run.
+    #[test]
+    fn header_gains_decider_summary_as_soon_as_a_non_agent_check_settles() {
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        queued(&mut state, 1);
+
+        let header = |s: &PresenterState| {
+            rendered(&live_lines(s, &HashSet::new(), 0, GAUGE_WIDTH, false))[0].clone()
+        };
+        assert!(!header(&state).contains("cached"), "{}", header(&state));
+
+        settle(&mut state, 0, Verdict::Satisfied, DecidedBy::Cached);
+        let h = header(&state);
+        assert!(h.contains("1 cached · 0 jev · 0 agent"), "{h}");
+
+        settle(&mut state, 1, Verdict::Satisfied, DecidedBy::Agent);
+        let h = header(&state);
+        assert!(h.contains("1 cached · 0 jev · 1 agent"), "{h}");
     }
 }

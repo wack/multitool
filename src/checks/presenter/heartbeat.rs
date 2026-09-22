@@ -16,6 +16,8 @@
 use std::io::Write;
 use std::time::Duration;
 
+use crate::checks::model::decided_by_summary;
+
 use super::UiEvent;
 use super::backend::RenderBackend;
 use super::format::human_elapsed;
@@ -41,14 +43,21 @@ impl HeartbeatBackend {
     }
 
     /// The heartbeat text, e.g. `[multi] 7/12 checks complete · 4 running
-    /// (turn 3/30, turn 12/30) · 3m12s · claude-sonnet-4-6`. Returns `None`
-    /// before there's anything meaningful to report.
+    /// (turn 3/30, turn 12/30) · 3m12s · claude-sonnet-4-6 · 2 cached · 1 jev
+    /// · 4 agent`. Returns `None` before there's anything meaningful to
+    /// report.
     ///
     /// The parenthetical lists the turn of each currently-running check
     /// (MULTI-1828), in row order — the CI-log substitute for the inline
     /// TUI's per-row `turn N/max` — but only for the events already folded
     /// into `state`; this method itself never emits per-event lines (only
     /// `tick`, on the slow heartbeat cadence, does).
+    ///
+    /// The trailing decider-count segment (MULTI-1827) appears the instant
+    /// the *first* non-agent-decided check settles (rather than waiting for
+    /// the whole run to finish) — same liveness principle as everything else
+    /// in this line — and never at all in the default build, where every
+    /// check is `DecidedBy::Agent` and [`decided_by_summary`] returns `None`.
     fn line(&self, state: &PresenterState) -> Option<String> {
         let total = state.total?;
         if total == 0 {
@@ -65,12 +74,17 @@ impl HeartbeatBackend {
                 .collect();
             format!(" ({})", parts.join(", "))
         };
-        Some(format!(
+        let mut line = format!(
             "[multi] {}/{total} checks complete · {} running{progress} · {elapsed} · {}",
             state.done(),
             state.running(),
             state.model,
-        ))
+        );
+        let (cached, jev, agent) = state.decided_by_tallies();
+        if let Some(summary) = decided_by_summary(cached, jev, agent) {
+            line.push_str(&format!(" · {summary}"));
+        }
+        Some(line)
     }
 
     fn emit(&mut self, state: &PresenterState) {
@@ -227,5 +241,56 @@ mod tests {
 
         let line = backend.line(&state).unwrap();
         assert!(!line.contains("turn"), "{line}");
+    }
+
+    fn settle(state: &mut PresenterState, id: usize, decided_by: DecidedBy) {
+        state.apply(&UiEvent::CheckSettled {
+            id,
+            outcome: CheckOutcome {
+                title: "c".into(),
+                verdict: Verdict::Satisfied,
+                evidence: None,
+                decided_by,
+            },
+        });
+    }
+
+    /// MULTI-1827 acceptance: an all-`Agent` run (the default build, always)
+    /// carries no decider-count segment at all — the heartbeat line is
+    /// exactly what it was before this ticket.
+    #[test]
+    fn line_has_no_decider_summary_when_every_check_is_agent_decided() {
+        let backend = HeartbeatBackend::new(false);
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        state.apply(&UiEvent::DiscoveryComplete { total_checks: 1 });
+        settle(&mut state, 0, DecidedBy::Agent);
+
+        let line = backend.line(&state).unwrap();
+        assert!(!line.contains("cached"), "{line}");
+        assert!(!line.contains("jev"), "{line}");
+    }
+
+    /// MULTI-1827 acceptance: the decider-count segment appears the instant
+    /// the *first* non-agent-decided check settles, not only once the whole
+    /// run finishes, and reflects `N cached · N jev · N agent`.
+    #[test]
+    fn line_gains_decider_summary_as_soon_as_a_non_agent_check_settles() {
+        let backend = HeartbeatBackend::new(false);
+        let mut state = PresenterState::new("test-model".into());
+        queued(&mut state, 0);
+        queued(&mut state, 1);
+        state.apply(&UiEvent::DiscoveryComplete { total_checks: 2 });
+
+        // Still all pending/running: no summary yet.
+        assert!(!backend.line(&state).unwrap().contains("cached"));
+
+        settle(&mut state, 0, DecidedBy::Cached);
+        let line = backend.line(&state).unwrap();
+        assert!(line.contains("1 cached · 0 jev · 0 agent"), "{line}");
+
+        settle(&mut state, 1, DecidedBy::Jev);
+        let line = backend.line(&state).unwrap();
+        assert!(line.contains("1 cached · 1 jev · 0 agent"), "{line}");
     }
 }

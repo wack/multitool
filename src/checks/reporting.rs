@@ -30,7 +30,9 @@ use crate::Terminal;
 #[cfg(feature = "jev")]
 use crate::checks::messages::AbortRun;
 use crate::checks::messages::{CheckCompleted, DiscoveryFailed, ExecutionComplete};
-use crate::checks::model::{CheckId, CheckOutcome, RequirementOutcome};
+use crate::checks::model::{
+    CheckId, CheckOutcome, DecidedBy, RequirementOutcome, decided_by_summary,
+};
 
 /// The terminal result of a run: the ordered per-requirement outcomes, or an
 /// abort diagnostic (an invalid suite from discovery).
@@ -193,7 +195,39 @@ pub fn report(terminal: &Terminal, outcomes: &[RequirementOutcome]) -> Result<i3
         }
     }
 
+    // MULTI-1827: a one-line decider-count summary after the requirement
+    // list, but only when some check wasn't agent-decided — never true in
+    // the default build (every check is `DecidedBy::Agent`), so this line
+    // never appears in default-feature output.
+    if let Some(summary) = decided_by_summary_line(outcomes) {
+        terminal.write_stdout_line(&summary)?;
+    }
+
     Ok(if all_satisfied { 0 } else { 1 })
+}
+
+/// Tally every check's decider across `outcomes`: `(cached, jev, agent)`.
+fn decided_by_tallies(outcomes: &[RequirementOutcome]) -> (usize, usize, usize) {
+    let mut cached = 0;
+    let mut jev = 0;
+    let mut agent = 0;
+    for outcome in outcomes {
+        for check in &outcome.check_outcomes {
+            match check.decided_by {
+                DecidedBy::Cached => cached += 1,
+                DecidedBy::Jev => jev += 1,
+                DecidedBy::Agent => agent += 1,
+            }
+        }
+    }
+    (cached, jev, agent)
+}
+
+/// The `report` summary line built from `outcomes`' deciders, or `None` when
+/// every check was agent-decided (see [`decided_by_summary`]).
+fn decided_by_summary_line(outcomes: &[RequirementOutcome]) -> Option<String> {
+    let (cached, jev, agent) = decided_by_tallies(outcomes);
+    decided_by_summary(cached, jev, agent)
 }
 
 /// The process exit code for a set of outcomes, without writing anything: `0` if
@@ -229,12 +263,17 @@ fn format_requirement(outcome: &RequirementOutcome, color: bool) -> String {
     }
 }
 
-/// The plain-text failing-check line (`  ✗ title: evidence`). Shared with the
-/// inline presenter so the TTY scrollback record and the non-TTY stdout report
-/// render a failing check identically.
+/// The plain-text failing-check line (`  ✗ title: evidence`, or
+/// `  ✗ title: evidence [cached]`/`[jev]` when the check wasn't agent-decided
+/// — MULTI-1827). Shared with the inline presenter so the TTY scrollback
+/// record and the non-TTY stdout report render a failing check identically.
 pub(crate) fn failing_check_text(check: &CheckOutcome) -> String {
     let evidence = check.evidence.as_deref().unwrap_or("no evidence provided");
-    format!("  ✗ {}: {}", check.title, evidence)
+    let mut text = format!("  ✗ {}: {}", check.title, evidence);
+    if let Some(tag) = check.decided_by.tag() {
+        text.push_str(&format!(" [{tag}]"));
+    }
+    text
 }
 
 fn format_failing_check(check: &CheckOutcome, color: bool) -> String {
@@ -278,5 +317,90 @@ mod tests {
         assert_eq!(format_requirement(&pass, false), "[PASS] ok");
         let fail = outcome("nope", false, vec![failing]);
         assert_eq!(format_requirement(&fail, false), "[FAIL] nope");
+    }
+
+    fn check(decided_by: DecidedBy, satisfied: bool) -> CheckOutcome {
+        CheckOutcome {
+            title: "c".into(),
+            verdict: if satisfied {
+                Verdict::Satisfied
+            } else {
+                Verdict::Failed
+            },
+            evidence: Some("evidence".into()),
+            decided_by,
+        }
+    }
+
+    /// MULTI-1827 acceptance: a failing check shows its decider next to the
+    /// evidence — `cached`/`jev` — while an agent-decided failure (the only
+    /// kind in the default build) renders exactly as before, no tag at all.
+    #[test]
+    fn failing_check_shows_its_decider_next_to_the_evidence() {
+        let agent = failing_check_text(&check(DecidedBy::Agent, false));
+        assert_eq!(agent, "  ✗ c: evidence");
+
+        let cached = failing_check_text(&check(DecidedBy::Cached, false));
+        assert_eq!(cached, "  ✗ c: evidence [cached]");
+
+        let jev = failing_check_text(&check(DecidedBy::Jev, false));
+        assert_eq!(jev, "  ✗ c: evidence [jev]");
+    }
+
+    /// MULTI-1827 acceptance: the one-line decider-count summary appears
+    /// only once some check in the run was not agent-decided.
+    #[test]
+    fn summary_line_appears_only_when_a_check_was_not_agent_decided() {
+        let all_agent = vec![outcome(
+            "r",
+            true,
+            vec![check(DecidedBy::Agent, true), check(DecidedBy::Agent, true)],
+        )];
+        assert_eq!(decided_by_summary_line(&all_agent), None);
+
+        let mixed = vec![outcome(
+            "r",
+            false,
+            vec![
+                check(DecidedBy::Agent, true),
+                check(DecidedBy::Cached, true),
+                check(DecidedBy::Jev, false),
+            ],
+        )];
+        assert_eq!(
+            decided_by_summary_line(&mixed),
+            Some("1 cached · 1 jev · 1 agent".to_string())
+        );
+    }
+
+    /// MULTI-1827 acceptance: an all-`Agent` run — every check in the
+    /// default build — renders identically to before this ticket: no
+    /// `cached`/`jev` substrings anywhere, and no summary line at all.
+    #[test]
+    fn all_agent_run_renders_identically_to_before() {
+        let outcomes = vec![
+            outcome("ok", true, vec![check(DecidedBy::Agent, true)]),
+            outcome(
+                "nope",
+                false,
+                vec![
+                    check(DecidedBy::Agent, true),
+                    check(DecidedBy::Agent, false),
+                ],
+            ),
+        ];
+
+        for outcome in &outcomes {
+            assert_eq!(format_requirement(outcome, false), {
+                let mark = if outcome.satisfied { "PASS" } else { "FAIL" };
+                format!("[{mark}] {}", outcome.title)
+            });
+            for check in outcome.failing_checks() {
+                let text = failing_check_text(check);
+                assert!(!text.contains("cached"), "{text}");
+                assert!(!text.contains("jev"), "{text}");
+            }
+        }
+        assert_eq!(decided_by_summary_line(&outcomes), None);
     }
 }

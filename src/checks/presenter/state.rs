@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::checks::model::{CheckId, CheckOutcome, RequirementOutcome, Verdict};
+use crate::checks::model::{CheckId, CheckOutcome, DecidedBy, RequirementOutcome, Verdict};
 
 use super::UiEvent;
 
@@ -237,6 +237,30 @@ impl PresenterState {
         (sat, failed, errored)
     }
 
+    /// Per-decider tally over settled checks: `(cached, jev, agent)`
+    /// (MULTI-1827). Same from-scratch-scan approach as [`Self::verdict_tallies`]
+    /// — cheap enough to recompute per event, and immune to the same
+    /// increment/decrement bugs a running tally would invite.
+    pub(crate) fn decided_by_tallies(&self) -> (usize, usize, usize) {
+        let mut cached = 0;
+        let mut jev = 0;
+        let mut agent = 0;
+        for row in self.rows.values() {
+            let CheckState::Settled(_) = row.state else {
+                continue;
+            };
+            let Some(outcome) = &row.outcome else {
+                continue;
+            };
+            match outcome.decided_by {
+                DecidedBy::Cached => cached += 1,
+                DecidedBy::Jev => jev += 1,
+                DecidedBy::Agent => agent += 1,
+            }
+        }
+        (cached, jev, agent)
+    }
+
     /// How many checks are running right now.
     pub(crate) fn running(&self) -> usize {
         self.rows
@@ -326,6 +350,13 @@ mod tests {
         }
     }
 
+    fn settled_by(verdict: Verdict, decided_by: DecidedBy) -> CheckOutcome {
+        CheckOutcome {
+            decided_by,
+            ..settled(verdict)
+        }
+    }
+
     #[test]
     fn tallies_recompute_from_rows_across_a_retry() {
         let mut s = PresenterState::new("test-model".into());
@@ -358,6 +389,33 @@ mod tests {
         assert_eq!(s.done(), 1);
         assert_eq!(s.running(), 0);
         assert_eq!(s.verdict_tallies(), (1, 0, 0));
+    }
+
+    /// MULTI-1827 acceptance: `decided_by_tallies` counts each settled row by
+    /// `CheckOutcome::decided_by`, ignoring rows that haven't settled yet
+    /// (which have no outcome to read a decider from).
+    #[test]
+    fn decided_by_tallies_count_each_decider_over_settled_rows_only() {
+        let mut s = PresenterState::new("test-model".into());
+        for id in 0..4 {
+            queued(&mut s, id);
+        }
+        assert_eq!(s.decided_by_tallies(), (0, 0, 0));
+
+        s.apply(&UiEvent::CheckSettled {
+            id: 0,
+            outcome: settled_by(Verdict::Satisfied, DecidedBy::Cached),
+        });
+        s.apply(&UiEvent::CheckSettled {
+            id: 1,
+            outcome: settled_by(Verdict::Failed, DecidedBy::Jev),
+        });
+        s.apply(&UiEvent::CheckSettled {
+            id: 2,
+            outcome: settled_by(Verdict::Satisfied, DecidedBy::Agent),
+        });
+        // id 3 stays queued — never settled, so it contributes nothing.
+        assert_eq!(s.decided_by_tallies(), (1, 1, 1));
     }
 
     #[test]
