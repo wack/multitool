@@ -70,29 +70,47 @@
 //!
 //! ## Self-healing (MULTI-1826)
 //!
-//! Entry-building is **off the verdict path**: a check settles (its
-//! [`AgentOutcome`] is returned to the caller) the instant its agent
-//! reports, before any replay or calibration for healing purposes ever
-//! starts. [`Self::run_agent`] is the one call site every agent escalation
-//! goes through — the attempt-1 [`Decision::Agent`] arm and the `attempt >
-//! 1` retry shortcut both funnel through it — and it queues the settled
-//! outcome onto [`healer::Healer`] *after* capturing it, never blocking the
-//! return. [`Self::decide_reads_stale`]'s `Satisfied` arm queues a cheaper,
-//! synchronous refresh the same way, since no extra I/O is needed there (see
-//! [`healer::Healer::queue_refresh`]'s docs).
+//! Entry-building is **off the verdict path**, and deferred entirely until
+//! every check in the run has settled — not merely "after the returning
+//! call," which turned out not to be a strong enough barrier (code review):
+//! an earlier version of this module `tokio::spawn`ed the expensive
+//! replay/calibration work from inside [`Self::run_agent`] immediately after
+//! capturing the outcome, reasoning that spawning happens after the value is
+//! already in hand. On a multi-threaded runtime that's not an ordering
+//! guarantee — the spawned task can be picked up by another worker thread
+//! and start making Jev calls before the *spawning* call itself has
+//! returned its result up through `run_check` to the caller that reports the
+//! check as settled. So [`Self::run_agent`] and
+//! [`Self::decide_reads_stale`]'s `Satisfied` arm only ever *record* queued
+//! work on [`healer::Healer`] — [`healer::Healer::queue_agent_escalation`]/
+//! [`healer::Healer::queue_refresh`] are both cheap, purely synchronous, and
+//! never spawn anything (see that module's docs). The actual replay/Jev
+//! calls only start inside [`healer::Healer::finish`], called from
+//! [`Self::finalize`] (the [`CheckExecutor::finalize`] override), which
+//! `crate::checks::run` calls exactly once, strictly after
+//! `crate::checks::run_pipeline` has returned successfully — i.e. after
+//! *every* check in the run has already been settled and reported. This
+//! makes "the check's outcome is emitted before any calibration call is
+//! made" true by construction, not by timing.
 //!
-//! [`healer::Healer`] bounds how many entry-building tasks
+//! An aborted run (a whole-run [`AbortCheckRun`], `--features jev` only)
+//! skips [`Self::finalize`] entirely — see `crate::checks::run`'s call site
+//! — so an abort can queue no further Jev calls and writes nothing, even
+//! though some checks may have already queued healing work before the abort
+//! fired.
+//!
+//! [`healer::Healer::finish`] bounds how many entry-building tasks
 //! (`crate::checks::plan::entry_from_outcome` — replay plus up to two Jev
-//! calls) run concurrently, independent of the check-level concurrency limit
-//! (a check's own "slot" frees the instant its agent reports, well before
-//! its healing task finishes). Every update it collects — both kinds — is
-//! applied to its directory's plan and written **once**, in [`Self::finalize`]
-//! (the [`CheckExecutor::finalize`] override), which `crate::checks::run`
-//! calls exactly once, after every check in the run has already settled and
-//! been reported. A failure building or writing one check's entry is logged
+//! calls) run concurrently, and time-boxes each one individually, so neither
+//! a large batch of queued escalations nor one stuck replay/request can hold
+//! `finalize` — and therefore the process's exit — open indefinitely (code
+//! review; see `healer`'s `MAX_CONCURRENT_HEALS`/`HEAL_TIMEOUT`). Every
+//! update collected — both kinds — is then applied to its directory's plan
+//! and written **once**. A failure building or writing one check's entry
+//! (including a timeout, or the building task itself panicking) is logged
 //! and that check's previous entry is left exactly as it was — self-healing
 //! can never change a verdict or the run's exit code, both already final by
-//! the time it runs.
+//! the time any of this runs.
 //!
 //! `--frozen` (jev builds only, absent from the default-feature build's clap
 //! surface — see `crate::config::CheckSubcommand::frozen`) disables
@@ -511,17 +529,20 @@ impl JevExecutor {
     }
 
     /// Run the agent (the one escalation target both `run_check` call sites
-    /// share — see the module docs) and queue this attempt's outcome for
-    /// self-healing (MULTI-1826) before returning it. Healing identity is
-    /// captured from `req` **before** it's moved into `inner.run_check`
-    /// (which acquires and, by the time it returns, has already torn down
-    /// the sandbox `req.sandbox` leased) — see
-    /// [`AgentOutcome::sandbox_root`]'s docs for how the healing task
-    /// recovers the sandbox root itself, from the returned outcome.
+    /// share — see the module docs) and *record* this attempt's outcome for
+    /// self-healing (MULTI-1826) before returning it — recording only, never
+    /// building: [`healer::Healer::queue_agent_escalation`] does no I/O and
+    /// spawns nothing (see the module docs on why that matters). Healing
+    /// identity is captured from `req` **before** it's moved into
+    /// `inner.run_check` (which acquires and, by the time it returns, has
+    /// already torn down the sandbox `req.sandbox` leased) — see
+    /// [`AgentOutcome::sandbox_root`]'s docs for how healing recovers the
+    /// sandbox root itself, from the returned outcome, once it actually
+    /// runs.
     ///
     /// Purely additive: the returned `Result<AgentOutcome>` is exactly what
-    /// `self.inner.run_check(req)` produced — queuing never touches it, and
-    /// never blocks on the queued task, so this can't change a verdict or
+    /// `self.inner.run_check(req)` produced — recording never touches it and
+    /// never does any work of its own, so this can't change a verdict or
     /// delay settlement.
     async fn run_agent(&self, req: AgentRunRequest) -> Result<AgentOutcome> {
         let heal_ctx =
@@ -560,12 +581,16 @@ impl CheckExecutor for JevExecutor {
         }
     }
 
-    /// Flush this run's self-healing plan updates (MULTI-1826) — see the
-    /// module docs. Called exactly once by `crate::checks::run`, after every
-    /// check has already settled and been reported: never touches a
-    /// verdict or the run's exit code. Every failure here (a task that
-    /// panicked, an entry that couldn't be built, a write that failed) is
-    /// logged and skipped rather than propagated.
+    /// Build and flush this run's self-healing plan updates (MULTI-1826) —
+    /// see the module docs. This is where every queued escalation's replay
+    /// and Jev calls actually happen — nothing before this point ever did
+    /// any of that work. Called exactly once by `crate::checks::run`, and
+    /// only when `crate::checks::run_pipeline` returned successfully (an
+    /// aborted run never calls this at all — see that call site's docs), by
+    /// which point every check has already settled and been reported: this
+    /// can never touch a verdict or the run's exit code. Every failure here
+    /// (a task that panicked, an entry that couldn't be built or timed out,
+    /// a write that failed) is logged and skipped rather than propagated.
     async fn finalize(&self) {
         if self.frozen {
             return;

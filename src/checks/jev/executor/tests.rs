@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 use tempfile::TempDir;
@@ -1687,28 +1687,26 @@ async fn frozen_flag_never_writes_and_makes_zero_calibration_calls() {
     );
 }
 
-/// The check's outcome is returned well before healing's calibration call
-/// (an artificially delayed Jev response) even completes — proving
-/// entry-building genuinely runs off the verdict path, not inline before
-/// `run_check` returns. `finalize` then demonstrably waits for it.
+/// The check's outcome is returned before any calibration call is made — and
+/// deterministically so, not merely "usually": since `queue_agent_escalation`
+/// only ever records the escalation (no I/O, nothing spawned —
+/// `healer::Healer`'s module docs), zero requests can possibly have reached
+/// Jev at the moment `run_check` returns, full stop, on any runtime flavor.
+/// The first calibration request only appears once `finalize` explicitly
+/// builds the queued entry.
 #[tokio::test]
 async fn healed_outcome_is_returned_before_the_calibration_call_completes() {
     let dir = TempDir::new().unwrap();
     write_file(dir.path(), "e.rs", "EEE content\n");
 
     let server = MockServer::start().await;
-    let delay = Duration::from_millis(200);
     Mock::given(method("POST"))
         .and(path("/v1/systemone"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({
-                    "model": "jev-1.13.0",
-                    "answers": {"satisfied": {"type": "noul", "noul": 0.9}},
-                    "usage": {"input_tokens": 20, "output_tokens": 5},
-                }))
-                .set_delay(delay),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "jev-1.13.0",
+            "answers": {"satisfied": {"type": "noul", "noul": 0.9}},
+            "usage": {"input_tokens": 20, "output_tokens": 5},
+        })))
         .mount(&server)
         .await;
 
@@ -1733,47 +1731,20 @@ async fn healed_outcome_is_returned_before_the_calibration_call_completes() {
 
     let req = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
 
-    // `run_check`, `finalize`, and the `Instant` measurements all share ONE
-    // `with_api_key` critical section (see
-    // `false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace`'s
-    // comment) — and the timer starts *inside* it, after
-    // `API_KEY_ENV_LOCK` is already held, so contention from other tests'
-    // concurrent `with_api_key` calls (this lock is process-wide, shared by
-    // every test in this file) delays entry into the section rather than
-    // inflating the measured durations themselves.
-    let (outcome, outcome_at, finalize_at, requests_after_outcome) = with_api_key(|| async {
-        let started = Instant::now();
-        let outcome = exec.run_check(req).await.unwrap();
-        let outcome_at = started.elapsed();
-        // A near-deterministic structural signal, independent of wall-clock
-        // timing: the live decide-time path made no Jev call in this test
-        // (no plan exists), so zero requests having reached the mock at all
-        // is exactly what "healing hasn't started its HTTP call yet" means.
-        let requests_after_outcome = server.received_requests().await.unwrap().len();
-        exec.finalize().await;
-        let finalize_at = started.elapsed();
-        (outcome, outcome_at, finalize_at, requests_after_outcome)
-    })
-    .await;
-
+    // No plan exists, so the live decide-time path makes no Jev call either
+    // — the only calibration traffic in this whole test is healing's own,
+    // which must not appear until `finalize` runs.
+    let outcome = exec.run_check(req).await.unwrap();
     assert_eq!(outcome.decided_by, DecidedBy::Agent);
     assert_eq!(
-        requests_after_outcome, 0,
-        "no calibration call may have reached Jev before the outcome was returned",
+        server.received_requests().await.unwrap().len(),
+        0,
+        "no calibration call may have reached Jev before run_check returned",
     );
-    assert!(
-        outcome_at < delay / 2,
-        "the outcome must return well before the (artificially delayed) \
-         calibration call could possibly have completed: {outcome_at:?}",
-    );
-    assert!(
-        finalize_at >= delay,
-        "finalize must actually wait for the delayed calibration call to \
-         complete before returning: {finalize_at:?}",
-    );
-    // Both the main and negative-control calibration calls, each equally
-    // delayed — either one completing after `run_check` already returned is
-    // enough to prove the ordering; both count as expected.
+
+    with_api_key(|| exec.finalize()).await;
+
+    // Both the main and negative-control calibration calls.
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
 
@@ -1853,5 +1824,245 @@ async fn calibration_failure_during_healing_leaves_the_verdict_and_previous_entr
     assert_eq!(
         before, after,
         "a calibration failure during healing must leave the previous entry untouched"
+    );
+}
+
+/// A heal that never completes in time (an artificially slow Jev response)
+/// is abandoned once it exceeds its timeout (code review): `finalize` still
+/// returns, this run's already-reported verdict is unaffected, and the
+/// previous plan entry is left exactly as it was. Uses
+/// `Healer::set_heal_timeout_for_test` to shrink the timeout so the test
+/// doesn't have to wait the real, generous production duration.
+#[tokio::test]
+async fn a_heal_that_exceeds_its_timeout_is_abandoned_and_leaves_the_previous_entry_intact() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "h.rs", "fn h() {}\n");
+    let xxh64 = read_checksum(dir.path(), "h.rs").await;
+    // A prompt-hash mismatch (mirroring `prompt_hash_mismatch_decides_agent`)
+    // forces an immediate escalation with zero decide-time Jev calls.
+    let mut entry = plan_entry(
+        &check(),
+        Decider::Jev,
+        true,
+        Some("previously cached"),
+        Some(calibration("jev-1.13.0", 0.9)),
+        vec![PlanCall::Read {
+            input: json!({"file_path": "h.rs"}),
+            xxh64,
+        }],
+    );
+    entry.prompt_xxh64 = plan_file::prompt_xxh64("a different title", "a different prompt");
+    write_plan(dir.path(), entry);
+    let before = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+
+    let server = MockServer::start().await;
+    // Far longer than the shrunk test timeout below. Never actually waited
+    // out: `tokio::time::timeout` races it, it doesn't sleep for it.
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "model": "jev-1.13.0",
+                    "answers": {"satisfied": {"type": "noul", "noul": 0.9}},
+                    "usage": {"input_tokens": 20, "output_tokens": 5},
+                }))
+                .set_delay(Duration::from_secs(30)),
+        )
+        .mount(&server)
+        .await;
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("agent decided, unaffected by a stuck heal"))
+            .with_tool_calls(
+                0,
+                vec![ToolCall {
+                    tool: ReadOnlyTool::Read,
+                    input: json!({"file_path": dir.path().join("h.rs").to_string_lossy()}),
+                }],
+            ),
+    );
+    let mut exec = executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+    exec.healer
+        .set_heal_timeout_for_test(Duration::from_millis(50));
+
+    let req = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    // See `false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace`'s
+    // comment on why `run_check` and `finalize` share one `with_api_key`
+    // critical section.
+    let outcome = with_api_key(|| async {
+        let outcome = exec.run_check(req).await.unwrap();
+        exec.finalize().await;
+        outcome
+    })
+    .await;
+
+    assert_eq!(outcome.decided_by, DecidedBy::Agent);
+    assert!(
+        outcome.verdict.as_ref().unwrap().success,
+        "this run's verdict must be unaffected by a heal that later times out"
+    );
+
+    let after = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+    assert_eq!(
+        before, after,
+        "a heal that exceeds its timeout must leave the previous entry untouched"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `crate::checks::finalize_if_settled` (code review, MULTI-1826): an aborted
+// run must skip `finalize` entirely, even when a heal was already queued.
+// ---------------------------------------------------------------------------
+
+/// Two checks share one directory (and so one `.check-plan.toml`): check 0
+/// has no existing entry, so it escalates immediately, its agent passes, and
+/// `run_agent` queues a heal for it — synchronously, making zero Jev calls
+/// (see `healer`'s docs). Check 1 has a `ReadsStale` entry whose live
+/// consult hits the mounted `401`, aborting the whole run.
+/// `crate::checks::finalize_if_settled` — the exact sequencing `multi
+/// check`'s real entrypoint uses — must then skip `finalize` altogether:
+/// zero calibration calls (check 0's queued heal is simply dropped,
+/// un-built), and the plan file stays byte-identical.
+#[tokio::test]
+async fn finalize_if_settled_skips_finalize_on_abort_even_with_a_pending_heal() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "i.rs", "fn i() {}\n");
+    let xxh64 = read_checksum(dir.path(), "i.rs").await;
+
+    let check0 = check();
+    let check1 = Check {
+        title: "Check B".to_string(),
+        prompt: "prompt b".to_string(),
+    };
+
+    // Only check 1 has a stored entry (ordinal 1) — check 0 (ordinal 0) has
+    // none, so it escalates trivially, with no live decide-time Jev call.
+    let plan = PlanFile::new(vec![PlanRequirement {
+        title: "R".to_string(),
+        source: "CHECKS.md".to_string(),
+        ordinal: 0,
+        checks: vec![PlanCheck {
+            title: check1.title.clone(),
+            ordinal: 1,
+            prompt_xxh64: plan_file::prompt_xxh64(&check1.title, &check1.prompt),
+            decider: Decider::Jev,
+            verdict: true,
+            evidence: Some("stale".to_string()),
+            jev: Some(calibration("jev-1.13.0", 0.9)),
+            calls: vec![PlanCall::Read {
+                input: json!({"file_path": "i.rs"}),
+                xxh64,
+            }],
+        }],
+    }]);
+    PlanStore::write(dir.path(), &plan).unwrap();
+    let before = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+    // Edited after freezing: check 1's replay is `ReadsStale`, so it
+    // consults Jev live — and that call 401s.
+    write_file(dir.path(), "i.rs", "fn i() { /* changed */ }\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("queued a heal before the run aborted"))
+            .with_tool_calls(
+                0,
+                vec![ToolCall {
+                    tool: ReadOnlyTool::Read,
+                    input: json!({"file_path": dir.path().join("i.rs").to_string_lossy()}),
+                }],
+            ),
+    );
+    let exec: Arc<dyn crate::checks::executor::CheckExecutor + Send + Sync> = Arc::new(executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    ));
+
+    let identity0 = plan_identity(dir.path()); // check_ordinal: 0
+    let identity1 = PlanIdentity {
+        check_ordinal: 1,
+        ..plan_identity(dir.path())
+    };
+
+    with_api_key(|| async {
+        let req0 = AgentRunRequest {
+            check_id: 0,
+            check: check0,
+            source_dir: dir.path().to_path_buf(),
+            sandbox: crate::checks::sandbox::SandboxLease::new(
+                sandbox.clone(),
+                dir.path().to_path_buf(),
+            ),
+            declared_in: PathBuf::from("CHECKS.md"),
+            attempt: 1,
+            progress: None,
+            plan: identity0,
+        };
+        let outcome0 = exec.run_check(req0).await.unwrap();
+        assert_eq!(outcome0.decided_by, DecidedBy::Agent);
+        assert_eq!(
+            inner.seen(),
+            vec![0],
+            "check 0's agent ran and queued a heal"
+        );
+        // Nothing built yet — queuing is synchronous and does no I/O.
+        assert_eq!(server.received_requests().await.unwrap().len(), 0);
+
+        let req1 = AgentRunRequest {
+            check_id: 1,
+            check: check1,
+            source_dir: dir.path().to_path_buf(),
+            sandbox: crate::checks::sandbox::SandboxLease::new(sandbox, dir.path().to_path_buf()),
+            declared_in: PathBuf::from("CHECKS.md"),
+            attempt: 1,
+            progress: None,
+            plan: identity1,
+        };
+        let err = exec.run_check(req1).await.unwrap_err();
+        assert!(err.downcast_ref::<AbortCheckRun>().is_some());
+        // Exactly one request so far: check 1's own decide-time consult,
+        // the one that produced the 401 the abort is built from.
+        let requests_at_abort = server.received_requests().await.unwrap().len();
+        assert_eq!(requests_at_abort, 1);
+
+        // The exact sequencing `crate::checks::run` uses: an `Err` pipeline
+        // result must skip `finalize` entirely.
+        let result = crate::checks::finalize_if_settled(&exec, Err(err)).await;
+        assert!(result.is_err(), "the abort must still propagate");
+    })
+    .await;
+
+    // Check 0's queued heal was never built: `finalize` never ran, so it
+    // made zero FURTHER calibration calls beyond the one that caused the
+    // abort itself...
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        1,
+        "an aborted run must make zero further Jev calls after the abort, \
+         including for an already-queued heal from a check that settled \
+         before it",
+    );
+    // ...and the plan file is untouched.
+    let after = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+    assert_eq!(
+        before, after,
+        "an aborted run must write nothing, even with a pending heal queued",
     );
 }

@@ -144,35 +144,28 @@ pub async fn run(
         .as_ref()
         .map(|_| Arc::new(TraceCollector::new()));
 
-    // Cloned before `run_pipeline` moves `executor` in, so `finalize` below can
-    // still reach it once the pipeline returns (MULTI-1826).
+    // Cloned before `run_pipeline` moves `executor` in, so `finalize_if_settled`
+    // below can still reach it once the pipeline returns (MULTI-1826).
     let executor_for_finalize = executor.clone();
 
-    // Phases 2–5: drive the actor pipeline (with the presenter) to its terminal
-    // result, then render the record.
-    let outcomes = run_pipeline(
-        &resolved.config,
-        executor,
-        sandbox,
-        working_dir,
-        backend,
-        trace_collector.clone(),
+    // Phases 2–5: drive the actor pipeline (with the presenter) to its
+    // terminal result, then render the record. `finalize_if_settled` — not a
+    // bare `.await?` followed by an unconditional `finalize().await` — is
+    // what keeps an aborted/errored run from writing anything at all; see
+    // that function's docs.
+    let outcomes = finalize_if_settled(
+        &executor_for_finalize,
+        run_pipeline(
+            &resolved.config,
+            executor,
+            sandbox,
+            working_dir,
+            backend,
+            trace_collector.clone(),
+        )
+        .await,
     )
-    .await;
-
-    // Flush self-healing `.check-plan.toml` updates (MULTI-1826, `--features
-    // jev`; a no-op default for every other executor — see
-    // `CheckExecutor::finalize`'s docs) now that every check has settled.
-    // Deliberately runs even when the pipeline itself errored (e.g. a
-    // whole-run Jev-credential abort): any check that already settled before
-    // the abort queued valid healing work that's still worth persisting, and
-    // `finalize` never turns a healing failure into a run failure on its
-    // own. Awaited here — not fire-and-forget — because `Check::dispatch`
-    // calls `std::process::exit` the instant this function returns, which
-    // would otherwise abandon any still-running healing task rather than
-    // letting its write complete.
-    executor_for_finalize.finalize().await;
-    let outcomes = outcomes?;
+    .await?;
 
     // Bundle the captured traces. Best-effort: a trace-archiving failure must not
     // fail an otherwise-successful check run. `run_pipeline` has already torn the
@@ -193,6 +186,42 @@ pub async fn run(
         // MULTI-1368.
         reporting::report(terminal, &outcomes)
     }
+}
+
+/// Flush self-healing `.check-plan.toml` updates (MULTI-1826, `--features
+/// jev`; a no-op default for every other executor — see
+/// `CheckExecutor::finalize`'s docs) **only** when `outcomes` — the
+/// pipeline's own result — is `Ok`. An aborted/errored run (e.g. a whole-run
+/// Jev-credential failure) must write nothing at all, not merely "nothing
+/// more than what already succeeded" (code review): checks run concurrently,
+/// so one check can have already queued healing work with a now-known-bad
+/// credential by the time another check's escalation aborts the whole run;
+/// calling `finalize` anyway would spend further Jev calls against that same
+/// bad credential and could still write a `.check-plan.toml` despite the run
+/// having failed outright. Propagating the error via `?` *before* ever
+/// calling `finalize` — rather than threading abort state into it — is
+/// simpler and gives a strictly stronger guarantee than "no writes": zero
+/// further Jev calls too. The default (non-jev) build is unaffected either
+/// way, since `finalize` is a no-op there regardless of when (or whether) it
+/// runs.
+///
+/// Awaited, not fire-and-forget: `Check::dispatch` calls
+/// `std::process::exit` the instant `run` returns, which would otherwise
+/// abandon any still-running healing task rather than letting its write
+/// complete.
+///
+/// Factored out of [`run`] so this sequencing is directly unit-testable
+/// against a scripted pipeline result, without needing a real discovery/
+/// execution run — see `crate::checks::jev::executor::tests`'s
+/// `finalize_if_settled_skips_finalize_on_abort_even_with_a_pending_heal`
+/// (`--features jev`).
+async fn finalize_if_settled(
+    executor: &Arc<dyn CheckExecutor + Send + Sync>,
+    outcomes: Result<Vec<RequirementOutcome>>,
+) -> Result<Vec<RequirementOutcome>> {
+    let outcomes = outcomes?;
+    executor.finalize().await;
+    Ok(outcomes)
 }
 
 /// Spawn the presenter + reporting + execution actors and return their refs plus
