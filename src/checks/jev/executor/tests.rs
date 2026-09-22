@@ -7,15 +7,16 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tempfile::TempDir;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
 use crate::checks::config::JevConfig;
-use crate::checks::executor::{FakeExecutor, PlanIdentity, ReadOnlyTool};
+use crate::checks::executor::{FakeExecutor, PlanIdentity, ReadOnlyTool, ToolCall};
 use crate::checks::jev::error::TYPESAFE_API_KEY_VAR;
 use crate::checks::jev::plan_file::{PlanCall, PlanFile, PlanRequirement, Reading};
 use crate::checks::jev::replay;
@@ -181,7 +182,17 @@ fn executor(
     jev_config: JevConfig,
     no_cache: bool,
 ) -> JevExecutor {
-    JevExecutor::new(inner, Arc::new(jev_client), jev_config, no_cache)
+    JevExecutor::new(inner, Arc::new(jev_client), jev_config, no_cache, false)
+}
+
+/// Like [`executor`], but with `--frozen` set — for the self-healing tests
+/// that need to assert it disables healing entirely (MULTI-1826).
+fn frozen_executor(
+    inner: Arc<FakeExecutor>,
+    jev_client: JevClient,
+    jev_config: JevConfig,
+) -> JevExecutor {
+    JevExecutor::new(inner, Arc::new(jev_client), jev_config, false, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,4 +1266,592 @@ fn build_evidence_excludes_missing_and_truncated_and_fills_windowed() {
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].output, "partial content");
     assert!(evidence[0].windowed);
+}
+
+// ---------------------------------------------------------------------------
+// Self-healing (MULTI-1826)
+// ---------------------------------------------------------------------------
+
+/// The motivating scenario from the ticket: a sanitization call moves from
+/// `a.rs` to `b.rs`. The frozen plan still points at `a.rs`, whose content
+/// changed (the call moved away) — `ReadsStale`, live Jev `NotVerified`
+/// (possible false positive) ⇒ agent. The agent explores the real tree and
+/// finds the call in `b.rs`, reports satisfied. Self-healing must REPLACE
+/// the entry with `entry_from_outcome` of that fresh trace alone: it
+/// contains the `Read` of `b.rs` and — since plans must not grow
+/// monotonically — no call absent from the new trace, i.e. the stale `Read`
+/// of `a.rs` is gone. The next run then settles `Cached` with zero agent
+/// runs.
+#[tokio::test]
+async fn false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "a.rs", "AAA_ORIGINAL sanitize call\n");
+    let stale_xxh64 = read_checksum(dir.path(), "a.rs").await;
+    write_plan(
+        dir.path(),
+        plan_entry(
+            &check(),
+            Decider::Jev,
+            true,
+            Some("frozen: the sanitize call lives in a.rs"),
+            Some(calibration("jev-1.13.0", 0.9)),
+            vec![PlanCall::Read {
+                input: json!({"file_path": "a.rs"}),
+                xxh64: stale_xxh64,
+            }],
+        ),
+    );
+    // The call moved out of a.rs...
+    write_file(dir.path(), "a.rs", "AAA_EDITED no call here\n");
+    // ...into a file the frozen plan never reads.
+    write_file(dir.path(), "b.rs", "BBB_MOVED sanitize call\n");
+
+    let server = MockServer::start().await;
+    // The live `ReadsStale` consult sees only a.rs's new (call-free)
+    // content and correctly answers NotVerified — a possible false
+    // positive, so this escalates to the agent.
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_string_contains("AAA_EDITED"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "jev-1.13.0",
+            "answers": {"satisfied": {"type": "noul", "noul": 0.1}},
+            "usage": {"input_tokens": 20, "output_tokens": 5},
+        })))
+        .mount(&server)
+        .await;
+    // Healing's calibration main call sees the agent's own fresh trace
+    // (b.rs) and agrees the check passes.
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_string_contains("BBB_MOVED"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "jev-1.13.0",
+            "answers": {"satisfied": {"type": "noul", "noul": 0.95}},
+            "usage": {"input_tokens": 20, "output_tokens": 5},
+        })))
+        .mount(&server)
+        .await;
+    // Healing's negative control (empty evidence) correctly rejects.
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_string_contains("\"evidence\":[]"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "jev-1.13.0",
+            "answers": {"satisfied": {"type": "noul", "noul": 0.02}},
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        })))
+        .mount(&server)
+        .await;
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("found the sanitize call in b.rs"))
+            .with_tool_calls(
+                0,
+                vec![ToolCall {
+                    tool: ReadOnlyTool::Read,
+                    input: json!({"file_path": dir.path().join("b.rs").to_string_lossy()}),
+                }],
+            ),
+    );
+    let exec = executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+
+    let req = request(dir.path(), sandbox.clone(), plan_identity(dir.path()), 1);
+    // `run_check` and `finalize` share ONE `with_api_key` critical section:
+    // the healing task `run_check` spawns is detached (MULTI-1826 — it must
+    // never block settlement) and only `finalize` is guaranteed to await it
+    // to completion, so `TYPESAFE_API_KEY` must stay set for the whole span
+    // in between, not just around `run_check` itself.
+    let outcome = with_api_key(|| async {
+        let outcome = exec.run_check(req).await.unwrap();
+        exec.finalize().await;
+        outcome
+    })
+    .await;
+    assert_eq!(outcome.decided_by, DecidedBy::Agent);
+    assert!(outcome.verdict.as_ref().unwrap().success);
+    assert_eq!(inner.seen(), vec![0]);
+
+    let healed = PlanStore::load(dir.path())
+        .unwrap()
+        .expect("plan still exists");
+    let entry = healed
+        .lookup(
+            "CHECKS.md",
+            0,
+            0,
+            &plan_file::prompt_xxh64(&check().title, &check().prompt),
+        )
+        .expect("healed entry present");
+    assert_eq!(entry.decider, Decider::Jev);
+    assert!(entry.verdict);
+    assert_eq!(
+        entry.calls.len(),
+        1,
+        "the stale Read of a.rs must be gone, not merged with the new one: {:?}",
+        entry.calls
+    );
+    match &entry.calls[0] {
+        PlanCall::Read { input, .. } => {
+            assert_eq!(
+                input.get("file_path").and_then(|v| v.as_str()),
+                Some("b.rs"),
+                "the healed entry must contain the Read of b.rs, not a.rs"
+            );
+        }
+        other => panic!("expected a Read call, got {other:?}"),
+    }
+
+    // Next run on the unchanged (post-heal) tree: `Fresh` ⇒ `Cached`, zero
+    // agent runs.
+    let inner2 = Arc::new(FakeExecutor::new());
+    let exec2 = executor(
+        inner2.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+    let req2 = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    let outcome2 = exec2.run_check(req2).await.unwrap();
+    assert_eq!(outcome2.decided_by, DecidedBy::Cached);
+    assert!(outcome2.verdict.as_ref().unwrap().success);
+    assert!(
+        inner2.seen().is_empty(),
+        "the healed entry must settle the next run with zero agent runs"
+    );
+}
+
+/// The confirmed-failure counterpart: the agent's own verdict is a genuine
+/// FAIL, which is a valid entry to freeze — the next run on an unchanged
+/// tree must report the cached failure, not re-run the agent.
+#[tokio::test]
+async fn confirmed_failure_heals_to_a_cached_failure_on_the_next_run() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "c.rs", "CCC_VIOLATION content\n");
+
+    let server = MockServer::start().await;
+    // No existing plan: `decide()` finds no entry at all and escalates
+    // immediately — no live Jev call at decide time.
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_string_contains("\"evidence\":[]"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "jev-1.13.0",
+            "answers": {"satisfied": {"type": "noul", "noul": 0.02}},
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .and(body_string_contains("CCC_VIOLATION"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "jev-1.13.0",
+            "answers": {"satisfied": {"type": "noul", "noul": 0.05}},
+            "usage": {"input_tokens": 20, "output_tokens": 5},
+        })))
+        .mount(&server)
+        .await;
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, false, Some("a real violation"))
+            .with_tool_calls(
+                0,
+                vec![ToolCall {
+                    tool: ReadOnlyTool::Read,
+                    input: json!({"file_path": dir.path().join("c.rs").to_string_lossy()}),
+                }],
+            ),
+    );
+    let exec = executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+
+    let req = request(dir.path(), sandbox.clone(), plan_identity(dir.path()), 1);
+    // See `false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace`'s
+    // comment on why `run_check` and `finalize` share one `with_api_key`
+    // critical section.
+    let outcome = with_api_key(|| async {
+        let outcome = exec.run_check(req).await.unwrap();
+        exec.finalize().await;
+        outcome
+    })
+    .await;
+    assert_eq!(outcome.decided_by, DecidedBy::Agent);
+    assert!(!outcome.verdict.as_ref().unwrap().success);
+
+    let healed = PlanStore::load(dir.path())
+        .unwrap()
+        .expect("healing creates a plan from scratch when none existed");
+    let entry = healed
+        .lookup(
+            "CHECKS.md",
+            0,
+            0,
+            &plan_file::prompt_xxh64(&check().title, &check().prompt),
+        )
+        .expect("healed entry present");
+    assert_eq!(entry.decider, Decider::Jev);
+    assert!(!entry.verdict);
+
+    let inner2 = Arc::new(FakeExecutor::new());
+    let exec2 = executor(
+        inner2.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+    let req2 = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    let outcome2 = exec2.run_check(req2).await.unwrap();
+    assert_eq!(outcome2.decided_by, DecidedBy::Cached);
+    assert!(!outcome2.verdict.as_ref().unwrap().success);
+    assert!(inner2.seen().is_empty());
+}
+
+/// `ReadsStale` + live Jev `Satisfied` refreshes the stored entry's
+/// checksums, verdict, and calibrated `noul` in place — but keeps
+/// `control_noul` (the negative control depends only on the prompt and
+/// model, so it is never re-run for this path). The next run then settles
+/// `Cached` with zero agent AND zero Jev calls.
+#[tokio::test]
+async fn reads_stale_satisfied_refreshes_in_place_and_next_run_is_fully_cached() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "g.rs", "the violating line\n");
+    let stale_xxh64 = read_checksum(dir.path(), "g.rs").await;
+    write_plan(
+        dir.path(),
+        plan_entry(
+            &check(),
+            Decider::Jev,
+            false,
+            Some("violation found"),
+            Some(calibration("jev-1.13.0", 0.05)),
+            vec![PlanCall::Read {
+                input: json!({"file_path": "g.rs"}),
+                xxh64: stale_xxh64,
+            }],
+        ),
+    );
+    // The violation was fixed since the plan was frozen.
+    write_file(dir.path(), "g.rs", "the violation was fixed\n");
+    let fresh_xxh64 = read_checksum(dir.path(), "g.rs").await;
+
+    let server = MockServer::start().await;
+    mock_verify(&server, "jev-1.13.0", 0.95).await;
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(FakeExecutor::new().with_report(0, false, Some("must never run")));
+    let exec = executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+
+    let req = request(dir.path(), sandbox.clone(), plan_identity(dir.path()), 1);
+    let outcome = with_api_key(|| exec.run_check(req)).await.unwrap();
+    assert_eq!(outcome.decided_by, DecidedBy::Jev);
+    assert!(outcome.verdict.as_ref().unwrap().success);
+    assert!(inner.seen().is_empty());
+
+    exec.finalize().await;
+
+    let healed = PlanStore::load(dir.path()).unwrap().unwrap();
+    let entry = healed
+        .lookup(
+            "CHECKS.md",
+            0,
+            0,
+            &plan_file::prompt_xxh64(&check().title, &check().prompt),
+        )
+        .unwrap();
+    assert!(entry.verdict, "verdict refreshed to satisfied");
+    let cal = entry.jev.as_ref().expect("calibration kept");
+    assert_eq!(cal.noul, 0.95, "noul refreshed to the live call's");
+    assert_eq!(
+        cal.control_noul, 0.02,
+        "control_noul kept from plan time — the control is never re-run here"
+    );
+    match &entry.calls[0] {
+        PlanCall::Read { xxh64, .. } => {
+            assert_eq!(
+                xxh64, &fresh_xxh64,
+                "checksum refreshed to the fixed content"
+            )
+        }
+        other => panic!("expected a Read call, got {other:?}"),
+    }
+
+    // Next run: `Fresh` (checksums now match) ⇒ `Cached`, zero agent AND
+    // zero Jev calls.
+    let requests_before = server.received_requests().await.unwrap().len();
+    let inner2 = Arc::new(FakeExecutor::new());
+    let exec2 = executor(
+        inner2.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+    let req2 = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    let outcome2 = exec2.run_check(req2).await.unwrap();
+    assert_eq!(outcome2.decided_by, DecidedBy::Cached);
+    assert!(inner2.seen().is_empty());
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        requests_before,
+        "zero new Jev calls on the fully-fresh next run"
+    );
+}
+
+/// `--frozen`: every plan file stays byte-identical and zero calibration
+/// calls are made, even though a check escalates to the agent.
+#[tokio::test]
+async fn frozen_flag_never_writes_and_makes_zero_calibration_calls() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "d.rs", "DDD content\n");
+    let xxh64 = read_checksum(dir.path(), "d.rs").await;
+    // An existing, unrelated entry so "byte-identical" is a meaningful
+    // assertion, not just "no file appeared".
+    write_plan(
+        dir.path(),
+        plan_entry(
+            &Check {
+                title: "Another check".to_string(),
+                prompt: "unrelated".to_string(),
+            },
+            Decider::Jev,
+            true,
+            Some("unrelated cached evidence"),
+            Some(calibration("jev-1.13.0", 0.9)),
+            vec![PlanCall::Read {
+                input: json!({"file_path": "d.rs"}),
+                xxh64,
+            }],
+        ),
+    );
+    let before = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+
+    // No mock mounted at all: any HTTP request would either fail the
+    // assertion below via a nonzero received-request count, or (for an
+    // unmatched request) 404 — either way proving a call was attempted.
+    let server = MockServer::start().await;
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("agent decided"))
+            .with_tool_calls(
+                0,
+                vec![ToolCall {
+                    tool: ReadOnlyTool::Read,
+                    input: json!({"file_path": dir.path().join("d.rs").to_string_lossy()}),
+                }],
+            ),
+    );
+    let exec = frozen_executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+    );
+
+    // `check()` ("No yellow") has no entry in the plan above ("Another
+    // check" is a different check) — escalates immediately, no live Jev
+    // call at decide time either.
+    let req = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    let outcome = exec.run_check(req).await.unwrap();
+    assert_eq!(outcome.decided_by, DecidedBy::Agent);
+    assert_eq!(inner.seen(), vec![0]);
+
+    exec.finalize().await;
+
+    let after = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+    assert_eq!(
+        before, after,
+        "--frozen: the plan file must be byte-identical"
+    );
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        0,
+        "--frozen: zero calibration calls",
+    );
+}
+
+/// The check's outcome is returned well before healing's calibration call
+/// (an artificially delayed Jev response) even completes — proving
+/// entry-building genuinely runs off the verdict path, not inline before
+/// `run_check` returns. `finalize` then demonstrably waits for it.
+#[tokio::test]
+async fn healed_outcome_is_returned_before_the_calibration_call_completes() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "e.rs", "EEE content\n");
+
+    let server = MockServer::start().await;
+    let delay = Duration::from_millis(200);
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "model": "jev-1.13.0",
+                    "answers": {"satisfied": {"type": "noul", "noul": 0.9}},
+                    "usage": {"input_tokens": 20, "output_tokens": 5},
+                }))
+                .set_delay(delay),
+        )
+        .mount(&server)
+        .await;
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("agent decided"))
+            .with_tool_calls(
+                0,
+                vec![ToolCall {
+                    tool: ReadOnlyTool::Read,
+                    input: json!({"file_path": dir.path().join("e.rs").to_string_lossy()}),
+                }],
+            ),
+    );
+    let exec = executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+
+    let req = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+
+    // `run_check`, `finalize`, and the `Instant` measurements all share ONE
+    // `with_api_key` critical section (see
+    // `false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace`'s
+    // comment) — and the timer starts *inside* it, after
+    // `API_KEY_ENV_LOCK` is already held, so contention from other tests'
+    // concurrent `with_api_key` calls (this lock is process-wide, shared by
+    // every test in this file) delays entry into the section rather than
+    // inflating the measured durations themselves.
+    let (outcome, outcome_at, finalize_at, requests_after_outcome) = with_api_key(|| async {
+        let started = Instant::now();
+        let outcome = exec.run_check(req).await.unwrap();
+        let outcome_at = started.elapsed();
+        // A near-deterministic structural signal, independent of wall-clock
+        // timing: the live decide-time path made no Jev call in this test
+        // (no plan exists), so zero requests having reached the mock at all
+        // is exactly what "healing hasn't started its HTTP call yet" means.
+        let requests_after_outcome = server.received_requests().await.unwrap().len();
+        exec.finalize().await;
+        let finalize_at = started.elapsed();
+        (outcome, outcome_at, finalize_at, requests_after_outcome)
+    })
+    .await;
+
+    assert_eq!(outcome.decided_by, DecidedBy::Agent);
+    assert_eq!(
+        requests_after_outcome, 0,
+        "no calibration call may have reached Jev before the outcome was returned",
+    );
+    assert!(
+        outcome_at < delay / 2,
+        "the outcome must return well before the (artificially delayed) \
+         calibration call could possibly have completed: {outcome_at:?}",
+    );
+    assert!(
+        finalize_at >= delay,
+        "finalize must actually wait for the delayed calibration call to \
+         complete before returning: {finalize_at:?}",
+    );
+    // Both the main and negative-control calibration calls, each equally
+    // delayed — either one completing after `run_check` already returned is
+    // enough to prove the ordering; both count as expected.
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+/// A failure while healing (here, the calibration call 500s) is logged and
+/// skipped: it changes neither this run's already-returned verdict nor the
+/// previous plan entry, which is left exactly as it was.
+#[tokio::test]
+async fn calibration_failure_during_healing_leaves_the_verdict_and_previous_entry_intact() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "f.rs", "fn f() {}\n");
+    let xxh64 = read_checksum(dir.path(), "f.rs").await;
+    // A prompt-hash mismatch (mirroring `prompt_hash_mismatch_decides_agent`)
+    // forces an immediate escalation with zero decide-time Jev calls, so the
+    // only Jev traffic in this test is healing's own (failing) calibration.
+    let mut entry = plan_entry(
+        &check(),
+        Decider::Jev,
+        true,
+        Some("previously cached"),
+        Some(calibration("jev-1.13.0", 0.9)),
+        vec![PlanCall::Read {
+            input: json!({"file_path": "f.rs"}),
+            xxh64,
+        }],
+    );
+    entry.prompt_xxh64 = plan_file::prompt_xxh64("a different title", "a different prompt");
+    write_plan(dir.path(), entry);
+    let before = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("agent decided, unaffected by healing"))
+            .with_tool_calls(
+                0,
+                vec![ToolCall {
+                    tool: ReadOnlyTool::Read,
+                    input: json!({"file_path": dir.path().join("f.rs").to_string_lossy()}),
+                }],
+            ),
+    );
+    let exec = executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+
+    let req = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    // See `false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace`'s
+    // comment on why `run_check` and `finalize` share one `with_api_key`
+    // critical section.
+    let outcome = with_api_key(|| async {
+        let outcome = exec.run_check(req).await.unwrap();
+        exec.finalize().await;
+        outcome
+    })
+    .await;
+    assert_eq!(outcome.decided_by, DecidedBy::Agent);
+    assert!(
+        outcome.verdict.as_ref().unwrap().success,
+        "this run's verdict must be unaffected by a later healing failure"
+    );
+    assert_eq!(
+        outcome.verdict.as_ref().unwrap().evidence.as_deref(),
+        Some("agent decided, unaffected by healing")
+    );
+
+    let after = std::fs::read(dir.path().join(".check-plan.toml")).unwrap();
+    assert_eq!(
+        before, after,
+        "a calibration failure during healing must leave the previous entry untouched"
+    );
 }

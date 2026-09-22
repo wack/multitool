@@ -345,6 +345,13 @@ impl CheckExecutor for CerseiExecutor {
             },
         };
 
+        // Populated unconditionally (MULTI-1826): this executor always
+        // acquired a sandbox above, regardless of which branch produced
+        // `outcome` — see `AgentOutcome::sandbox_root`'s docs on why a
+        // caller needs this recovered from the outcome rather than the
+        // (by-now-moved, and possibly already-torn-down) request.
+        outcome.sandbox_root = Some(working_dir.clone());
+
         // Render the captured session (if any) now that the outcome is known, so
         // the trace's footer carries the authoritative verdict/stop/error.
         if let Some(recorder) = &recorder {

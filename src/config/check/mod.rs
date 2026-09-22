@@ -48,6 +48,13 @@ pub struct CheckSubcommand {
     #[cfg(feature = "jev")]
     #[arg(long)]
     no_cache: bool,
+
+    /// Never write `.check-plan.toml` and never self-heal a stale entry —
+    /// for CI, where the working tree must not be mutated (jev builds only:
+    /// this flag does not exist in a default-feature build's clap surface).
+    #[cfg(feature = "jev")]
+    #[arg(long)]
+    frozen: bool,
 }
 
 impl CheckSubcommand {
@@ -81,6 +88,22 @@ impl CheckSubcommand {
     /// See the `#[cfg(feature = "jev")]` overload's docs.
     #[cfg(not(feature = "jev"))]
     pub fn no_cache(&self) -> bool {
+        false
+    }
+
+    /// Whether `--frozen` was passed (jev builds only, MULTI-1826). Always
+    /// `false` in a default-feature build, where the flag doesn't exist in
+    /// the clap surface at all — see [`Self::no_cache`]'s docs for why this
+    /// getter still exists unconditionally rather than being itself
+    /// `#[cfg(feature = "jev")]`.
+    #[cfg(feature = "jev")]
+    pub fn frozen(&self) -> bool {
+        self.frozen
+    }
+
+    /// See the `#[cfg(feature = "jev")]` overload's docs.
+    #[cfg(not(feature = "jev"))]
+    pub fn frozen(&self) -> bool {
         false
     }
 }

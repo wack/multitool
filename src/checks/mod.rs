@@ -79,14 +79,17 @@ use crate::checks::sandbox::Sandbox;
 /// rather than an exit code, so CI can tell "checks failed" from "tool errored".
 ///
 /// `no_cache` is `multi check --no-cache` (jev builds only — see
-/// `crate::config::CheckSubcommand::no_cache`): always `false` in a
-/// default-feature build, where the flag doesn't exist in the clap surface
-/// at all, so this parameter is unread there.
+/// `crate::config::CheckSubcommand::no_cache`); `frozen` is `multi check
+/// --frozen` (jev builds only, MULTI-1826 — see
+/// `crate::config::CheckSubcommand::frozen`). Both are always `false` in a
+/// default-feature build, where neither flag exists in the clap surface at
+/// all, so these parameters are unread there.
 pub async fn run(
     terminal: &Terminal,
     working_dir: &Path,
     overrides: CliOverrides,
     #[cfg_attr(not(feature = "jev"), allow(unused_variables))] no_cache: bool,
+    #[cfg_attr(not(feature = "jev"), allow(unused_variables))] frozen: bool,
 ) -> Result<i32> {
     // Phase 1: configuration — resolve provider/model/effort
     // (flag > env > file) and construct the provider registry, injected forward.
@@ -119,7 +122,7 @@ pub async fn run(
         let jev_client = Arc::new(crate::checks::jev::client::JevClient::from_config(
             &jev_config,
         )?);
-        Arc::from(resolved.build_executor(jev_client, jev_config, no_cache)?)
+        Arc::from(resolved.build_executor(jev_client, jev_config, no_cache, frozen)?)
     };
     let sandbox: Arc<dyn Sandbox + Send + Sync> = Arc::from(sandbox::select_sandbox());
 
@@ -141,6 +144,10 @@ pub async fn run(
         .as_ref()
         .map(|_| Arc::new(TraceCollector::new()));
 
+    // Cloned before `run_pipeline` moves `executor` in, so `finalize` below can
+    // still reach it once the pipeline returns (MULTI-1826).
+    let executor_for_finalize = executor.clone();
+
     // Phases 2–5: drive the actor pipeline (with the presenter) to its terminal
     // result, then render the record.
     let outcomes = run_pipeline(
@@ -151,7 +158,21 @@ pub async fn run(
         backend,
         trace_collector.clone(),
     )
-    .await?;
+    .await;
+
+    // Flush self-healing `.check-plan.toml` updates (MULTI-1826, `--features
+    // jev`; a no-op default for every other executor — see
+    // `CheckExecutor::finalize`'s docs) now that every check has settled.
+    // Deliberately runs even when the pipeline itself errored (e.g. a
+    // whole-run Jev-credential abort): any check that already settled before
+    // the abort queued valid healing work that's still worth persisting, and
+    // `finalize` never turns a healing failure into a run failure on its
+    // own. Awaited here — not fire-and-forget — because `Check::dispatch`
+    // calls `std::process::exit` the instant this function returns, which
+    // would otherwise abandon any still-running healing task rather than
+    // letting its write complete.
+    executor_for_finalize.finalize().await;
+    let outcomes = outcomes?;
 
     // Bundle the captured traces. Best-effort: a trace-archiving failure must not
     // fail an otherwise-successful check run. `run_pipeline` has already torn the

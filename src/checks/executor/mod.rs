@@ -204,6 +204,22 @@ pub struct AgentOutcome {
     /// [`crate::checks::execution::reconcile`] into
     /// [`crate::checks::model::CheckOutcome::decided_by`].
     pub decided_by: DecidedBy,
+    /// The CoW sandbox root this attempt actually ran an agent in, if it ran
+    /// one at all (MULTI-1826). Populated **unconditionally** by every
+    /// executor that acquires [`AgentRunRequest::sandbox`] to run an agent
+    /// (`CerseiExecutor`, and the test [`FakeExecutor`]) — `None` only for an
+    /// executor that settles a check without ever acquiring the lease (the
+    /// Jev decision engine's own cached/Jev-settled outcomes, which carry no
+    /// captured calls to relativize in the first place).
+    ///
+    /// `AgentRunRequest` is moved into `CheckExecutor::run_check`, so a
+    /// caller that needs the sandbox path *after* that call returns (as
+    /// `JevExecutor` does, to relativize a captured call against the sandbox
+    /// that produced it once the sandbox itself is already torn down) has no
+    /// other way to recover it — see `crate::checks::jev::executor`'s module
+    /// docs on why this is the chosen fix over acquiring the lease earlier or
+    /// relativizing inside the inner executor.
+    pub sandbox_root: Option<PathBuf>,
 }
 
 impl AgentOutcome {
@@ -218,6 +234,16 @@ impl AgentOutcome {
 pub trait CheckExecutor: Send + Sync {
     /// Run a single check's agent and return its verdict/outcome.
     async fn run_check(&self, req: AgentRunRequest) -> Result<AgentOutcome>;
+
+    /// Called exactly once, after `multi check`'s whole pipeline has settled
+    /// every check (MULTI-1826) — see `crate::checks::run`'s call site,
+    /// right after `run_pipeline` returns and before the process's exit code
+    /// is computed. Default: a no-op, so this is byte-for-byte free for
+    /// every executor except `JevExecutor` (`--features jev`), which
+    /// overrides it to flush its self-healing `.check-plan.toml` updates.
+    /// Never touches a check's verdict or the run's exit code — both are
+    /// already final by the time this runs.
+    async fn finalize(&self) {}
 }
 
 /// A boxed [`CheckExecutor`] for dynamic dispatch (DI seam).

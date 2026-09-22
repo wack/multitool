@@ -185,19 +185,21 @@ impl Resolved {
     /// [`crate::checks::jev::executor::JevExecutor`] for escalation.
     /// `jev_client`/`jev_config` are resolved separately from `Self` — see
     /// [`load_jev`], whose own docs explain why `multi check`'s [`load`]
-    /// deliberately never validates `[checks.jev]` — and `no_cache` is
-    /// `multi check --no-cache`.
+    /// deliberately never validates `[checks.jev]` — `no_cache` is `multi
+    /// check --no-cache`, and `frozen` is `multi check --frozen`
+    /// (MULTI-1826).
     #[cfg(feature = "jev")]
     pub fn build_executor(
         &self,
         jev_client: std::sync::Arc<crate::checks::jev::client::JevClient>,
         jev_config: JevConfig,
         no_cache: bool,
+        frozen: bool,
     ) -> Result<BoxedExecutor> {
         let inner: std::sync::Arc<dyn crate::checks::executor::CheckExecutor + Send + Sync> =
             std::sync::Arc::new(self.build_agent_executor());
         Ok(Box::new(crate::checks::jev::executor::JevExecutor::new(
-            inner, jev_client, jev_config, no_cache,
+            inner, jev_client, jev_config, no_cache, frozen,
         )))
     }
 }
