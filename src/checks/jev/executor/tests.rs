@@ -1057,6 +1057,167 @@ async fn jev_missing_api_key_aborts_with_zero_agent_runs() {
 }
 
 // ---------------------------------------------------------------------------
+// Plan-load caching (code review on MULTI-1825): loaded/parsed, and a
+// corrupt file warned about, at most ONCE per directory — not once per
+// check.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn corrupt_plan_is_loaded_and_warned_about_at_most_once_across_two_checks() {
+    let dir = TempDir::new().unwrap();
+    // An unknown schema version: `PlanStore::load` fails with
+    // `PlanError::UnknownVersion` every time it's actually read.
+    write_file(dir.path(), ".check-plan.toml", "version = 999999\n");
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("agent"))
+            .with_report(1, true, Some("agent")),
+    );
+    let exec = executor(
+        inner.clone(),
+        JevClient::new("https://unused.invalid").unwrap(),
+        jev_config(0.75, "https://unused.invalid"),
+        false,
+    );
+
+    let counter = WarnCounter::default();
+    let (first, second) = {
+        let _guard = tracing::subscriber::set_default(counter.clone());
+        let mut req0 = request(dir.path(), sandbox.clone(), plan_identity(dir.path()), 1);
+        req0.check_id = 0;
+        let first = exec.run_check(req0).await.unwrap();
+
+        // A second check under the SAME directory must reuse the first
+        // load's (failed) result, not re-parse and re-warn.
+        let mut req1 = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+        req1.check_id = 1;
+        let second = exec.run_check(req1).await.unwrap();
+        (first, second)
+    };
+
+    assert_eq!(first.decided_by, DecidedBy::Agent);
+    assert_eq!(second.decided_by, DecidedBy::Agent);
+    assert_eq!(inner.seen(), vec![0, 1]);
+    assert_eq!(
+        counter.count(),
+        1,
+        "a corrupt plan is parsed and warned about at most once per directory"
+    );
+}
+
+#[tokio::test]
+async fn good_plan_is_parsed_once_and_reused_even_after_the_file_is_removed() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), "src/a.rs", "fn a() {}\n");
+    let xxh64 = read_checksum(dir.path(), "src/a.rs").await;
+    write_plan(
+        dir.path(),
+        plan_entry(
+            &check(),
+            Decider::Jev,
+            true,
+            Some("frozen evidence explanation"),
+            Some(calibration("jev-1.13.0", 0.9)),
+            vec![PlanCall::Read {
+                input: json!({"file_path": "src/a.rs"}),
+                xxh64,
+            }],
+        ),
+    );
+
+    let server = MockServer::start().await;
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(FakeExecutor::new().with_report(0, true, None));
+    let exec = executor(
+        inner.clone(),
+        JevClient::new(server.uri()).unwrap(),
+        jev_config(0.75, &server.uri()),
+        false,
+    );
+
+    let mut req0 = request(dir.path(), sandbox.clone(), plan_identity(dir.path()), 1);
+    req0.check_id = 0;
+    let first = exec.run_check(req0).await.unwrap();
+    assert_eq!(first.decided_by, DecidedBy::Cached);
+
+    // Remove the plan file entirely. If the second check below re-read
+    // from disk, `PlanStore::load` would see no file at all and decide
+    // `Agent` — so `second` settling `Cached` again can only mean this
+    // executor reused the FIRST call's already-parsed `PlanFile`, never
+    // touching the filesystem a second time.
+    std::fs::remove_file(dir.path().join(".check-plan.toml")).unwrap();
+
+    let mut req1 = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    req1.check_id = 0;
+    let second = exec.run_check(req1).await.unwrap();
+
+    assert_eq!(
+        second.decided_by,
+        DecidedBy::Cached,
+        "the parsed plan was reused from the in-memory cache, not re-read from disk"
+    );
+    assert!(inner.seen().is_empty(), "the agent never ran");
+    assert_eq!(server.received_requests().await.unwrap().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn corrupt_plan_is_parsed_and_warned_about_at_most_once_even_when_checks_race() {
+    let dir = TempDir::new().unwrap();
+    write_file(dir.path(), ".check-plan.toml", "version = 999999\n");
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let inner = Arc::new(
+        FakeExecutor::new()
+            .with_report(0, true, Some("agent"))
+            .with_report(1, true, Some("agent")),
+    );
+    let exec = Arc::new(executor(
+        inner.clone(),
+        JevClient::new("https://unused.invalid").unwrap(),
+        jev_config(0.75, "https://unused.invalid"),
+        false,
+    ));
+
+    let mut req0 = request(dir.path(), sandbox.clone(), plan_identity(dir.path()), 1);
+    req0.check_id = 0;
+    let mut req1 = request(dir.path(), sandbox, plan_identity(dir.path()), 1);
+    req1.check_id = 1;
+
+    // A GLOBAL (not thread-local) default: the two checks below are
+    // dispatched onto separate worker threads via `tokio::spawn` — the
+    // whole point of this test is real OS-thread contention on
+    // `JevExecutor::plan_cache` — and `tracing::subscriber::set_default`'s
+    // thread-local scoping (used by every other warn-counting test in this
+    // file) would silently miss whichever check lands on the thread that
+    // didn't install it. Safe to install a global default exactly once
+    // here: this repo's canonical test runner, `cargo nextest run` (see
+    // `CLAUDE.md`), isolates every test into its own process, so no other
+    // test's subscriber can conflict with this one-time global default.
+    let counter = WarnCounter::default();
+    tracing::subscriber::set_global_default(counter.clone())
+        .expect("no other global default is set under nextest's per-test process isolation");
+
+    let exec0 = exec.clone();
+    let exec1 = exec.clone();
+    let (r0, r1) = tokio::join!(
+        tokio::spawn(async move { exec0.run_check(req0).await }),
+        tokio::spawn(async move { exec1.run_check(req1).await }),
+    );
+
+    let first = r0.unwrap().unwrap();
+    let second = r1.unwrap().unwrap();
+    assert_eq!(first.decided_by, DecidedBy::Agent);
+    assert_eq!(second.decided_by, DecidedBy::Agent);
+    assert_eq!(
+        counter.count(),
+        1,
+        "a corrupt plan is parsed and warned about at most once even when two checks race on it"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // `build_evidence`: excludes missing/truncated, fills `windowed`
 // ---------------------------------------------------------------------------
 

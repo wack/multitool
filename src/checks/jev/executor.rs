@@ -78,22 +78,32 @@
 //! wrap that one call site to also emit a `PlanUpdate` from the agent's
 //! eventual outcome without restructuring this executor.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use miette::{Diagnostic, Report, Result};
 use thiserror::Error;
+use tokio::sync::OnceCell;
 
 use crate::checks::config::JevConfig;
 use crate::checks::executor::{AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport};
 use crate::checks::jev::client::JevClient;
 use crate::checks::jev::error::JevError;
-use crate::checks::jev::plan_file::{self, Decider, JevCalibration, PlanCheck, PlanStore};
+use crate::checks::jev::plan_file::{
+    self, Decider, JevCalibration, PlanCheck, PlanFile, PlanStore,
+};
 use crate::checks::jev::replay::{self, Freshness, ReplayedCall};
 use crate::checks::jev::verify::{self, Agreement, Evidence, Expected, JevDecision};
 use crate::checks::model::{DecidedBy, RootSource};
+
+/// A directory's lazily-loaded, at-most-once-parsed `.check-plan.toml` —
+/// `None` for "no plan file" *or* "failed to load" (both decide `Agent`;
+/// see [`JevExecutor::get_or_load_plan`]'s docs on why collapsing the two is
+/// safe here). `Arc` so every check under the directory shares the one
+/// parsed [`PlanFile`] rather than cloning it.
+type PlanLoad = OnceCell<Option<Arc<PlanFile>>>;
 
 /// A [`JevExecutor::run_check`] failure that must abort the *whole* `multi
 /// check` run rather than merely error the one check it was raised for —
@@ -131,6 +141,9 @@ pub struct JevExecutor {
     jev_config: JevConfig,
     /// `multi check --no-cache`: treat `Fresh` as `ReadsStale` so Jev is
     /// always consulted (never `Cached`) once a plan entry exists at all.
+    /// Purely about **verdict** caching (the decision table's `Fresh` row) —
+    /// orthogonal to [`Self::plan_cache`], the **in-memory parse** cache
+    /// below, which always applies regardless of this flag.
     no_cache: bool,
     /// De-duplicates the "no manifest-derived root" warning to **one per
     /// requirements file**, not per check (the decision table) — keyed by
@@ -141,6 +154,22 @@ pub struct JevExecutor {
     /// through the same `Arc`-shared instance, and the warning must
     /// de-duplicate across that concurrency, not just within one check.
     warned_no_root: Mutex<HashSet<PathBuf>>,
+    /// Per-directory plan-load cache (code review on MULTI-1825): without
+    /// this, every check under the same directory would independently
+    /// `PlanStore::load` (re-read + re-parse) the identical
+    /// `.check-plan.toml` — wasted work for a large suite's *good* plan,
+    /// and a duplicate `warn` per check for a *corrupt* one. Two layers,
+    /// deliberately: the outer `Mutex<HashMap<..>>` is locked only long
+    /// enough to get-or-insert a directory's [`PlanLoad`] cell — never
+    /// across the load itself, which is why this is a `std::sync::Mutex`
+    /// (briefly held, never across an `.await`) rather than an async one.
+    /// The inner [`OnceCell`] is what actually de-duplicates the load: its
+    /// `get_or_init` guarantees the initializing future runs to completion
+    /// **at most once** even when several checks race to consult the same
+    /// directory concurrently — every racer awaits the *same* in-flight
+    /// initialization rather than each starting (and, on a corrupt file,
+    /// each warning about) its own.
+    plan_cache: Mutex<HashMap<PathBuf, Arc<PlanLoad>>>,
 }
 
 impl JevExecutor {
@@ -156,7 +185,49 @@ impl JevExecutor {
             jev_config,
             no_cache,
             warned_no_root: Mutex::new(HashSet::new()),
+            plan_cache: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Load (and parse) the directory's `.check-plan.toml` at most once for
+    /// this executor's whole lifetime — see [`Self::plan_cache`]'s docs.
+    /// `None` covers both "no plan file exists" and "the plan failed to
+    /// load" (a corrupt or unknown-version file): both decide `Agent`
+    /// identically in [`Self::decide`], and collapsing them here is safe
+    /// *because* the load failure is already warned about right here, the
+    /// one place it can happen — a caller that only sees `None` has lost no
+    /// information it would have acted on differently.
+    async fn get_or_load_plan(&self, dir: &Path) -> Option<Arc<PlanFile>> {
+        let cell = {
+            let mut cache = self
+                .plan_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
+        cell.get_or_init(|| async {
+            match PlanStore::load(dir) {
+                Ok(Some(plan)) => Some(Arc::new(plan)),
+                Ok(None) => None,
+                Err(err) => {
+                    // See `decide`'s former docs on this exact message: a
+                    // broken plan file degrades safely to the agent rather
+                    // than aborting the whole run — but now warned at most
+                    // once per directory, not once per check under it.
+                    tracing::warn!(
+                        dir = %dir.display(),
+                        error = %err,
+                        "failed to load .check-plan.toml; deciding checks under this directory with the agent",
+                    );
+                    None
+                }
+            }
+        })
+        .await
+        .clone()
     }
 
     /// Consult the frozen plan for `req` and decide — see the module docs'
@@ -168,25 +239,16 @@ impl JevExecutor {
             return Ok(Decision::Agent);
         }
 
-        let plan = match PlanStore::load(&req.plan.dir) {
-            Ok(Some(plan)) => plan,
-            // No plan file at all: exactly "no entry".
-            Ok(None) => return Ok(Decision::Agent),
-            Err(err) => {
-                // A corrupt or unknown-version `.check-plan.toml` is
-                // treated as "no usable entry" for THIS check rather than
-                // aborting the whole `multi check` run: unlike a bad Jev
-                // credential (which would silently mis-decide every
-                // remaining check the same way), a broken plan file
-                // degrades safely to the agent — the correctness fallback
-                // this whole engine is built to have.
-                tracing::warn!(
-                    dir = %req.plan.dir.display(),
-                    error = %err,
-                    "failed to load .check-plan.toml; deciding this check with the agent",
-                );
-                return Ok(Decision::Agent);
-            }
+        // Loaded (and, on a corrupt/unknown-version file, warned about) at
+        // most once per directory for this executor's whole lifetime — see
+        // `Self::plan_cache`'s and `get_or_load_plan`'s docs. Both "no plan
+        // file at all" and "the plan failed to load" collapse to `None`
+        // here (exactly "no usable entry" — a corrupt file degrades safely
+        // to the agent rather than aborting the whole `multi check` run,
+        // unlike a bad Jev credential, which would silently mis-decide
+        // every remaining check the same way).
+        let Some(plan) = self.get_or_load_plan(&req.plan.dir).await else {
+            return Ok(Decision::Agent);
         };
 
         let prompt_hash = plan_file::prompt_xxh64(&req.check.title, &req.check.prompt);
