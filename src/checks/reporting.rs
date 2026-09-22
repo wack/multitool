@@ -374,33 +374,36 @@ mod tests {
     }
 
     /// MULTI-1827 acceptance: an all-`Agent` run — every check in the
-    /// default build — renders identically to before this ticket: no
-    /// `cached`/`jev` substrings anywhere, and no summary line at all.
+    /// default build — renders BYTE-FOR-BYTE what it rendered before this
+    /// ticket. The expected strings were captured running this exact
+    /// scenario (a satisfied requirement "R1"/check "c1", and a failing
+    /// requirement "R2"/check "c2" with evidence "nope") against
+    /// `format_requirement`/`failing_check_text` on the parent commit,
+    /// `robbie/multi-1826` (pre-MULTI-1827). A prior version of this test
+    /// only asserted the absence of `cached`/`jev` substrings, which would
+    /// still pass if a line picked up a stray character or spacing drift;
+    /// full string equality closes that hole.
     #[test]
     fn all_agent_run_renders_identically_to_before() {
-        let outcomes = vec![
-            outcome("ok", true, vec![check(DecidedBy::Agent, true)]),
-            outcome(
-                "nope",
-                false,
-                vec![
-                    check(DecidedBy::Agent, true),
-                    check(DecidedBy::Agent, false),
-                ],
-            ),
-        ];
+        let c1 = CheckOutcome {
+            title: "c1".into(),
+            verdict: Verdict::Satisfied,
+            evidence: None,
+            decided_by: DecidedBy::Agent,
+        };
+        let c2 = CheckOutcome {
+            title: "c2".into(),
+            verdict: Verdict::Failed,
+            evidence: Some("nope".into()),
+            decided_by: DecidedBy::Agent,
+        };
+        let r1 = outcome("R1", true, vec![c1]);
+        let r2 = outcome("R2", false, vec![c2.clone()]);
 
-        for outcome in &outcomes {
-            assert_eq!(format_requirement(outcome, false), {
-                let mark = if outcome.satisfied { "PASS" } else { "FAIL" };
-                format!("[{mark}] {}", outcome.title)
-            });
-            for check in outcome.failing_checks() {
-                let text = failing_check_text(check);
-                assert!(!text.contains("cached"), "{text}");
-                assert!(!text.contains("jev"), "{text}");
-            }
-        }
-        assert_eq!(decided_by_summary_line(&outcomes), None);
+        assert_eq!(format_requirement(&r1, false), "[PASS] R1");
+        assert_eq!(format_requirement(&r2, false), "[FAIL] R2");
+        assert_eq!(failing_check_text(&c2), "  ✗ c2: nope");
+
+        assert_eq!(decided_by_summary_line(&[r1, r2]), None);
     }
 }

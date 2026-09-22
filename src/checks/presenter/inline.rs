@@ -722,17 +722,27 @@ mod tests {
         assert!(!row.contains(SKIP_GLYPH), "{row}");
     }
 
-    /// MULTI-1827 acceptance: an `Agent` row — the only kind in the default
-    /// build — renders exactly as it did before this ticket: the ordinary
-    /// verdict glyph, no tag, `Line::raw` (no style), and the header carries
-    /// no decider-count summary at all.
+    /// MULTI-1827 acceptance: an `Agent` row and the header — the only kind
+    /// of row in the default build — render BYTE-FOR-BYTE what they rendered
+    /// before this ticket. The expected strings below were captured running
+    /// this exact scenario (`PresenterState::new("test-model".into())`, one
+    /// queued check titled "c" under requirement "R", settled `Satisfied`)
+    /// against `live_lines` on the parent commit, `robbie/multi-1826`
+    /// (pre-MULTI-1827): a scratch `git worktree add <path> robbie/multi-1826`,
+    /// a temporary test printing the exact same scenario's rendered rows,
+    /// `cargo test -- --nocapture` to capture them, then the worktree was
+    /// removed — no commit was made there.
     ///
-    /// Note: this must index [`CHECK_ROW`] rather than search for `'✓'` — with
-    /// one satisfied check the header's own tally also reads `✓1`, so a naive
-    /// substring search matches the header (`rows[0]`) first and the
-    /// assertions below would pass against the wrong row for the wrong
-    /// reason (a header line is always `Line::raw`/untagged regardless of
-    /// this ticket).
+    /// A prior version of this test only asserted the absence of
+    /// `cached`/`jev` substrings, which would still pass if an Agent row
+    /// picked up stray trailing whitespace or any other spacing drift —
+    /// exact string equality (including the padding spaces the `{:<44}`
+    /// column width already added before this ticket) closes that hole.
+    ///
+    /// It must compare full lines rather than search for `'✓'`: with one
+    /// satisfied check the header's own tally also reads `✓1`, so a naive
+    /// substring search matches the header (`rows[0]`) first, not the check
+    /// row.
     #[test]
     fn agent_row_and_header_render_identically_to_before() {
         let mut state = PresenterState::new("test-model".into());
@@ -741,18 +751,20 @@ mod tests {
 
         let lines = live_lines(&state, &HashSet::new(), 0, GAUGE_WIDTH, true);
         let rows = rendered(&lines);
-        assert_eq!(rows.len(), 3, "{rows:?}");
-        let row = &rows[CHECK_ROW];
-        assert!(row.contains('✓'), "{row}");
-        assert!(!row.contains("cached"), "{row}");
-        assert!(!row.contains("jev"), "{row}");
+        assert_eq!(
+            rows,
+            vec![
+                "checks  ▕░░░░░░░░░░░░▏ 1/?   ✓1  ✗0  ⚠0   · 0 running · 0s · test-model"
+                    .to_string(),
+                "└─ R  (1/1)".to_string(),
+                "   └─ ✓ c                                   ".to_string(),
+            ]
+        );
         assert_eq!(
             lines[CHECK_ROW].style,
             Style::default(),
             "agent row must be unstyled (Line::raw), byte-for-byte as before"
         );
-        assert!(!rows[0].contains("cached"), "{}", rows[0]);
-        assert!(!rows[0].contains("jev"), "{}", rows[0]);
     }
 
     /// MULTI-1827 acceptance: color enabled, a `Cached` row's line style is a

@@ -256,8 +256,14 @@ mod tests {
     }
 
     /// MULTI-1827 acceptance: an all-`Agent` run (the default build, always)
-    /// carries no decider-count segment at all — the heartbeat line is
-    /// exactly what it was before this ticket.
+    /// renders the heartbeat line BYTE-FOR-BYTE what it rendered before this
+    /// ticket. The expected string was captured running this exact scenario
+    /// (one queued check, `DiscoveryComplete { total_checks: 1 }`, settled
+    /// `Satisfied`/`Agent`) against `HeartbeatBackend::line` on the parent
+    /// commit, `robbie/multi-1826` (pre-MULTI-1827). A prior version of this
+    /// test only asserted the absence of `cached`/`jev` substrings, which
+    /// would still pass if the line picked up a stray character or spacing
+    /// drift; full string equality closes that hole.
     #[test]
     fn line_has_no_decider_summary_when_every_check_is_agent_decided() {
         let backend = HeartbeatBackend::new(false);
@@ -267,8 +273,10 @@ mod tests {
         settle(&mut state, 0, DecidedBy::Agent);
 
         let line = backend.line(&state).unwrap();
-        assert!(!line.contains("cached"), "{line}");
-        assert!(!line.contains("jev"), "{line}");
+        assert_eq!(
+            line,
+            "[multi] 1/1 checks complete · 0 running · 0s · test-model"
+        );
     }
 
     /// MULTI-1827 acceptance: the decider-count segment appears the instant
