@@ -24,13 +24,38 @@
 //! mid-run, planning itself is entirely unaffected — only the live view is
 //! missing.
 //!
+//! ## Delivery is best-effort, never blocking (MULTI-1829 code review)
+//!
+//! `multi check`'s own presenter sends (`checks::execution::run_one` et al.)
+//! `.await` a `tell` over the actor's default **bounded** (64-deep) mailbox —
+//! meaning a slow/stalled presenter can, in principle, back-pressure the check
+//! pipeline. That is pre-existing `multi check` behavior this ticket does not
+//! touch. `multi plan` cannot inherit it: [`process_check`](super::process_check)/
+//! [`plan_it`](super::plan_it) and [`AgentPlanner`](super::planner::AgentPlanner)
+//! gate cache verification, agent start/retry, calibration, and the final
+//! plan write, so [`PlanEventSink::send`] is a plain, **non-async**,
+//! best-effort call (`tell(..).try_send()`): it can never block the caller,
+//! and a full mailbox or a dead actor just drops the event (logged at
+//! `debug`). Every send stays a synchronous call within the same task that
+//! already owns that check's row, never a detached `tokio::spawn`, so one
+//! row's own events can never reorder relative to each other — only
+//! reordering *across* independently-spawned tasks would need that
+//! precaution, and nothing here does that.
+//!
+//! Because delivery is lossy, the **final record** (the requirement tree with
+//! every check's terminal state, its stale reason, and the written plan
+//! files) is never reconstructed from accumulated [`PlanUiEvent`]s — see
+//! [`FinalRecord`]'s own docs for how it bypasses the mailbox entirely.
+//!
 //! [`plan::mod`]: super
 
 mod heartbeat;
 mod inline;
+mod record;
 mod state;
 
 use std::io::IsTerminal;
+use std::time::Duration;
 
 use kameo::Actor;
 use kameo::actor::{ActorRef, WeakActorRef};
@@ -43,6 +68,7 @@ use crate::terminal::{LogRouteGuard, route_logs};
 
 use heartbeat::PlanHeartbeatBackend;
 use inline::PlanInlineTuiBackend;
+pub(crate) use record::{FinalCheck, FinalOutcome, FinalRecord, FinalRecordSlot, FinalRequirement};
 pub(crate) use state::{PlanPresenterState, StaleReason};
 
 /// A milestone emitted by `checks::plan`'s orchestration
@@ -119,8 +145,6 @@ pub(crate) enum PlanUiEvent {
     /// check's file has no manifest-derived root (refused — see
     /// `plan::partition_checks`'s docs).
     Error { id: CheckId, message: String },
-    /// Every `.check-plan.toml` written this run, for the final record.
-    PlanFilesWritten(Vec<std::path::PathBuf>),
     /// A routed `tracing` log line — see `crate::checks::presenter::UiEvent::Log`'s
     /// docs; the plan presenter becomes `tracing`'s sink identically.
     Log(String),
@@ -138,16 +162,26 @@ pub(crate) struct Tick;
 pub(crate) struct PlanPresenterActor {
     state: PlanPresenterState,
     backend: Box<dyn PlanRenderBackend>,
+    /// Where `plan::run_with_planner` deposits the run's one, authoritative
+    /// [`FinalRecord`] — read directly here in [`Actor::on_stop`], bypassing
+    /// the (lossy, best-effort) event mailbox entirely. See [`FinalRecord`]'s
+    /// docs.
+    final_record: FinalRecordSlot,
     ticker: Option<tokio::task::JoinHandle<()>>,
     log_pump: Option<tokio::task::JoinHandle<()>>,
     log_route: Option<LogRouteGuard>,
 }
 
 impl PlanPresenterActor {
-    pub(crate) fn new(backend: Box<dyn PlanRenderBackend>, model: String) -> Self {
+    pub(crate) fn new(
+        backend: Box<dyn PlanRenderBackend>,
+        model: String,
+        final_record: FinalRecordSlot,
+    ) -> Self {
         Self {
             state: PlanPresenterState::new(model),
             backend,
+            final_record,
             ticker: None,
             log_pump: None,
             log_route: None,
@@ -217,7 +251,7 @@ impl Actor for PlanPresenterActor {
         if let Some(handle) = self.log_pump.take() {
             let _ = handle.await;
         }
-        self.backend.teardown(&self.state);
+        self.backend.teardown(&self.state, self.final_record.get());
         Ok(())
     }
 }
@@ -247,7 +281,13 @@ impl Message<Tick> for PlanPresenterActor {
 pub(crate) trait PlanRenderBackend: Send {
     fn apply(&mut self, state: &PlanPresenterState, event: &PlanUiEvent);
     fn tick(&mut self, state: &PlanPresenterState);
-    fn teardown(&mut self, state: &PlanPresenterState);
+    /// Final cleanup. `final_record` is the run's one authoritative
+    /// [`FinalRecord`], when `plan::run_with_planner` got far enough to build
+    /// one (`None` only when the run aborted before then — see
+    /// [`FinalRecord`]'s docs) — the inline backend renders **from this**,
+    /// never from `state`, so a dropped/backlogged live event can never
+    /// corrupt the flushed record.
+    fn teardown(&mut self, state: &PlanPresenterState, final_record: Option<&FinalRecord>);
     fn tick_interval(&self) -> std::time::Duration;
 }
 
@@ -298,11 +338,20 @@ impl PlanEventSink {
         Self(actor)
     }
 
-    /// Fire-and-forget: a dead presenter (the actor panicked, or was never
-    /// spawned) silently drops the event rather than propagating an error —
-    /// planning must never be affected by presentation (see the module docs).
-    pub(crate) async fn send(&self, event: PlanUiEvent) {
-        let _ = self.0.tell(event).await;
+    /// Fire-and-forget, **non-blocking** (MULTI-1829 code review): a `try_send`
+    /// over the actor's mailbox, never a `.await`. A dead presenter (the
+    /// actor panicked, was never spawned, or has already been stopped) or a
+    /// momentarily full mailbox both just drop the event (logged at
+    /// `debug!`) rather than propagating an error or blocking the caller —
+    /// planning must never be delayed or affected by presentation (see the
+    /// module docs' "Delivery is best-effort, never blocking" section).
+    /// Called synchronously from within whichever task already owns the
+    /// row's lifecycle, never from a detached `tokio::spawn`, so one row's
+    /// own events are never reordered relative to each other.
+    pub(crate) fn send(&self, event: PlanUiEvent) {
+        if let Err(err) = self.0.tell(event).try_send() {
+            tracing::debug!(?err, "dropped a plan presenter event");
+        }
     }
 }
 
@@ -315,6 +364,63 @@ impl PlanEventSink {
 pub(crate) struct Presentation {
     pub sink: PlanEventSink,
     pub owns_record: bool,
+    /// The side-channel `plan::run_with_planner` deposits this run's
+    /// [`FinalRecord`] into, bypassing `sink`'s lossy mailbox — see
+    /// [`FinalRecord`]'s docs.
+    pub final_record: FinalRecordSlot,
+}
+
+/// How long [`shutdown`] waits for the plan presenter to stop gracefully
+/// before giving up. All planning work (including writing every
+/// `.check-plan.toml`) is complete by the time this runs — see
+/// `plan::run`'s call site — so this bound exists purely to stop a stuck
+/// presenter (e.g. blocked writing to a stdout pipe nobody is reading) from
+/// hanging the whole `multi plan` process after there is nothing left to do.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Stop `actor`, bounding the wait so a stuck presenter can never hang
+/// `multi plan` after planning has already finished (MULTI-1829 code
+/// review). On timeout, kills the actor outright rather than waiting
+/// indefinitely.
+///
+/// Terminal/cursor restoration does not depend on this succeeding within the
+/// timeout: [`crate::checks::presenter::install_terminal_guards`] (installed
+/// by [`inline::PlanInlineTuiBackend::new`]) independently restores the
+/// cursor on a panic or SIGINT, and [`ActorRef::kill`]'s own contract still
+/// runs the actor's `on_stop` (and therefore the inline backend's own
+/// teardown) even after a kill. As a third, defense-in-depth layer — since
+/// none of the above is a *guarantee* against a shutdown that hangs for a
+/// reason other than those two (e.g. the actor genuinely deadlocked
+/// mid-`tick`, never reaching an await point `kill` can interrupt) — a timed
+/// out shutdown also shows the cursor directly here, unconditionally: cheap,
+/// idempotent, and harmless even for the heartbeat backend, which never hid
+/// it in the first place.
+///
+/// Never returns an error and never touches the caller's own result — see
+/// `plan::run`'s call site, which runs this after already having its
+/// `run_with_planner` result in hand.
+pub(crate) async fn shutdown(actor: &ActorRef<PlanPresenterActor>) {
+    let graceful = async {
+        let _ = actor.stop_gracefully().await;
+        actor.wait_for_shutdown().await;
+    };
+    if tokio::time::timeout(SHUTDOWN_TIMEOUT, graceful)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            timeout = ?SHUTDOWN_TIMEOUT,
+            "plan presenter did not shut down in time; killing it",
+        );
+        actor.kill();
+        force_show_cursor();
+    }
+}
+
+/// Best-effort, idempotent cursor restoration — see [`shutdown`]'s docs.
+fn force_show_cursor() {
+    use ratatui::crossterm::{cursor, execute};
+    let _ = execute!(std::io::stdout(), cursor::Show);
 }
 
 #[cfg(test)]
@@ -348,7 +454,7 @@ mod tests {
             self.events.lock().unwrap().push(event.clone());
         }
         fn tick(&mut self, _state: &PlanPresenterState) {}
-        fn teardown(&mut self, _state: &PlanPresenterState) {}
+        fn teardown(&mut self, _state: &PlanPresenterState, _final_record: Option<&FinalRecord>) {}
         fn tick_interval(&self) -> Duration {
             Duration::from_secs(3600)
         }
@@ -362,6 +468,7 @@ mod tests {
         let presenter = PlanPresenterActor::spawn(PlanPresenterActor::new(
             Box::new(backend),
             "test-model".into(),
+            FinalRecordSlot::new(),
         ));
         let sink = PlanEventSink::new(presenter.clone());
 
@@ -370,15 +477,12 @@ mod tests {
             req_index: 0,
             req_title: "R".into(),
             check_title: "c".into(),
-        })
-        .await;
-        sink.send(PlanUiEvent::DiscoveryComplete { total_checks: 1 })
-            .await;
+        });
+        sink.send(PlanUiEvent::DiscoveryComplete { total_checks: 1 });
         sink.send(PlanUiEvent::Fresh {
             id: 0,
             truncated: false,
-        })
-        .await;
+        });
 
         presenter.stop_gracefully().await.unwrap();
         presenter.wait_for_shutdown().await;
@@ -387,5 +491,33 @@ mod tests {
         assert_eq!(recorded.len(), 3);
         assert!(matches!(recorded[0], PlanUiEvent::Queued { id: 0, .. }));
         assert!(matches!(recorded[2], PlanUiEvent::Fresh { id: 0, .. }));
+    }
+
+    /// MULTI-1829 code review (blocking item 1): a dead presenter must never
+    /// affect the sender — `send` after the actor has already stopped is a
+    /// synchronous, non-blocking no-op.
+    #[tokio::test]
+    async fn send_after_the_actor_is_stopped_does_not_block_or_panic() {
+        let (backend, _events) = RecordingBackend::new();
+        let presenter = PlanPresenterActor::spawn(PlanPresenterActor::new(
+            Box::new(backend),
+            "test-model".into(),
+            FinalRecordSlot::new(),
+        ));
+        presenter.stop_gracefully().await.unwrap();
+        presenter.wait_for_shutdown().await;
+
+        let sink = PlanEventSink::new(presenter);
+        // Synchronous — if this were still `.await`ing a bounded mailbox
+        // send, a dead actor's closed channel would still resolve promptly;
+        // the real regression this guards is a *live but stalled* actor,
+        // covered by `plan::tests::planning_completes_when_the_presenter_actor_is_dead`
+        // at the orchestration level. Here we just assert it never panics.
+        sink.send(PlanUiEvent::Queued {
+            id: 0,
+            req_index: 0,
+            req_title: "R".into(),
+            check_title: "c".into(),
+        });
     }
 }

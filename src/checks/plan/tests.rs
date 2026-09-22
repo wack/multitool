@@ -794,3 +794,173 @@ async fn reused_entry_makes_zero_jev_calls() {
     // No additional agent runs either.
     assert_eq!(executor.seen().len(), 2, "no re-run agents on reuse");
 }
+
+// ---------------------------------------------------------------------------
+// The plain final record shows the stale reason for every re-planned check
+// (MULTI-1829 code review, blocking item 3)
+// ---------------------------------------------------------------------------
+
+/// MULTI-1829 code review (blocking item 3): the plain (non-TTY) final
+/// record's per-check line names the stale reason — every one of the
+/// ticket's five reasons, for both `Planned` (`decider = "jev"`) and
+/// `AgentOnly` (`decider = "agent"`) outcomes.
+#[test]
+fn final_check_line_shows_the_stale_reason_for_every_reason_planned_and_agent_only() {
+    for reason in [
+        presenter::StaleReason::New,
+        presenter::StaleReason::PromptChanged,
+        presenter::StaleReason::FilesChanged,
+        presenter::StaleReason::FileSetChanged,
+        presenter::StaleReason::Forced,
+    ] {
+        let planned = presenter::FinalCheck {
+            title: "a".into(),
+            outcome: presenter::FinalOutcome::Planned { verdict: true },
+            stale_reason: Some(reason),
+            truncated: false,
+        };
+        let line = final_check_line(&planned);
+        assert!(
+            line.contains(&format!("(stale: {})", reason.tag())),
+            "{line}"
+        );
+        assert!(line.contains("planned (jev, pass)"), "{line}");
+
+        let agent_only = presenter::FinalCheck {
+            title: "b".into(),
+            outcome: presenter::FinalOutcome::AgentOnly {
+                reason: AgentReason::JevUncertain,
+                verdict: false,
+            },
+            stale_reason: Some(reason),
+            truncated: false,
+        };
+        let line = final_check_line(&agent_only);
+        assert!(
+            line.contains(&format!("(stale: {})", reason.tag())),
+            "{line}"
+        );
+        assert!(line.contains("agent-only (jev uncertain, fail)"), "{line}");
+    }
+}
+
+/// Fresh and errored checks were never (re-)planned this run, so their line
+/// never names a stale reason — only `Planned`/`AgentOnly` do.
+#[test]
+fn final_check_line_never_shows_a_stale_reason_for_fresh_or_error() {
+    let fresh = presenter::FinalCheck {
+        title: "a".into(),
+        outcome: presenter::FinalOutcome::Fresh,
+        stale_reason: None,
+        truncated: false,
+    };
+    assert!(!final_check_line(&fresh).contains("stale:"));
+
+    let errored = presenter::FinalCheck {
+        title: "b".into(),
+        outcome: presenter::FinalOutcome::Error {
+            message: "boom".into(),
+        },
+        stale_reason: None,
+        truncated: false,
+    };
+    assert!(!final_check_line(&errored).contains("stale:"));
+}
+
+// ---------------------------------------------------------------------------
+// A dead/slow presenter must never affect planning (MULTI-1829 code review,
+// blocking item 1)
+// ---------------------------------------------------------------------------
+
+/// A backend that does nothing — just enough to spawn a real
+/// [`presenter::PlanPresenterActor`] and then kill it, for
+/// `planning_completes_when_the_presenter_actor_is_dead`.
+struct NoopBackend;
+
+impl presenter::PlanRenderBackend for NoopBackend {
+    fn apply(&mut self, _state: &presenter::PlanPresenterState, _event: &presenter::PlanUiEvent) {}
+    fn tick(&mut self, _state: &presenter::PlanPresenterState) {}
+    fn teardown(
+        &mut self,
+        _state: &presenter::PlanPresenterState,
+        _final_record: Option<&presenter::FinalRecord>,
+    ) {
+    }
+    fn tick_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(3600)
+    }
+}
+
+/// MULTI-1829 code review (blocking item 1): planning through a
+/// [`presenter::PlanEventSink`] whose actor has already been stopped
+/// completes normally — same `RunReport`, same `.check-plan.toml` bytes —
+/// exactly as if there had been no presenter at all. If `PlanEventSink::send`
+/// ever regressed to `.await`ing a `tell` over a bounded mailbox, sending to
+/// a *dead* actor still resolves promptly (kameo closes the channel), so this
+/// alone wouldn't catch that regression by hanging — but it does catch any
+/// regression that makes a dead presenter observably change planning's
+/// output, which is the actual correctness property at stake.
+#[tokio::test]
+async fn planning_completes_when_the_presenter_actor_is_dead() {
+    use kameo::actor::Spawn;
+
+    let dir = TempDir::new().unwrap();
+    write_two_check_fixture(dir.path());
+    let reqs = discover(dir.path()).await.unwrap();
+    let term = plain_terminal();
+
+    let planned_a = planned_for(dir.path(), &reqs[0].checks[0], "src/a.rs").await;
+    let planned_b = planned_for(dir.path(), &reqs[0].checks[1], "src/b.rs").await;
+
+    // Baseline: no presenter at all.
+    let fake_baseline = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a.clone())
+            .with_planned(1, planned_b.clone()),
+    );
+    let baseline_report = run_with_planner(&term, &reqs, fake_baseline, 2, false, None)
+        .await
+        .unwrap();
+    let baseline_bytes = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+    std::fs::remove_file(dir.path().join(".check-plan.toml")).unwrap();
+
+    // A presenter whose actor is already dead by the time planning starts.
+    let dead_actor = presenter::PlanPresenterActor::spawn(presenter::PlanPresenterActor::new(
+        Box::new(NoopBackend),
+        "test-model".into(),
+        presenter::FinalRecordSlot::new(),
+    ));
+    dead_actor.stop_gracefully().await.unwrap();
+    dead_actor.wait_for_shutdown().await;
+    let sink = presenter::PlanEventSink::new(dead_actor);
+
+    let fake_dead = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a)
+            .with_planned(1, planned_b),
+    );
+    let dead_report = run_with_planner(
+        &term,
+        &reqs,
+        fake_dead,
+        2,
+        false,
+        Some(presenter::Presentation {
+            sink,
+            owns_record: false,
+            final_record: presenter::FinalRecordSlot::new(),
+        }),
+    )
+    .await
+    .unwrap();
+    let dead_bytes = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+
+    assert_eq!(
+        baseline_report, dead_report,
+        "a dead presenter must not change the RunReport"
+    );
+    assert_eq!(
+        baseline_bytes, dead_bytes,
+        "a dead presenter must not change what gets written"
+    );
+}

@@ -7,7 +7,6 @@
 //! check`'s.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::checks::jev::plan_file::AgentReason;
@@ -140,7 +139,10 @@ pub(crate) struct PlanRow {
 }
 
 /// The plan presenter's whole view-model, mutated by
-/// [`PlanPresenterState::apply`].
+/// [`PlanPresenterState::apply`]. This is the **live** view only — the
+/// authoritative final record (MULTI-1829 code review) is a separate value,
+/// [`super::FinalRecord`], built directly from orchestration ground truth and
+/// delivered independently of this state — see its own docs.
 pub(crate) struct PlanPresenterState {
     pub model: String,
     pub run_started: Instant,
@@ -148,9 +150,6 @@ pub(crate) struct PlanPresenterState {
     pub discovery_complete: bool,
     pub rows: BTreeMap<CheckId, PlanRow>,
     pub recent_logs: VecDeque<String>,
-    /// Every `.check-plan.toml` written this run — set once, by
-    /// `PlanUiEvent::PlanFilesWritten`, right before the actor is stopped.
-    pub plan_files_written: Vec<PathBuf>,
 }
 
 impl PlanPresenterState {
@@ -162,7 +161,6 @@ impl PlanPresenterState {
             discovery_complete: false,
             rows: BTreeMap::new(),
             recent_logs: VecDeque::new(),
-            plan_files_written: Vec::new(),
         }
     }
 
@@ -290,9 +288,6 @@ impl PlanPresenterState {
                     row.error_message = Some(message.clone());
                     row.progress = None;
                 }
-            }
-            PlanUiEvent::PlanFilesWritten(paths) => {
-                self.plan_files_written = paths.clone();
             }
             PlanUiEvent::Log(line) => {
                 self.recent_logs.push_back(line.clone());
@@ -633,16 +628,6 @@ mod tests {
                 .all(|r| r.attempt == 0 && r.progress.is_none()),
             "no row was ever touched by Planning/Progress"
         );
-    }
-
-    #[test]
-    fn plan_files_written_is_recorded() {
-        let mut s = PlanPresenterState::new("m".into());
-        s.apply(&PlanUiEvent::PlanFilesWritten(vec![
-            PathBuf::from("a/.check-plan.toml"),
-            PathBuf::from("b/.check-plan.toml"),
-        ]));
-        assert_eq!(s.plan_files_written.len(), 2);
     }
 
     #[test]

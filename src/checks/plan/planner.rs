@@ -260,8 +260,7 @@ impl AgentPlanner {
                 sink.send(PlanUiEvent::Planning {
                     id: req.check_id,
                     attempt,
-                })
-                .await;
+                });
             }
 
             let lease = SandboxLease::new(self.sandbox.clone(), req.root.clone());
@@ -280,8 +279,7 @@ impl AgentPlanner {
                                 turn: update.turn,
                                 max_turns: update.max_turns,
                                 activity: update.activity,
-                            })
-                            .await;
+                            });
                         }
                     });
                     (Some(progress), Some(AbortOnDrop(forwarder)))
@@ -326,8 +324,7 @@ impl AgentPlanner {
                 sink.send(PlanUiEvent::Retrying {
                     id: req.check_id,
                     attempt,
-                })
-                .await;
+                });
             }
             attempt += 1;
         }
@@ -362,8 +359,7 @@ impl Planner for AgentPlanner {
         if let Some(sink) = &req.sink
             && !outcome.tool_calls.is_empty()
         {
-            sink.send(PlanUiEvent::Calibrating { id: req.check_id })
-                .await;
+            sink.send(PlanUiEvent::Calibrating { id: req.check_id });
         }
         // Owned so `EntryContext::declared_in` can borrow a `&str` that
         // outlives the `to_string_lossy()` temporary.

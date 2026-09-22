@@ -123,7 +123,17 @@ impl PlanRenderBackend for PlanHeartbeatBackend {
         }
     }
 
-    fn teardown(&mut self, _state: &PlanPresenterState) {
+    fn teardown(
+        &mut self,
+        _state: &PlanPresenterState,
+        _final_record: Option<&super::FinalRecord>,
+    ) {
+        // This backend never owns the terminal record (`owns_record` is
+        // always `false` — see `select_backend`): `plan::run_with_planner`
+        // prints the plain final record to stdout itself (from the same
+        // `FinalRecord` value, when there is one), so there is nothing for
+        // this backend's own teardown to render — just clear the in-place
+        // progress line so it never collides with that print.
         if self.stderr_is_tty && self.line_pending {
             let mut err = std::io::stderr().lock();
             let _ = write!(err, "\r\x1b[K");

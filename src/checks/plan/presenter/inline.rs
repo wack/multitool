@@ -27,9 +27,8 @@ use crate::checks::plan::agent_reason_str;
 use crate::checks::presenter::format::{clock_elapsed, gauge_bar, human_elapsed, spinner_frame};
 use crate::checks::presenter::{install_terminal_guards, styled_wrapped_lines};
 
-use super::PlanRenderBackend;
-use super::PlanUiEvent;
 use super::state::{PlanPresenterState, PlanRow, PlanRowState, StaleReason};
+use super::{FinalCheck, FinalOutcome, FinalRecord, PlanRenderBackend, PlanUiEvent};
 
 /// Reserved height for the live region.
 const VIEWPORT_HEIGHT: u16 = 16;
@@ -89,10 +88,31 @@ impl PlanInlineTuiBackend {
 
     /// Flush the whole final record (every row's terminal state, the stale
     /// reason for every re-planned check, and the list of `.check-plan.toml`
-    /// files written) into scrollback, once.
-    fn flush_final_record(&mut self, state: &PlanPresenterState) {
+    /// files written) into scrollback, once — rendered from `record`, the
+    /// run's one authoritative value (MULTI-1829 code review), never from
+    /// live [`PlanPresenterState`], which may have missed best-effort events.
+    fn flush_final_record(&mut self, record: &FinalRecord) {
         let width = self.terminal_width();
-        let lines = plan_final_record_lines(state, self.color, width);
+        let lines = final_record_lines(record, self.color, width);
+        if lines.is_empty() {
+            return;
+        }
+        let height = lines.len() as u16;
+        let _ = self.terminal.insert_before(height, move |buf| {
+            let area = buf.area;
+            Paragraph::new(lines).render(area, buf);
+        });
+    }
+
+    /// Degraded fallback for when no [`FinalRecord`] was ever built (the run
+    /// aborted before `plan::run_with_planner` reached that point, e.g. an
+    /// `AbortPlanRun` credential failure) — flush whatever the live view
+    /// captured from best-effort events instead of nothing. No written-files
+    /// list: that data lives only in a `FinalRecord`, which this run never
+    /// produced.
+    fn flush_partial_state(&mut self, state: &PlanPresenterState) {
+        let width = self.terminal_width();
+        let lines = partial_record_lines(state, self.color, width);
         if lines.is_empty() {
             return;
         }
@@ -122,18 +142,29 @@ impl PlanRenderBackend for PlanInlineTuiBackend {
         self.draw_live(state);
     }
 
-    fn teardown(&mut self, state: &PlanPresenterState) {
+    fn teardown(&mut self, state: &PlanPresenterState, final_record: Option<&FinalRecord>) {
         if self.torn_down {
             return;
         }
         self.torn_down = true;
-        if state.rows.is_empty() {
-            let _ = self.terminal.insert_before(1, |buf| {
-                let area = buf.area;
-                Paragraph::new(Line::raw("No requirements found.")).render(area, buf);
-            });
-        } else {
-            self.flush_final_record(state);
+        match final_record {
+            // The normal path: a complete, authoritative record was built.
+            // `total_checks` is always ≥ 1 here (a `FinalRecord` is only
+            // ever built past `run_with_planner`'s early "no requirements"
+            // return, and every requirement has ≥ 1 check by construction),
+            // so this is never the "No requirements found." case.
+            Some(record) => self.flush_final_record(record),
+            // No requirements were ever discovered — the presenter never
+            // received a single row either.
+            None if state.rows.is_empty() => {
+                let _ = self.terminal.insert_before(1, |buf| {
+                    let area = buf.area;
+                    Paragraph::new(Line::raw("No requirements found.")).render(area, buf);
+                });
+            }
+            // The run aborted before a `FinalRecord` was ever built — fall
+            // back to the live view's own best-effort state.
+            None => self.flush_partial_state(state),
         }
         let _ = self.terminal.clear();
         let mut stdout = io::stdout();
@@ -329,15 +360,86 @@ fn plan_live_lines(
     lines
 }
 
-/// The permanent final record: every row grouped by requirement with its
+/// One [`FinalCheck`]'s tag text — mirrors [`row_tag`]'s terminal-state arms
+/// exactly (same text conventions), just built from the authoritative
+/// [`FinalRecord`] rather than a live [`PlanRow`].
+fn final_check_tag(check: &FinalCheck) -> String {
+    let base = match &check.outcome {
+        FinalOutcome::Fresh => "fresh".to_string(),
+        FinalOutcome::Planned { verdict } => {
+            format!("planned (jev, {})", if *verdict { "pass" } else { "fail" })
+        }
+        FinalOutcome::AgentOnly { reason, verdict } => agent_only_tag(*reason, *verdict),
+        FinalOutcome::Error { message } => format!("error: {message}"),
+    };
+    if check.truncated {
+        format!("{base} · truncated")
+    } else {
+        base
+    }
+}
+
+/// The permanent final record: every requirement's checks with their
 /// terminal state, the stale reason for every re-planned check, a repeated
 /// truncated-count summary, and the list of `.check-plan.toml` files written —
-/// the ticket's exact contract for scrollback / non-TTY stdout.
-fn plan_final_record_lines(
-    state: &PlanPresenterState,
-    color: bool,
-    width: u16,
-) -> Vec<Line<'static>> {
+/// the ticket's exact contract for scrollback / non-TTY stdout. Built from
+/// `record` alone (MULTI-1829 code review: never from best-effort live
+/// state), so it is always complete and correct once a [`FinalRecord`] exists
+/// at all.
+fn final_record_lines(record: &FinalRecord, color: bool, width: u16) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    for req in &record.requirements {
+        lines.extend(styled_wrapped_lines(
+            &req.title,
+            width,
+            color.then(|| Style::new().add_modifier(Modifier::BOLD)),
+        ));
+        for check in &req.checks {
+            let mut text = format!("  {}: {}", check.title, final_check_tag(check));
+            if let Some(reason) = check.stale_reason {
+                text.push_str(&format!(" (stale: {})", reason.tag()));
+            }
+            let style = color.then(|| match &check.outcome {
+                FinalOutcome::Error { .. } => Style::new().fg(Color::Red),
+                FinalOutcome::Fresh => Style::new().add_modifier(Modifier::DIM),
+                _ => Style::new(),
+            });
+            lines.extend(styled_wrapped_lines(&text, width, style));
+        }
+    }
+
+    if record.truncated_count > 0 {
+        lines.extend(styled_wrapped_lines(
+            &format!(
+                "{} of {} checks have truncated discovery",
+                record.truncated_count, record.total_checks
+            ),
+            width,
+            color.then(|| Style::new().fg(Color::Yellow)),
+        ));
+    }
+
+    if !record.written_paths.is_empty() {
+        lines.push(Line::raw("Wrote plan files:"));
+        for path in &record.written_paths {
+            lines.extend(styled_wrapped_lines(
+                &format!("  {}", path.display()),
+                width,
+                None,
+            ));
+        }
+    }
+
+    lines
+}
+
+/// Degraded fallback rendered straight from live [`PlanPresenterState`] — see
+/// [`PlanInlineTuiBackend::flush_partial_state`]'s docs for when this is
+/// used. No written-files section: that data only ever lives in a
+/// [`FinalRecord`], which this path exists precisely because one was never
+/// built.
+fn partial_record_lines(state: &PlanPresenterState, color: bool, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     for req_index in state.requirement_indices() {
@@ -377,17 +479,6 @@ fn plan_final_record_lines(
             width,
             color.then(|| Style::new().fg(Color::Yellow)),
         ));
-    }
-
-    if !state.plan_files_written.is_empty() {
-        lines.push(Line::raw("Wrote plan files:"));
-        for path in &state.plan_files_written {
-            lines.extend(styled_wrapped_lines(
-                &format!("  {}", path.display()),
-                width,
-                None,
-            ));
-        }
     }
 
     lines
@@ -560,28 +651,44 @@ mod tests {
         );
     }
 
+    use super::super::FinalRequirement;
+
+    fn record_check(
+        title: &str,
+        outcome: FinalOutcome,
+        stale_reason: Option<StaleReason>,
+    ) -> FinalCheck {
+        FinalCheck {
+            title: title.into(),
+            outcome,
+            stale_reason,
+            truncated: false,
+        }
+    }
+
+    /// MULTI-1829 code review (blocking item 4): the inline backend's final
+    /// record renders from a [`FinalRecord`] value, not live state — this
+    /// exercises exactly that path (never `PlanPresenterState`/`PlanUiEvent`).
     #[test]
     fn final_record_lists_stale_reasons_and_written_files() {
-        let mut state = PlanPresenterState::new("m".into());
-        queued(&mut state, 0, 0);
-        state.apply(&PlanUiEvent::Stale {
-            id: 0,
-            reason: StaleReason::PromptChanged,
-        });
-        state.apply(&PlanUiEvent::Planning { id: 0, attempt: 1 });
-        state.apply(&PlanUiEvent::Calibrating { id: 0 });
-        state.apply(&PlanUiEvent::Planned {
-            id: 0,
-            verdict: true,
-            truncated: false,
-        });
-        state.apply(&PlanUiEvent::PlanFilesWritten(vec![
-            std::path::PathBuf::from("services/keystore/.check-plan.toml"),
-        ]));
+        let record = FinalRecord {
+            requirements: vec![FinalRequirement {
+                title: "Keystore".into(),
+                checks: vec![record_check(
+                    "Sign",
+                    FinalOutcome::Planned { verdict: true },
+                    Some(StaleReason::PromptChanged),
+                )],
+            }],
+            truncated_count: 0,
+            total_checks: 1,
+            written_paths: vec![std::path::PathBuf::from(
+                "services/keystore/.check-plan.toml",
+            )],
+        };
 
-        let lines = plan_final_record_lines(&state, false, 200);
-        let rows = rendered(&lines);
-        let joined = rows.join("\n");
+        let lines = final_record_lines(&record, false, 200);
+        let joined = rendered(&lines).join("\n");
         assert!(joined.contains("planned (jev, pass)"), "{joined}");
         assert!(joined.contains("stale: prompt changed"), "{joined}");
         assert!(joined.contains("Wrote plan files:"), "{joined}");
@@ -591,19 +698,127 @@ mod tests {
         );
     }
 
+    /// MULTI-1829 code review (blocking item 3): the final record shows the
+    /// stale reason for every re-planned check — every one of the ticket's
+    /// five reasons, for both `Planned` and `AgentOnly` outcomes.
+    #[test]
+    fn final_record_shows_every_stale_reason_for_planned_and_agent_only() {
+        let reasons = [
+            StaleReason::New,
+            StaleReason::PromptChanged,
+            StaleReason::FilesChanged,
+            StaleReason::FileSetChanged,
+            StaleReason::Forced,
+        ];
+        let mut checks = Vec::new();
+        for (i, reason) in reasons.iter().enumerate() {
+            checks.push(record_check(
+                &format!("planned-{i}"),
+                FinalOutcome::Planned { verdict: true },
+                Some(*reason),
+            ));
+            checks.push(record_check(
+                &format!("agent-only-{i}"),
+                FinalOutcome::AgentOnly {
+                    reason: AgentReason::JevUncertain,
+                    verdict: false,
+                },
+                Some(*reason),
+            ));
+        }
+        let record = FinalRecord {
+            requirements: vec![FinalRequirement {
+                title: "R".into(),
+                checks,
+            }],
+            truncated_count: 0,
+            total_checks: reasons.len() * 2,
+            written_paths: vec![],
+        };
+
+        let joined = rendered(&final_record_lines(&record, false, 200)).join("\n");
+        for reason in reasons {
+            let text = format!("(stale: {})", reason.tag());
+            assert_eq!(
+                joined.matches(&text).count(),
+                2,
+                "expected {text:?} for both Planned and AgentOnly in:\n{joined}"
+            );
+        }
+    }
+
+    /// Fresh and Error outcomes never carry a stale reason in the final
+    /// record — only a re-planned check (`Planned`/`AgentOnly`) does.
+    #[test]
+    fn final_record_never_shows_a_stale_reason_for_fresh_or_error() {
+        let record = FinalRecord {
+            requirements: vec![FinalRequirement {
+                title: "R".into(),
+                checks: vec![
+                    record_check("a", FinalOutcome::Fresh, None),
+                    record_check(
+                        "b",
+                        FinalOutcome::Error {
+                            message: "boom".into(),
+                        },
+                        None,
+                    ),
+                ],
+            }],
+            truncated_count: 0,
+            total_checks: 2,
+            written_paths: vec![],
+        };
+        let joined = rendered(&final_record_lines(&record, false, 200)).join("\n");
+        assert!(!joined.contains("stale:"), "{joined}");
+    }
+
     #[test]
     fn final_record_repeats_the_truncated_count() {
-        let mut state = PlanPresenterState::new("m".into());
-        queued(&mut state, 0, 0);
-        state.apply(&PlanUiEvent::Fresh {
-            id: 0,
-            truncated: true,
-        });
-        let lines = plan_final_record_lines(&state, false, 200);
-        let joined = rendered(&lines).join("\n");
+        let record = FinalRecord {
+            requirements: vec![FinalRequirement {
+                title: "R".into(),
+                checks: vec![FinalCheck {
+                    title: "a".into(),
+                    outcome: FinalOutcome::Fresh,
+                    stale_reason: None,
+                    truncated: true,
+                }],
+            }],
+            truncated_count: 1,
+            total_checks: 1,
+            written_paths: vec![],
+        };
+        let joined = rendered(&final_record_lines(&record, false, 200)).join("\n");
         assert!(
             joined.contains("1 of 1 checks have truncated discovery"),
             "{joined}"
         );
+    }
+
+    /// MULTI-1829 code review (blocking item 4): when no `FinalRecord` was
+    /// ever built (the abort path), the inline backend still flushes
+    /// *something* useful from the live view rather than nothing.
+    #[test]
+    fn partial_record_falls_back_to_live_state_when_no_final_record_exists() {
+        let mut state = PlanPresenterState::new("m".into());
+        queued(&mut state, 0, 0);
+        state.apply(&PlanUiEvent::Stale {
+            id: 0,
+            reason: StaleReason::New,
+        });
+        state.apply(&PlanUiEvent::Planning { id: 0, attempt: 1 });
+        state.apply(&PlanUiEvent::AgentOnly {
+            id: 0,
+            reason: AgentReason::ControlFailed,
+            verdict: false,
+            truncated: false,
+        });
+        let joined = rendered(&partial_record_lines(&state, false, 200)).join("\n");
+        assert!(
+            joined.contains("agent-only (control failed, fail)"),
+            "{joined}"
+        );
+        assert!(joined.contains("stale: new"), "{joined}");
     }
 }

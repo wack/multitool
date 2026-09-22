@@ -123,7 +123,10 @@ pub(crate) use planner::{EntryContext, entry_from_outcome};
 /// The presenter is stopped — and, for the inline TUI, its terminal restored
 /// — regardless of whether the run below succeeds, errors per-check, or
 /// aborts outright (a bad/missing Jev credential): display must never be the
-/// reason a terminal is left in a broken state.
+/// reason a terminal is left in a broken state. That stop is bounded
+/// (MULTI-1829 code review: `presenter::shutdown` times out and kills a
+/// stuck presenter) so a stalled/dead presenter can never hang the process
+/// after `run_with_planner` has already finished all planning work.
 ///
 /// Returns the process exit code (mirroring `crate::checks::run`'s own
 /// contract): `0` unless a check could not be planned. An invalid suite (a
@@ -160,9 +163,11 @@ pub async fn run(
         backend,
         owns_record,
     } = presenter::select_backend(terminal.stdout_allows_color());
+    let final_record = presenter::FinalRecordSlot::new();
     let presenter_actor = presenter::PlanPresenterActor::spawn(presenter::PlanPresenterActor::new(
         backend,
         resolved.config.model.clone(),
+        final_record.clone(),
     ));
     let sink = presenter::PlanEventSink::new(presenter_actor.clone());
 
@@ -172,16 +177,20 @@ pub async fn run(
         planner,
         resolved.config.concurrency,
         force,
-        Some(presenter::Presentation { sink, owns_record }),
+        Some(presenter::Presentation {
+            sink,
+            owns_record,
+            final_record,
+        }),
     )
     .await;
 
     // Always stop the presenter — even on an aborting `Err` — so a TTY
-    // backend restores the terminal regardless of outcome (mirrors
-    // `crate::checks::shutdown_actor`; the presenter is display-only, so its
-    // shutdown is never allowed to affect `result`).
-    let _ = presenter_actor.stop_gracefully().await;
-    presenter_actor.wait_for_shutdown().await;
+    // backend restores the terminal regardless of outcome. `presenter::shutdown`
+    // bounds the wait (MULTI-1829 code review item 2): the presenter is
+    // display-only, so its shutdown is never allowed to affect (or hang)
+    // `result`.
+    presenter::shutdown(&presenter_actor).await;
 
     let report = result?;
     Ok(report.exit_code)
@@ -457,14 +466,25 @@ enum LineOutcome {
 struct ProcessedCheck {
     descriptor: CheckDescriptor,
     outcome: LineOutcome,
+    /// Why this check was (re-)planned this run — `None` for a `Reused`
+    /// outcome (never stale) or when `plan_it` was never reached at all.
+    /// Carried alongside `outcome` (rather than folded into `LineOutcome`
+    /// itself) purely so [`build_final_record`] (MULTI-1829 code review item
+    /// 3) can show it for both `Planned` and `AgentOnly` terminal outcomes
+    /// without `LineOutcome` needing to know anything about presentation.
+    stale_reason: Option<presenter::StaleReason>,
 }
 
 /// Fire-and-forget `event` at `sink` if there is one — the one-line helper
 /// every event-emission call site in this module uses so the `if let
 /// Some(sink) = sink { ... }` boilerplate doesn't repeat at every call site.
-async fn tell(sink: Option<&presenter::PlanEventSink>, event: presenter::PlanUiEvent) {
+/// Non-async/non-blocking (MULTI-1829 code review item 1): delivery is
+/// best-effort — see [`presenter::PlanEventSink::send`]'s docs — so this
+/// never gates cache verification, agent start/retry, calibration, or the
+/// final plan write.
+fn tell(sink: Option<&presenter::PlanEventSink>, event: presenter::PlanUiEvent) {
     if let Some(sink) = sink {
-        sink.send(event).await;
+        sink.send(event);
     }
 }
 
@@ -487,22 +507,22 @@ async fn process_check(
                 id,
                 reason: presenter::StaleReason::Forced,
             },
-        )
-        .await;
-        return plan_it(descriptor, planner, sink).await;
+        );
+        return plan_it(descriptor, planner, sink, presenter::StaleReason::Forced).await;
     }
 
-    tell(sink, presenter::PlanUiEvent::Verifying { id }).await;
+    tell(sink, presenter::PlanUiEvent::Verifying { id });
 
     if let Some(entry) = lookup.matched {
         let replayed =
             replay::replay_check(&descriptor.check.title, &entry.calls, &descriptor.root).await;
         if replayed.freshness == Freshness::Fresh {
             let truncated = calls_have_truncated(&entry.calls);
-            tell(sink, presenter::PlanUiEvent::Fresh { id, truncated }).await;
+            tell(sink, presenter::PlanUiEvent::Fresh { id, truncated });
             return ProcessedCheck {
                 outcome: LineOutcome::Reused(entry),
                 descriptor,
+                stale_reason: None,
             };
         }
         let reason = match replayed.freshness {
@@ -510,8 +530,8 @@ async fn process_check(
             Freshness::DiscoveryStale => presenter::StaleReason::FileSetChanged,
             Freshness::Fresh => unreachable!("the Fresh case returned above"),
         };
-        tell(sink, presenter::PlanUiEvent::Stale { id, reason }).await;
-        return plan_it(descriptor, planner, sink).await;
+        tell(sink, presenter::PlanUiEvent::Stale { id, reason });
+        return plan_it(descriptor, planner, sink, reason).await;
     }
 
     let reason = if lookup.existed_at_position {
@@ -519,18 +539,22 @@ async fn process_check(
     } else {
         presenter::StaleReason::New
     };
-    tell(sink, presenter::PlanUiEvent::Stale { id, reason }).await;
-    plan_it(descriptor, planner, sink).await
+    tell(sink, presenter::PlanUiEvent::Stale { id, reason });
+    plan_it(descriptor, planner, sink, reason).await
 }
 
 /// Call the planner and emit the terminal presenter milestone
 /// (`Planned`/`AgentOnly`/`Error`, MULTI-1829) for whatever it returns —
 /// shared by every path [`process_check`] falls through to the planner from
-/// (no cached entry, a stale cached entry, or `--force`).
+/// (no cached entry, a stale cached entry, or `--force`). `stale_reason` is
+/// carried into the returned [`ProcessedCheck`] so the final record can show
+/// it later (MULTI-1829 code review item 3) — it is *not* threaded to the
+/// planner itself (`PlanRequest` has no use for it).
 async fn plan_it(
     descriptor: CheckDescriptor,
     planner: Arc<dyn Planner + Send + Sync>,
     sink: Option<&presenter::PlanEventSink>,
+    stale_reason: presenter::StaleReason,
 ) -> ProcessedCheck {
     let id = descriptor.index;
     let req = PlanRequest {
@@ -561,8 +585,7 @@ async fn plan_it(
                             verdict: planned.verdict,
                             truncated,
                         },
-                    )
-                    .await;
+                    );
                 }
                 Decider::Agent(reason) => {
                     tell(
@@ -573,8 +596,7 @@ async fn plan_it(
                             verdict: planned.verdict,
                             truncated,
                         },
-                    )
-                    .await;
+                    );
                 }
             }
             LineOutcome::Planned(planned)
@@ -586,14 +608,14 @@ async fn plan_it(
                     id,
                     message: err.to_string(),
                 },
-            )
-            .await;
+            );
             LineOutcome::Error(err)
         }
     };
     ProcessedCheck {
         descriptor,
         outcome,
+        stale_reason: Some(stale_reason),
     }
 }
 
@@ -664,8 +686,7 @@ pub(crate) async fn run_with_planner(
                 req_title: d.requirement_title.clone(),
                 check_title: d.check.title.clone(),
             },
-        )
-        .await;
+        );
     }
     let refused_ids: Vec<usize> = (descriptors.len()..).take(refused.len()).collect();
     for (r, id) in refused.iter().zip(refused_ids.iter().copied()) {
@@ -677,24 +698,21 @@ pub(crate) async fn run_with_planner(
                 req_title: r.requirement_title.clone(),
                 check_title: r.check_title.clone(),
             },
-        )
-        .await;
+        );
         tell(
             sink,
             presenter::PlanUiEvent::Error {
                 id,
                 message: r.message.clone(),
             },
-        )
-        .await;
+        );
     }
     tell(
         sink,
         presenter::PlanUiEvent::DiscoveryComplete {
             total_checks: descriptors.len() + refused.len(),
         },
-    )
-    .await;
+    );
 
     let lookups: Vec<CacheLookup> = descriptors
         .iter()
@@ -760,21 +778,26 @@ pub(crate) async fn run_with_planner(
         .map(|dir| dir.join(plan_file::PLAN_FILE_NAME))
         .collect();
     written_paths.sort();
-    tell(
-        sink,
-        presenter::PlanUiEvent::PlanFilesWritten(written_paths.clone()),
-    )
-    .await;
+
+    // Build this run's one, authoritative final record (MULTI-1829 code
+    // review item 4) and deposit it directly into the slot the presenter
+    // reads at teardown — bypassing the (lossy, best-effort) event mailbox
+    // entirely, so it reaches the presenter intact even if every single
+    // `PlanUiEvent` this run ever sent was dropped. See `presenter::FinalRecord`'s
+    // docs.
+    let final_record = build_final_record(
+        &refused,
+        &processed,
+        &written_paths,
+        truncated_count,
+        total_checks,
+    );
+    if let Some(p) = &presentation {
+        p.final_record.set(final_record.clone());
+    }
 
     if !owns_record {
-        print_plain_record(
-            terminal,
-            &refused,
-            &processed,
-            &written_paths,
-            truncated_count,
-            total_checks,
-        )?;
+        print_plain_record(terminal, &final_record)?;
     }
 
     Ok(RunReport {
@@ -919,59 +942,133 @@ fn find_existing_entry(
 }
 
 // ---------------------------------------------------------------------------
+// The final record (MULTI-1829 code review: blocking items 3 and 4)
+// ---------------------------------------------------------------------------
+
+/// Build this run's one, authoritative [`presenter::FinalRecord`] directly
+/// from `refused`/`processed`/`written_paths` — this run's own ground truth,
+/// never from anything the live presenter did or didn't receive (see
+/// [`presenter::FinalRecord`]'s docs on why). Both backends render from this
+/// same value: [`print_plain_record`] prints it as plain text, and (via
+/// `presenter::Presentation::final_record`) the inline TUI flushes it to
+/// scrollback at teardown.
+fn build_final_record(
+    refused: &[RefusedCheck],
+    processed: &[ProcessedCheck],
+    written_paths: &[PathBuf],
+    truncated_count: usize,
+    total_checks: usize,
+) -> presenter::FinalRecord {
+    // Group by `req_index` (assigned by `partition_checks`/`assign_req_indices`),
+    // in ascending order, refused and processed checks interleaved by that
+    // shared key so a directory's refused and plannable requirements both
+    // appear in the tree — exactly the live presenter tree's own grouping.
+    let mut by_req: std::collections::BTreeMap<usize, (String, Vec<presenter::FinalCheck>)> =
+        std::collections::BTreeMap::new();
+
+    for r in refused {
+        let entry = by_req
+            .entry(r.req_index)
+            .or_insert_with(|| (r.requirement_title.clone(), Vec::new()));
+        entry.1.push(presenter::FinalCheck {
+            title: r.check_title.clone(),
+            outcome: presenter::FinalOutcome::Error {
+                message: r.message.clone(),
+            },
+            stale_reason: None,
+            truncated: false,
+        });
+    }
+    for p in processed {
+        let entry = by_req
+            .entry(p.descriptor.req_index)
+            .or_insert_with(|| (p.descriptor.requirement_title.clone(), Vec::new()));
+        entry.1.push(final_check_for(p));
+    }
+
+    let requirements = by_req
+        .into_values()
+        .map(|(title, checks)| presenter::FinalRequirement { title, checks })
+        .collect();
+
+    presenter::FinalRecord {
+        requirements,
+        truncated_count,
+        total_checks,
+        written_paths: written_paths.to_vec(),
+    }
+}
+
+/// One processed check's [`presenter::FinalCheck`]. The stale reason is
+/// carried through for `Planned` **and** `AgentOnly` (both come from the same
+/// `LineOutcome::Planned` — `decider` alone tells them apart) — the ticket:
+/// "the stale reason for every re-planned check". A `Reused` (fresh) check
+/// was never re-planned, so it never carries one; neither does an errored
+/// attempt (`ProcessedCheck::stale_reason` is `Some` there too, but this
+/// function deliberately doesn't surface it — the ticket only asks for it on
+/// a check that was actually (re-)planned).
+fn final_check_for(p: &ProcessedCheck) -> presenter::FinalCheck {
+    let title = p.descriptor.check.title.clone();
+    match &p.outcome {
+        LineOutcome::Reused(entry) => presenter::FinalCheck {
+            title,
+            outcome: presenter::FinalOutcome::Fresh,
+            stale_reason: None,
+            truncated: calls_have_truncated(&entry.calls),
+        },
+        LineOutcome::Planned(planned) => {
+            let truncated = calls_have_truncated(&planned.calls);
+            let outcome = match planned.decider {
+                Decider::Jev => presenter::FinalOutcome::Planned {
+                    verdict: planned.verdict,
+                },
+                Decider::Agent(reason) => presenter::FinalOutcome::AgentOnly {
+                    reason,
+                    verdict: planned.verdict,
+                },
+            };
+            presenter::FinalCheck {
+                title,
+                outcome,
+                stale_reason: p.stale_reason,
+                truncated,
+            }
+        }
+        LineOutcome::Error(err) => presenter::FinalCheck {
+            title,
+            outcome: presenter::FinalOutcome::Error {
+                message: err.to_string(),
+            },
+            stale_reason: None,
+            truncated: false,
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Output formatting
 // ---------------------------------------------------------------------------
 
 /// The plain final record printed to stdout when no TTY-owning live backend
 /// already flushed it to scrollback (MULTI-1829) — the heartbeat backend, or
 /// no live presenter at all (every orchestration test in this module).
-/// Computed from this run's own ground truth (`refused`/`processed`/
-/// `written_paths`), **never** from the live presenter's state: the
-/// presenter is display-only and may be absent or have missed events, but
-/// this is the authoritative record and must not depend on it.
-fn print_plain_record(
-    terminal: &Terminal,
-    refused: &[RefusedCheck],
-    processed: &[ProcessedCheck],
-    written_paths: &[PathBuf],
-    truncated_count: usize,
-    total_checks: usize,
-) -> Result<()> {
-    // Group by `req_index` (assigned by `partition_checks`/`assign_req_indices`),
-    // in ascending order, refused and processed checks interleaved by that
-    // shared key so a directory's refused and plannable requirements both
-    // appear in the tree.
-    let mut by_req: std::collections::BTreeMap<usize, (String, Vec<String>)> =
-        std::collections::BTreeMap::new();
-    for r in refused {
-        let entry = by_req
-            .entry(r.req_index)
-            .or_insert_with(|| (r.requirement_title.clone(), Vec::new()));
-        entry
-            .1
-            .push(format!("  {}: error: {}", r.check_title, r.message));
-    }
-    for p in processed {
-        let entry = by_req
-            .entry(p.descriptor.req_index)
-            .or_insert_with(|| (p.descriptor.requirement_title.clone(), Vec::new()));
-        entry.1.push(format!("  {}", plain_line_for(p)));
-    }
-
-    for (title, lines) in by_req.values() {
-        terminal.write_stdout_line(title)?;
-        for line in lines {
-            terminal.write_stdout_line(line)?;
+/// Renders `record` — this run's one authoritative [`presenter::FinalRecord`]
+/// — never anything reconstructed from live presenter state.
+fn print_plain_record(terminal: &Terminal, record: &presenter::FinalRecord) -> Result<()> {
+    for req in &record.requirements {
+        terminal.write_stdout_line(&req.title)?;
+        for check in &req.checks {
+            terminal.write_stdout_line(&format!("  {}", final_check_line(check)))?;
         }
     }
 
-    if let Some(line) = summary_line(truncated_count, total_checks) {
+    if let Some(line) = summary_line(record.truncated_count, record.total_checks) {
         terminal.write_stdout_line(&line)?;
     }
 
-    if !written_paths.is_empty() {
+    if !record.written_paths.is_empty() {
         terminal.write_stdout_line("Wrote plan files:")?;
-        for path in written_paths {
+        for path in &record.written_paths {
             terminal.write_stdout_line(&format!("  {}", path.display()))?;
         }
     }
@@ -979,34 +1076,30 @@ fn print_plain_record(
     Ok(())
 }
 
-/// One processed check's plain-text line for [`print_plain_record`]: its
-/// title, terminal tag, and — for a re-planned check — its stale reason.
-fn plain_line_for(p: &ProcessedCheck) -> String {
-    let check_title = &p.descriptor.check.title;
-    match &p.outcome {
-        LineOutcome::Reused(entry) => {
-            let truncated = calls_have_truncated(&entry.calls);
-            let suffix = if truncated { " · truncated" } else { "" };
-            format!("{check_title}: fresh{suffix}")
+/// One [`presenter::FinalCheck`]'s plain-text line for [`print_plain_record`]:
+/// its title, terminal tag, truncated marker, and — for a re-planned check —
+/// its stale reason (MULTI-1829 code review item 3).
+fn final_check_line(check: &presenter::FinalCheck) -> String {
+    let tag = match &check.outcome {
+        presenter::FinalOutcome::Fresh => "fresh".to_string(),
+        presenter::FinalOutcome::Planned { verdict } => {
+            format!("planned (jev, {})", if *verdict { "pass" } else { "fail" })
         }
-        LineOutcome::Planned(planned) => {
-            let truncated = calls_have_truncated(&planned.calls);
-            let suffix = if truncated { " · truncated" } else { "" };
-            let tag = match planned.decider {
-                Decider::Jev => format!(
-                    "planned (jev, {})",
-                    if planned.verdict { "pass" } else { "fail" }
-                ),
-                Decider::Agent(reason) => format!(
-                    "agent-only ({}, {})",
-                    agent_reason_str(reason),
-                    if planned.verdict { "pass" } else { "fail" }
-                ),
-            };
-            format!("{check_title}: {tag}{suffix}")
-        }
-        LineOutcome::Error(err) => format!("{check_title}: error: {err}"),
+        presenter::FinalOutcome::AgentOnly { reason, verdict } => format!(
+            "agent-only ({}, {})",
+            agent_reason_str(*reason),
+            if *verdict { "pass" } else { "fail" }
+        ),
+        presenter::FinalOutcome::Error { message } => format!("error: {message}"),
+    };
+    let mut line = format!("{}: {tag}", check.title);
+    if check.truncated {
+        line.push_str(" · truncated");
     }
+    if let Some(reason) = check.stale_reason {
+        line.push_str(&format!(" (stale: {})", reason.tag()));
+    }
+    line
 }
 
 /// The `N of M checks have truncated discovery` summary line, or `None` when
