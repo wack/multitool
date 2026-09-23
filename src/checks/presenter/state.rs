@@ -61,6 +61,31 @@ pub(crate) struct CheckRow {
     pub started: Option<Instant>,
     /// The reconciled outcome, set once settled (carries evidence for the record).
     pub outcome: Option<CheckOutcome>,
+    /// The attempt currently running (1-based), set by the most recent
+    /// `CheckStarted` (MULTI-1828); `0` before the first attempt starts.
+    /// `CheckProgress` is accepted only when it names this exact attempt —
+    /// the progress-forwarding task for a finished attempt is *aborted*, not
+    /// joined (see `execution::run_one`), so a queued update from it is never
+    /// guaranteed to stop arriving before the next attempt's own events do.
+    pub attempt: u32,
+    /// The current attempt's most recent in-flight progress (MULTI-1828).
+    /// `None` until the first `CheckProgress` for this attempt arrives;
+    /// cleared on every `CheckStarted`, retry, and settle so a stale
+    /// turn/activity never survives past the attempt it described.
+    pub progress: Option<CheckProgress>,
+}
+
+/// One check's live progress, folded from [`UiEvent::CheckProgress`].
+/// Display-only: never affects verdicts, retries, or reporting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CheckProgress {
+    /// The turn the agent is currently on.
+    pub turn: u32,
+    /// The executor's configured turn ceiling.
+    pub max_turns: u32,
+    /// A short, root-relative rendering of the most recent allowlisted tool
+    /// call, when there is one to show.
+    pub activity: Option<String>,
 }
 
 /// The presenter's whole view-model, mutated by [`PresenterState::apply`].
@@ -119,24 +144,67 @@ impl PresenterState {
                         state: CheckState::Queued,
                         started: None,
                         outcome: None,
+                        attempt: 0,
+                        progress: None,
                     },
                 );
             }
-            UiEvent::CheckStarted { id } => {
+            UiEvent::CheckStarted { id, attempt } => {
                 if let Some(row) = self.rows.get_mut(id) {
                     row.state = CheckState::Running;
                     row.started = Some(Instant::now());
+                    row.attempt = *attempt;
+                    // A fresh attempt starts silent (MULTI-1828): any
+                    // progress left over from a previous attempt — or a
+                    // stray update that arrived while this one was between
+                    // attempts — no longer describes anything.
+                    row.progress = None;
                 }
             }
             UiEvent::CheckRetrying { id, attempt } => {
                 if let Some(row) = self.rows.get_mut(id) {
                     row.state = CheckState::Retrying(*attempt);
+                    // A fresh attempt starts silent (MULTI-1828): the prior
+                    // attempt's turn/activity no longer describes anything.
+                    row.progress = None;
                 }
             }
             UiEvent::CheckSettled { id, outcome } => {
                 if let Some(row) = self.rows.get_mut(id) {
                     row.state = CheckState::Settled(outcome.verdict);
                     row.outcome = Some(outcome.clone());
+                    // Nothing left to show once settled (MULTI-1828).
+                    row.progress = None;
+                }
+            }
+            UiEvent::CheckProgress {
+                id,
+                attempt,
+                turn,
+                max_turns,
+                activity,
+            } => {
+                // Accepted only for a row that is exactly `Running` *and* on
+                // exactly the attempt this update names (MULTI-1828 code
+                // review). Progress forwarding is best-effort and
+                // un-ordered relative to the check's own lifecycle events —
+                // `execution::run_one` aborts its forwarder task rather than
+                // waiting for it to drain, so a queued update from a
+                // finished attempt can still arrive after `CheckRetrying` or
+                // even after the *next* attempt's `CheckStarted`. Neither
+                // check alone is enough: `state == Running` alone would
+                // still accept a same-numbered update that outlived a
+                // retry-then-restart, and `attempt` alone would still accept
+                // one that arrives while merely `Retrying`.
+                if let Some(row) = self.rows.get_mut(id)
+                    && matches!(row.state, CheckState::Running)
+                    && row.attempt == *attempt
+                {
+                    row.progress = Some(CheckProgress {
+                        turn: *turn,
+                        max_turns: *max_turns,
+                        activity: activity.clone(),
+                    });
                 }
             }
             UiEvent::Log(line) => {
@@ -183,6 +251,19 @@ impl PresenterState {
             .values()
             .filter(|r| matches!(r.state, CheckState::Queued | CheckState::Retrying(_)))
             .count()
+    }
+
+    /// The `(turn, max_turns)` of every currently-running check that has
+    /// reported at least one turn, in id order — the heartbeat backend's
+    /// "turn of each running check" (MULTI-1828). A running check with no
+    /// progress yet (no turn observed) is simply omitted rather than padded
+    /// with a placeholder.
+    pub(crate) fn running_turns(&self) -> Vec<(u32, u32)> {
+        self.rows
+            .values()
+            .filter(|r| matches!(r.state, CheckState::Running))
+            .filter_map(|r| r.progress.as_ref().map(|p| (p.turn, p.max_turns)))
+            .collect()
     }
 
     /// The set of distinct `req_index`es, in ascending (declaration) order.
@@ -255,7 +336,7 @@ mod tests {
         assert_eq!(s.pending(), 1);
         assert_eq!(s.running(), 0);
 
-        s.apply(&UiEvent::CheckStarted { id: 0 });
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
         assert_eq!(s.running(), 1);
         assert_eq!(s.pending(), 0);
 
@@ -265,7 +346,7 @@ mod tests {
         assert_eq!(s.pending(), 1);
 
         // ...then a fresh start counts it as running again (no double-count).
-        s.apply(&UiEvent::CheckStarted { id: 0 });
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 2 });
         assert_eq!(s.running(), 1);
 
         s.apply(&UiEvent::CheckSettled {
@@ -308,5 +389,156 @@ mod tests {
         assert_eq!(outcome.title, "Req");
         assert!(!outcome.satisfied);
         assert_eq!(outcome.check_outcomes.len(), 2);
+    }
+
+    fn progress(attempt: u32, turn: u32, max_turns: u32, activity: Option<&str>) -> UiEvent {
+        UiEvent::CheckProgress {
+            id: 0,
+            attempt,
+            turn,
+            max_turns,
+            activity: activity.map(str::to_string),
+        }
+    }
+
+    fn queued(s: &mut PresenterState, id: CheckId) {
+        s.apply(&UiEvent::CheckQueued {
+            id,
+            req_index: 0,
+            req_title: "R".into(),
+            check_title: "c".into(),
+        });
+    }
+
+    /// MULTI-1828 acceptance: progress updates a running row.
+    #[test]
+    fn progress_updates_a_running_row() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+
+        s.apply(&progress(1, 1, 30, None));
+        let p = s.rows.get(&0).unwrap().progress.clone().unwrap();
+        assert_eq!(p.turn, 1);
+        assert_eq!(p.max_turns, 30);
+        assert_eq!(p.activity, None);
+
+        s.apply(&progress(1, 1, 30, Some("Read src/auth/sign.rs")));
+        let p = s.rows.get(&0).unwrap().progress.clone().unwrap();
+        assert_eq!(p.activity.as_deref(), Some("Read src/auth/sign.rs"));
+        assert_eq!(s.running_turns(), vec![(1, 30)]);
+    }
+
+    /// MULTI-1828 acceptance: progress is cleared on retry.
+    #[test]
+    fn progress_is_cleared_on_retry() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        s.apply(&progress(1, 3, 30, Some("Grep \"sign_jwt\"")));
+        assert!(s.rows.get(&0).unwrap().progress.is_some());
+
+        s.apply(&UiEvent::CheckRetrying { id: 0, attempt: 1 });
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+        assert!(s.running_turns().is_empty());
+    }
+
+    /// MULTI-1828 acceptance: progress is cleared on settle.
+    #[test]
+    fn progress_is_cleared_on_settle() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        s.apply(&progress(1, 5, 30, Some("Glob \"**/*.rs\"")));
+        assert!(s.rows.get(&0).unwrap().progress.is_some());
+
+        s.apply(&UiEvent::CheckSettled {
+            id: 0,
+            outcome: settled(Verdict::Satisfied),
+        });
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+    }
+
+    /// MULTI-1828 acceptance: events for an unknown id are ignored.
+    #[test]
+    fn progress_for_an_unknown_id_is_ignored() {
+        let mut s = PresenterState::new("test-model".into());
+        // No `CheckQueued` for id 0 at all.
+        s.apply(&progress(1, 1, 30, Some("Read x")));
+        assert!(s.rows.is_empty());
+    }
+
+    /// MULTI-1828 acceptance: a straggling event for an already-settled id
+    /// is ignored (it must not resurrect a turn/activity display for a row
+    /// that's already showing its final verdict).
+    #[test]
+    fn progress_for_a_settled_id_is_ignored() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        s.apply(&UiEvent::CheckSettled {
+            id: 0,
+            outcome: settled(Verdict::Satisfied),
+        });
+
+        s.apply(&progress(1, 9, 30, Some("Read late.rs")));
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+    }
+
+    /// MULTI-1828 code review blocker: a late progress update for the
+    /// attempt that just finished must be ignored while the row sits
+    /// `Retrying`, awaiting its next attempt — even though `attempt` still
+    /// matches, since the forwarder for a finished attempt is aborted, not
+    /// joined, so it can still deliver a queued update after `CheckRetrying`.
+    #[test]
+    fn late_progress_while_retrying_is_ignored() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        s.apply(&UiEvent::CheckRetrying { id: 0, attempt: 1 });
+
+        // A straggling update from attempt 1, arriving after the retry.
+        s.apply(&progress(1, 7, 30, Some("Read straggler.rs")));
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+    }
+
+    /// MULTI-1828 code review blocker: a late progress update from a
+    /// *previous* attempt must be ignored once the *next* attempt has
+    /// started running — it must not be misattributed to the new attempt.
+    #[test]
+    fn progress_from_a_previous_attempt_after_the_next_checkstarted_is_ignored() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        s.apply(&UiEvent::CheckRetrying { id: 0, attempt: 1 });
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 2 });
+
+        // A straggling attempt-1 update, arriving after attempt 2 started.
+        s.apply(&progress(1, 4, 30, Some("Read stale.rs")));
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
+
+        // Attempt 2's own progress is accepted normally.
+        s.apply(&progress(2, 1, 30, Some("Read fresh.rs")));
+        let p = s.rows.get(&0).unwrap().progress.clone().unwrap();
+        assert_eq!(p.activity.as_deref(), Some("Read fresh.rs"));
+    }
+
+    /// MULTI-1828 code review blocker: `CheckStarted` itself clears any
+    /// progress still sitting on the row (defense in depth alongside the
+    /// attempt-number check above — even if a stale update *did* somehow
+    /// carry the new attempt's number, a just-started attempt has not run
+    /// long enough to have produced any progress of its own yet).
+    #[test]
+    fn checkstarted_clears_any_leftover_progress() {
+        let mut s = PresenterState::new("test-model".into());
+        queued(&mut s, 0);
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 1 });
+        s.apply(&progress(1, 5, 30, Some("Read mid-flight.rs")));
+        assert!(s.rows.get(&0).unwrap().progress.is_some());
+
+        s.apply(&UiEvent::CheckRetrying { id: 0, attempt: 1 });
+        s.apply(&UiEvent::CheckStarted { id: 0, attempt: 2 });
+        assert!(s.rows.get(&0).unwrap().progress.is_none());
     }
 }

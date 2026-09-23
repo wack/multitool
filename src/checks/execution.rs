@@ -31,7 +31,7 @@ use kameo::message::{Context, Message};
 use miette::Result;
 use serde_json::{Value, json};
 
-use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport};
+use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport, ProgressSink};
 use crate::checks::messages::{
     CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete,
 };
@@ -229,10 +229,18 @@ async fn execute_check_job(
     let id = job.id;
     let mut attempt = 1;
     loop {
-        // The agent is about to run: mark the check Running.
-        let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
+        // The agent is about to run: mark the check Running. `attempt` lets
+        // the presenter distinguish this attempt's progress from a
+        // previous one's (MULTI-1828 code review) and clears any leftover
+        // progress from before.
+        let _ = presenter
+            .tell(UiEvent::CheckStarted {
+                id,
+                attempt: attempt as u32,
+            })
+            .await;
 
-        let mut result = run_one(executor.clone(), sandbox.clone(), &job, attempt).await;
+        let mut result = run_one(executor.clone(), sandbox.clone(), presenter, &job, attempt).await;
 
         // Harvest this attempt's trace *before* signalling completion, so it is
         // collected even for retried attempts (whose outcome never reaches
@@ -299,13 +307,53 @@ fn has_verdict(outcome: Option<&Result<AgentOutcome>>) -> bool {
 /// The lease clones `job.root` — the requirement's repository root
 /// (MULTI-1834), resolved per requirements file during discovery — not the
 /// directory `multi check` was scanned from.
+///
+/// Also wires this attempt's [`ProgressSink`] (MULTI-1828) to `presenter`: a
+/// forwarder task drains the paired receiver into fire-and-forget
+/// `UiEvent::CheckProgress` tells while the executor runs. Progress must
+/// never sit on the verdict path (MULTI-1828 code review), so this function
+/// does **not** join the forwarder — an [`AbortOnDrop`] guard aborts it the
+/// instant this function returns, on every exit path (success, executor error, or
+/// this future itself being dropped/cancelled), rather than waiting for it
+/// to drain. That is safe *only* because a stale/reordered progress update is
+/// now the presenter state's problem, not an ordering guarantee this
+/// function provides: [`UiEvent::CheckProgress`] carries `attempt`, and
+/// `PresenterState` rejects one that doesn't match the row's current attempt
+/// (see `presenter::state`).
 async fn run_one(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
+    presenter: &ActorRef<PresenterActor>,
     job: &CheckJob,
     attempt: usize,
 ) -> Result<AgentOutcome> {
     let declared_in = declared_in_relative_to_root(&job.filepath, &job.root);
+    let attempt = u32::try_from(attempt).unwrap_or(u32::MAX);
+
+    let (progress, mut updates) = ProgressSink::channel();
+    let id = job.id;
+    let forwarder = {
+        let presenter = presenter.clone();
+        tokio::spawn(async move {
+            while let Some(update) = updates.recv().await {
+                let _ = presenter
+                    .tell(UiEvent::CheckProgress {
+                        id,
+                        attempt,
+                        turn: update.turn,
+                        max_turns: update.max_turns,
+                        activity: update.activity,
+                    })
+                    .await;
+            }
+        })
+    };
+    // Aborts `forwarder` on drop — i.e. the instant this function returns by
+    // any path — so it can never delay or block settlement, even if a
+    // `ProgressSink` clone somehow outlived `run_check` (e.g. captured by a
+    // leaked `Arc` on a timeout path) and would otherwise hold the channel
+    // open forever.
+    let _forwarder_guard = AbortOnDrop(forwarder);
 
     let request = crate::checks::executor::AgentRunRequest {
         check_id: job.id,
@@ -313,10 +361,24 @@ async fn run_one(
         source_dir: job.root.clone(),
         sandbox: SandboxLease::new(sandbox, job.root.clone()),
         declared_in,
-        attempt: u32::try_from(attempt).unwrap_or(u32::MAX),
+        attempt,
+        progress: Some(progress),
     };
 
     executor.run_check(request).await
+}
+
+/// Aborts the wrapped task when dropped. Used so the progress-forwarder task
+/// (MULTI-1828) never outlives the attempt it belongs to: `run_one` never
+/// awaits it, so this drop guard — running on every return path, including a
+/// panic or this function's own future being cancelled — is the only thing
+/// that stops it.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// The declaring file's path relative to `root`, for display in the agent's
