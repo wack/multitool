@@ -240,6 +240,17 @@ jobs:
       - build
       - dist-build
     runs-on: ubuntu-22.04
+    # The merge queue builds several entries concurrently (a whole stack of
+    # PRs at once), and every merge-group run reaches this job. Its delete +
+    # recreate of the single `edge` release is not safe to run in parallel:
+    # concurrent runs race on the same tag ("a release with the same tag name
+    # already exists" / a 403 uploading to a release another run just deleted),
+    # fail `pr-ready`, and evict the whole stack from the queue. Serialize the
+    # publish step only — the builds above still run in parallel — and never
+    # cancel a run that is mid-publish, or its entry would be evicted too.
+    concurrency:
+      group: edge-release
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
