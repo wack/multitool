@@ -69,7 +69,7 @@ title = "Least-Privilege Agent Permissions"
 description = """
 A verification agent should observe, not mutate. By default each check's agent
 gets a read-only tool set and a permission policy that denies anything beyond
-read-only, so a check cannot alter files even within its sandbox.
+read-only, so a check cannot alter files, whether or not it runs in a sandbox.
 """
 
   [[requirement.check]]
@@ -99,23 +99,25 @@ Inspect how the in-process executor assigns a session identifier to each check's
 id = "checks-cannot-corrupt-workspace"
 title = "Checks Cannot Corrupt the Workspace"
 description = """
-Every check runs against a copy-on-write clone of the working tree, so a
-misbehaving agent cannot mutate the user's real files. Both checks below must
-pass for this requirement to be satisfied.
+Check agents only get read-only tools, so by default they read the user's real
+files directly and have no way to change them. For extra isolation, the opt-in
+`--sandbox` flag runs each check against a copy-on-write clone of its
+repository root instead. Both checks below must pass for this requirement to be
+satisfied.
 """
 
   [[requirement.check]]
   id = "sandbox-cross-platform"
   title = "Sandbox Is Cross-Platform and Platform-Gated"
   prompt = '''
-Inspect the sandboxing code. Confirm there is a sandbox abstraction (a trait such as `Sandbox`) with a working copy-on-write implementation on **both** macOS and Linux: macOS built on APFS `clonefile`, and Linux built on reflinks (the `FICLONE` ioctl) with a plain-copy fallback for filesystems that lack reflink support. Operating-system-specific code must be selected with `cfg` attributes so the crate still compiles on every target. The check fails if a real sandbox is created on only one of macOS or Linux (for example, if Linux falls through to a stub that returns an "unsupported platform" error instead of cloning the working tree), or if sandboxing is compiled unconditionally for a single operating system in a way that would break the build on other targets.
+Inspect the sandboxing code. Confirm there is a sandbox abstraction (a trait such as `Sandbox`) with a working copy-on-write implementation on **both** macOS and Linux: macOS built on APFS `clonefile`, and Linux built on reflinks (the `FICLONE` ioctl) with a plain-copy fallback for filesystems that lack reflink support. Operating-system-specific code must be selected with `cfg` attributes so the crate still compiles on every target. Sandboxing is opt-in (`--sandbox`), so a non-cloning default that hands back the source directory is expected and does not fail this check. The check fails if, when sandboxing is enabled, a real sandbox is created on only one of macOS or Linux (for example, if Linux falls through to a stub that returns an "unsupported platform" error instead of cloning the working tree), or if sandboxing is compiled unconditionally for a single operating system in a way that would break the build on other targets.
 '''
 
   [[requirement.check]]
-  id = "execution-uses-sandbox"
-  title = "Execution Uses the Sandbox"
+  id = "sandbox-opt-in-with-confined-tools"
+  title = "Sandbox Is Opt-In and Tools Stay Confined"
   prompt = '''
-Confirm that the execution phase creates a sandbox for each check and runs the agent with the sandbox directory as its working directory, rather than executing the agent against the real working directory. The check fails if any check is executed outside of a sandbox.
+Confirm that `multi check` and `multi plan` each accept an optional boolean `--sandbox` flag that defaults to off. When the flag is passed, the execution phase must create a copy-on-write sandbox for each check and run the agent with the sandbox directory as its working directory. When it is not passed, the agent may run directly in the requirement's repository root, but its path-bearing tools (file read, grep, glob) must still be confined to that working directory, and it must have no tool that writes files or runs shell commands. The check fails if `--sandbox` is missing, required, or on by default; if passing it does not put every check in a sandbox; or if an agent running without the sandbox can write files, run shell commands, or read outside its working directory.
 '''
 
 [[requirement]]
