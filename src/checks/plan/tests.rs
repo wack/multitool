@@ -98,7 +98,7 @@ async fn first_run_plans_every_check_second_run_reuses_all() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    let report = run_with_planner(&term, &reqs, fake1.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs, fake1.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -116,7 +116,7 @@ async fn first_run_plans_every_check_second_run_reuses_all() {
     // planner is invoked zero times.
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new());
-    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report2.exit_code, 0);
@@ -139,7 +139,7 @@ async fn editing_a_read_file_replans_only_the_affected_check() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -149,7 +149,7 @@ async fn editing_a_read_file_replans_only_the_affected_check() {
     let reqs2 = discover(dir.path()).await.unwrap();
     let replanned_a = planned_for(dir.path(), &reqs2[0].checks[0], "src/a.rs").await;
     let fake2 = Arc::new(FakePlanner::new().with_planned(0, replanned_a));
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -173,7 +173,7 @@ async fn editing_a_checks_prompt_replans_it() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -189,7 +189,7 @@ async fn editing_a_checks_prompt_replans_it() {
     assert_ne!(reqs2[0].checks[1].prompt, reqs[0].checks[1].prompt);
     let replanned_b = planned_for(dir.path(), &reqs2[0].checks[1], "src/b.rs").await;
     let fake2 = Arc::new(FakePlanner::new().with_planned(1, replanned_b));
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -213,7 +213,7 @@ async fn force_replans_every_check_even_when_fresh() {
             .with_planned(1, planned_b.clone()),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -223,7 +223,7 @@ async fn force_replans_every_check_even_when_fresh() {
             .with_planned(0, planned_a)
             .with_planned(1, planned_b),
     );
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -272,7 +272,7 @@ async fn truncated_discovery_entry_is_reused_not_replanned() {
 
     let fake1 = Arc::new(FakePlanner::new().with_planned(0, planned));
     let term = plain_terminal();
-    let report = run_with_planner(&term, &reqs, fake1.clone(), 1, false)
+    let report = run_with_planner(&term, &reqs, fake1.clone(), 1, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -284,7 +284,7 @@ async fn truncated_discovery_entry_is_reused_not_replanned() {
 
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new());
-    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 1, false)
+    let report2 = run_with_planner(&term, &reqs2, fake2.clone(), 1, false, None)
         .await
         .unwrap();
     assert_eq!(report2.exit_code, 0);
@@ -393,7 +393,7 @@ async fn requirements_file_without_a_manifest_is_refused_other_files_still_plann
     let planned_ok = planned_for(good_req.root.as_path(), &good_req.checks[0], "src/ok.rs").await;
     let fake = Arc::new(FakePlanner::new().with_planned(0, planned_ok));
     let term = plain_terminal();
-    let report = run_with_planner(&term, &reqs, fake.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs, fake.clone(), 2, false, None)
         .await
         .unwrap();
 
@@ -443,7 +443,7 @@ async fn a_planning_error_preserves_the_stale_entry_instead_of_deleting_it() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
     let before = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
@@ -454,7 +454,7 @@ async fn a_planning_error_preserves_the_stale_entry_instead_of_deleting_it() {
     std::fs::write(dir.path().join("src/a.rs"), "fn a() { /* changed */ }\n").unwrap();
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new().with_error(0, "transient Jev failure"));
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
 
@@ -491,7 +491,7 @@ async fn a_planning_error_under_force_still_preserves_the_old_entry() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -506,7 +506,7 @@ async fn a_planning_error_under_force_still_preserves_the_old_entry() {
                 planned_for(dir.path(), &reqs2[0].checks[1], "src/b.rs").await,
             ),
     );
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, true, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 1);
@@ -536,7 +536,7 @@ async fn a_check_removed_from_checksmd_is_dropped_from_the_plan() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
 
@@ -550,7 +550,7 @@ async fn a_check_removed_from_checksmd_is_dropped_from_the_plan() {
     let reqs2 = discover(dir.path()).await.unwrap();
     assert_eq!(reqs2[0].checks.len(), 1);
     let fake2 = Arc::new(FakePlanner::new());
-    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false)
+    let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
         .await
         .unwrap();
     assert_eq!(report.exit_code, 0);
@@ -584,7 +584,7 @@ async fn aborting_run_leaves_existing_plan_files_byte_identical() {
             .with_planned(1, planned_b),
     );
     let term = plain_terminal();
-    run_with_planner(&term, &reqs, fake1, 2, false)
+    run_with_planner(&term, &reqs, fake1, 2, false, None)
         .await
         .unwrap();
     let before = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
@@ -594,7 +594,7 @@ async fn aborting_run_leaves_existing_plan_files_byte_identical() {
     std::fs::write(dir.path().join("src/a.rs"), "fn a() { /* changed */ }\n").unwrap();
     let reqs2 = discover(dir.path()).await.unwrap();
     let fake2 = Arc::new(FakePlanner::new().with_abort(0, "missing key"));
-    let err = run_with_planner(&term, &reqs2, fake2, 2, false)
+    let err = run_with_planner(&term, &reqs2, fake2, 2, false, None)
         .await
         .expect_err("an abort-worthy error must fail the whole run");
     assert!(err.downcast_ref::<planner::AbortPlanRun>().is_some());
@@ -640,7 +640,7 @@ async fn planning_from_repo_root_or_a_subdirectory_is_byte_identical() {
     )
     .await;
     let fake_root = Arc::new(FakePlanner::new().with_planned(0, planned.clone()));
-    run_with_planner(&term, &reqs_root, fake_root, 1, false)
+    run_with_planner(&term, &reqs_root, fake_root, 1, false, None)
         .await
         .unwrap();
     let from_root = std::fs::read_to_string(&plan_path).unwrap();
@@ -651,7 +651,7 @@ async fn planning_from_repo_root_or_a_subdirectory_is_byte_identical() {
         .await
         .unwrap();
     let fake_sub = Arc::new(FakePlanner::new().with_planned(0, planned));
-    run_with_planner(&term, &reqs_sub, fake_sub, 1, false)
+    run_with_planner(&term, &reqs_sub, fake_sub, 1, false, None)
         .await
         .unwrap();
     let from_sub = std::fs::read_to_string(&plan_path).unwrap();
@@ -678,7 +678,7 @@ async fn abort_worthy_planner_error_aborts_the_run_and_writes_nothing() {
             ),
     );
     let term = plain_terminal();
-    let err = run_with_planner(&term, &reqs, fake, 2, false)
+    let err = run_with_planner(&term, &reqs, fake, 2, false, None)
         .await
         .expect_err("an abort-worthy Jev error must fail the whole run");
     assert!(err.downcast_ref::<planner::AbortPlanRun>().is_some());
@@ -775,14 +775,14 @@ async fn reused_entry_makes_zero_jev_calls() {
         Arc::new(AgentPlanner::new(executor.clone(), sandbox, client, cfg, 3));
     let term = plain_terminal();
 
-    with_api_key(|| run_with_planner(&term, &reqs, real_planner.clone(), 2, false))
+    with_api_key(|| run_with_planner(&term, &reqs, real_planner.clone(), 2, false, None))
         .await
         .unwrap();
     let after_first_run = server.received_requests().await.unwrap().len();
     assert!(after_first_run > 0, "planning must call Jev");
 
     let reqs2 = discover(dir.path()).await.unwrap();
-    with_api_key(|| run_with_planner(&term, &reqs2, real_planner, 2, false))
+    with_api_key(|| run_with_planner(&term, &reqs2, real_planner, 2, false, None))
         .await
         .unwrap();
     let after_second_run = server.received_requests().await.unwrap().len();
@@ -793,4 +793,174 @@ async fn reused_entry_makes_zero_jev_calls() {
     );
     // No additional agent runs either.
     assert_eq!(executor.seen().len(), 2, "no re-run agents on reuse");
+}
+
+// ---------------------------------------------------------------------------
+// The plain final record shows the stale reason for every re-planned check
+// (MULTI-1829 code review, blocking item 3)
+// ---------------------------------------------------------------------------
+
+/// MULTI-1829 code review (blocking item 3): the plain (non-TTY) final
+/// record's per-check line names the stale reason — every one of the
+/// ticket's five reasons, for both `Planned` (`decider = "jev"`) and
+/// `AgentOnly` (`decider = "agent"`) outcomes.
+#[test]
+fn final_check_line_shows_the_stale_reason_for_every_reason_planned_and_agent_only() {
+    for reason in [
+        presenter::StaleReason::New,
+        presenter::StaleReason::PromptChanged,
+        presenter::StaleReason::FilesChanged,
+        presenter::StaleReason::FileSetChanged,
+        presenter::StaleReason::Forced,
+    ] {
+        let planned = presenter::FinalCheck {
+            title: "a".into(),
+            outcome: presenter::FinalOutcome::Planned { verdict: true },
+            stale_reason: Some(reason),
+            truncated: false,
+        };
+        let line = final_check_line(&planned);
+        assert!(
+            line.contains(&format!("(stale: {})", reason.tag())),
+            "{line}"
+        );
+        assert!(line.contains("planned (jev, pass)"), "{line}");
+
+        let agent_only = presenter::FinalCheck {
+            title: "b".into(),
+            outcome: presenter::FinalOutcome::AgentOnly {
+                reason: AgentReason::JevUncertain,
+                verdict: false,
+            },
+            stale_reason: Some(reason),
+            truncated: false,
+        };
+        let line = final_check_line(&agent_only);
+        assert!(
+            line.contains(&format!("(stale: {})", reason.tag())),
+            "{line}"
+        );
+        assert!(line.contains("agent-only (jev uncertain, fail)"), "{line}");
+    }
+}
+
+/// Fresh and errored checks were never (re-)planned this run, so their line
+/// never names a stale reason — only `Planned`/`AgentOnly` do.
+#[test]
+fn final_check_line_never_shows_a_stale_reason_for_fresh_or_error() {
+    let fresh = presenter::FinalCheck {
+        title: "a".into(),
+        outcome: presenter::FinalOutcome::Fresh,
+        stale_reason: None,
+        truncated: false,
+    };
+    assert!(!final_check_line(&fresh).contains("stale:"));
+
+    let errored = presenter::FinalCheck {
+        title: "b".into(),
+        outcome: presenter::FinalOutcome::Error {
+            message: "boom".into(),
+        },
+        stale_reason: None,
+        truncated: false,
+    };
+    assert!(!final_check_line(&errored).contains("stale:"));
+}
+
+// ---------------------------------------------------------------------------
+// A dead/slow presenter must never affect planning (MULTI-1829 code review,
+// blocking item 1)
+// ---------------------------------------------------------------------------
+
+/// A backend that does nothing — just enough to spawn a real
+/// [`presenter::PlanPresenterActor`] and then kill it, for
+/// `planning_completes_when_the_presenter_actor_is_dead`.
+struct NoopBackend;
+
+impl presenter::PlanRenderBackend for NoopBackend {
+    fn apply(&mut self, _state: &presenter::PlanPresenterState, _event: &presenter::PlanUiEvent) {}
+    fn tick(&mut self, _state: &presenter::PlanPresenterState) {}
+    fn teardown(
+        &mut self,
+        _state: &presenter::PlanPresenterState,
+        _final_record: Option<&presenter::FinalRecord>,
+    ) {
+    }
+    fn tick_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(3600)
+    }
+}
+
+/// MULTI-1829 code review (blocking item 1): planning through a
+/// [`presenter::PlanEventSink`] whose actor has already been stopped
+/// completes normally — same `RunReport`, same `.check-plan.toml` bytes —
+/// exactly as if there had been no presenter at all. If `PlanEventSink::send`
+/// ever regressed to `.await`ing a `tell` over a bounded mailbox, sending to
+/// a *dead* actor still resolves promptly (kameo closes the channel), so this
+/// alone wouldn't catch that regression by hanging — but it does catch any
+/// regression that makes a dead presenter observably change planning's
+/// output, which is the actual correctness property at stake.
+#[tokio::test]
+async fn planning_completes_when_the_presenter_actor_is_dead() {
+    use kameo::actor::Spawn;
+
+    let dir = TempDir::new().unwrap();
+    write_two_check_fixture(dir.path());
+    let reqs = discover(dir.path()).await.unwrap();
+    let term = plain_terminal();
+
+    let planned_a = planned_for(dir.path(), &reqs[0].checks[0], "src/a.rs").await;
+    let planned_b = planned_for(dir.path(), &reqs[0].checks[1], "src/b.rs").await;
+
+    // Baseline: no presenter at all.
+    let fake_baseline = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a.clone())
+            .with_planned(1, planned_b.clone()),
+    );
+    let baseline_report = run_with_planner(&term, &reqs, fake_baseline, 2, false, None)
+        .await
+        .unwrap();
+    let baseline_bytes = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+    std::fs::remove_file(dir.path().join(".check-plan.toml")).unwrap();
+
+    // A presenter whose actor is already dead by the time planning starts.
+    let dead_actor = presenter::PlanPresenterActor::spawn(presenter::PlanPresenterActor::new(
+        Box::new(NoopBackend),
+        "test-model".into(),
+        presenter::FinalRecordSlot::new(),
+    ));
+    dead_actor.stop_gracefully().await.unwrap();
+    dead_actor.wait_for_shutdown().await;
+    let sink = presenter::PlanEventSink::new(dead_actor);
+
+    let fake_dead = Arc::new(
+        FakePlanner::new()
+            .with_planned(0, planned_a)
+            .with_planned(1, planned_b),
+    );
+    let dead_report = run_with_planner(
+        &term,
+        &reqs,
+        fake_dead,
+        2,
+        false,
+        Some(presenter::Presentation {
+            sink,
+            owns_record: false,
+            final_record: presenter::FinalRecordSlot::new(),
+        }),
+    )
+    .await
+    .unwrap();
+    let dead_bytes = std::fs::read_to_string(dir.path().join(".check-plan.toml")).unwrap();
+
+    assert_eq!(
+        baseline_report, dead_report,
+        "a dead presenter must not change the RunReport"
+    );
+    assert_eq!(
+        baseline_bytes, dead_bytes,
+        "a dead presenter must not change what gets written"
+    );
 }

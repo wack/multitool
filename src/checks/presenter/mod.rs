@@ -31,7 +31,7 @@
 //! [`NullBackend`]: recording::NullBackend
 
 mod backend;
-mod format;
+pub(crate) mod format;
 mod heartbeat;
 mod inline;
 mod recording;
@@ -51,6 +51,15 @@ use crate::terminal::{LogRouteGuard, route_logs};
 pub(crate) use backend::RenderBackend;
 use heartbeat::HeartbeatBackend;
 use inline::InlineTuiBackend;
+// Re-exported (not merely `pub(crate)` within `inline`) so `checks::plan`'s
+// own live presenter (MULTI-1829, `--features jev`) can reuse the same
+// terminal-guard installation and word-wrap primitive rather than
+// copy-pasting them — see that module's docs on why only these small pure/
+// mechanical helpers are shared, never the whole backend. `checks::plan` is
+// itself only compiled under that feature (see `checks::mod`), so this
+// re-export would otherwise be unused in the default build.
+#[cfg(feature = "jev")]
+pub(crate) use inline::{install_terminal_guards, styled_wrapped_lines};
 use recording::NullBackend;
 use state::PresenterState;
 

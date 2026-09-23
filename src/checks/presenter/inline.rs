@@ -221,7 +221,14 @@ const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
 /// Restore the cursor on the two paths that bypass `on_stop` — a panic and a
 /// SIGINT (Ctrl-C). Normal/error exits restore it in [`InlineTuiBackend::teardown`]
 /// via `on_stop`. Installed once.
-fn install_terminal_guards() {
+///
+/// `pub(crate)` (not private): `checks::plan`'s own inline backend
+/// (MULTI-1829, `--features jev`) also opens an inline viewport and needs the
+/// exact same guards — reused rather than duplicated (see
+/// `checks::presenter::mod`'s re-export). Safe to call from both: the `Once`
+/// makes a second call a no-op, and only one of `multi check`/`multi plan`
+/// ever runs per process.
+pub(crate) fn install_terminal_guards() {
     static GUARDS: Once = Once::new();
     GUARDS.call_once(|| {
         // Panic: show the cursor, then chain to the previous hook.
@@ -300,7 +307,14 @@ fn requirement_record_lines(
 /// `Line`, uniformly styled. Wrapping (rather than clipping) is what keeps long
 /// evidence text from being lost off the edge of the fixed-size `Buffer` that
 /// [`InlineTuiBackend::flush_completed`] renders into.
-fn styled_wrapped_lines(text: &str, width: u16, style: Option<Style>) -> Vec<Line<'static>> {
+///
+/// `pub(crate)` (not private): shared with `checks::plan`'s own inline
+/// backend — see [`install_terminal_guards`]'s doc comment for why.
+pub(crate) fn styled_wrapped_lines(
+    text: &str,
+    width: u16,
+    style: Option<Style>,
+) -> Vec<Line<'static>> {
     // A degenerate width (terminal not yet sized) can't wrap meaningfully;
     // fall back to a single unwrapped row rather than looping or dividing by it.
     if width == 0 {
