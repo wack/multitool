@@ -194,23 +194,18 @@ mod tests {
     fn req(check_id: CheckId) -> AgentRunRequest {
         AgentRunRequest {
             check_id,
-            check: crate::checks::model::Check {
-                title: "t".into(),
-                prompt: "p".into(),
-            },
+            check: crate::checks::model::Check::new_prompt("t", "t", "p"),
             source_dir: std::path::PathBuf::from("."),
             sandbox: crate::checks::sandbox::SandboxLease::new(
                 std::sync::Arc::new(crate::checks::sandbox::RecordingSandbox::new()),
                 std::path::PathBuf::from("."),
             ),
-            declared_in: std::path::PathBuf::from("CHECKS.md"),
+            declared_in: std::path::PathBuf::from("CHECKS.toml"),
             attempt: 1,
             progress: None,
             plan: PlanIdentity {
                 dir: std::path::PathBuf::from("."),
-                source: "CHECKS.md".to_string(),
-                req_ordinal: 0,
-                check_ordinal: check_id as u32,
+                requirement_id: "r".to_string(),
                 requirement_title: "R".to_string(),
                 root_source: crate::checks::model::RootSource::Manifest,
             },

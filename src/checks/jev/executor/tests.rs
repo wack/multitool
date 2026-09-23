@@ -28,10 +28,7 @@ use crate::checks::sandbox::RecordingSandbox;
 // ---------------------------------------------------------------------------
 
 fn check() -> Check {
-    Check {
-        title: "No yellow".to_string(),
-        prompt: "scan for yellow text".to_string(),
-    }
+    Check::new_prompt("no-yellow", "No yellow", "scan for yellow text")
 }
 
 fn jev_config(threshold: f64, base_url: &str) -> JevConfig {
@@ -64,9 +61,8 @@ async fn read_checksum(root: &Path, relative: &str) -> String {
 /// Write a one-requirement, one-check `.check-plan.toml` beside `dir`.
 fn write_plan(dir: &Path, entry: PlanCheck) {
     let plan = PlanFile::new(vec![PlanRequirement {
+        id: "r".to_string(),
         title: "R".to_string(),
-        source: "CHECKS.md".to_string(),
-        ordinal: 0,
         checks: vec![entry],
     }]);
     PlanStore::write(dir, &plan).unwrap();
@@ -81,9 +77,9 @@ fn plan_entry(
     calls: Vec<PlanCall>,
 ) -> PlanCheck {
     PlanCheck {
+        id: c.id.clone(),
         title: c.title.clone(),
-        ordinal: 0,
-        prompt_xxh64: plan_file::prompt_xxh64(&c.title, &c.prompt),
+        prompt_xxh64: plan_file::prompt_xxh64(&c.title, c.prompt()),
         decider,
         verdict,
         evidence: evidence.map(str::to_string),
@@ -104,13 +100,11 @@ fn calibration(model: &str, noul: f64) -> JevCalibration {
     }
 }
 
-/// A `PlanIdentity` naming `dir`'s `.check-plan.toml`, requirement/check 0.
+/// A `PlanIdentity` naming `dir`'s `.check-plan.toml`, requirement `r`.
 fn plan_identity(dir: &Path) -> PlanIdentity {
     PlanIdentity {
         dir: dir.to_path_buf(),
-        source: "CHECKS.md".to_string(),
-        req_ordinal: 0,
-        check_ordinal: 0,
+        requirement_id: "r".to_string(),
         requirement_title: "R".to_string(),
         root_source: RootSource::Manifest,
     }
@@ -127,7 +121,7 @@ fn request(
         check: check(),
         source_dir: root.to_path_buf(),
         sandbox: crate::checks::sandbox::SandboxLease::new(sandbox, root.to_path_buf()),
-        declared_in: PathBuf::from("CHECKS.md"),
+        declared_in: PathBuf::from("CHECKS.toml"),
         attempt,
         progress: None,
         plan,
@@ -1451,10 +1445,9 @@ async fn false_positive_heals_by_replacing_the_entry_with_the_agents_fresh_trace
         .expect("plan still exists");
     let entry = healed
         .lookup(
-            "CHECKS.md",
-            0,
-            0,
-            &plan_file::prompt_xxh64(&check().title, &check().prompt),
+            "r",
+            &check().id,
+            &plan_file::prompt_xxh64(&check().title, check().prompt()),
         )
         .expect("healed entry present");
     assert_eq!(entry.decider, Decider::Jev);
@@ -1564,10 +1557,9 @@ async fn confirmed_failure_heals_to_a_cached_failure_on_the_next_run() {
         .expect("healing creates a plan from scratch when none existed");
     let entry = healed
         .lookup(
-            "CHECKS.md",
-            0,
-            0,
-            &plan_file::prompt_xxh64(&check().title, &check().prompt),
+            "r",
+            &check().id,
+            &plan_file::prompt_xxh64(&check().title, check().prompt()),
         )
         .expect("healed entry present");
     assert_eq!(entry.decider, Decider::Jev);
@@ -1649,10 +1641,9 @@ async fn reads_stale_satisfied_refreshes_in_place_and_next_run_is_fully_cached()
     let healed = PlanStore::load(dir.path()).unwrap().unwrap();
     let entry = healed
         .lookup(
-            "CHECKS.md",
-            0,
-            0,
-            &plan_file::prompt_xxh64(&check().title, &check().prompt),
+            "r",
+            &check().id,
+            &plan_file::prompt_xxh64(&check().title, check().prompt()),
         )
         .unwrap();
     assert!(entry.verdict, "verdict refreshed to satisfied");
@@ -1705,10 +1696,7 @@ async fn frozen_flag_never_writes_and_makes_zero_calibration_calls() {
     write_plan(
         dir.path(),
         plan_entry(
-            &Check {
-                title: "Another check".to_string(),
-                prompt: "unrelated".to_string(),
-            },
+            &Check::new_prompt("another-check", "Another check", "unrelated"),
             Decider::Jev,
             true,
             Some("unrelated cached evidence"),
@@ -2016,21 +2004,17 @@ async fn finalize_if_settled_skips_finalize_on_abort_even_with_a_pending_heal() 
     let xxh64 = read_checksum(dir.path(), "i.rs").await;
 
     let check0 = check();
-    let check1 = Check {
-        title: "Check B".to_string(),
-        prompt: "prompt b".to_string(),
-    };
+    let check1 = Check::new_prompt("check-b", "Check B", "prompt b");
 
-    // Only check 1 has a stored entry (ordinal 1) — check 0 (ordinal 0) has
-    // none, so it escalates trivially, with no live decide-time Jev call.
+    // Only check 1 has a stored entry — check 0 has none, so it escalates
+    // trivially, with no live decide-time Jev call.
     let plan = PlanFile::new(vec![PlanRequirement {
+        id: "r".to_string(),
         title: "R".to_string(),
-        source: "CHECKS.md".to_string(),
-        ordinal: 0,
         checks: vec![PlanCheck {
+            id: check1.id.clone(),
             title: check1.title.clone(),
-            ordinal: 1,
-            prompt_xxh64: plan_file::prompt_xxh64(&check1.title, &check1.prompt),
+            prompt_xxh64: plan_file::prompt_xxh64(&check1.title, check1.prompt()),
             decider: Decider::Jev,
             verdict: true,
             evidence: Some("stale".to_string()),
@@ -2073,11 +2057,10 @@ async fn finalize_if_settled_skips_finalize_on_abort_even_with_a_pending_heal() 
         false,
     ));
 
-    let identity0 = plan_identity(dir.path()); // check_ordinal: 0
-    let identity1 = PlanIdentity {
-        check_ordinal: 1,
-        ..plan_identity(dir.path())
-    };
+    // Both checks share requirement `r`; each request's own `check.id`
+    // selects its entry.
+    let identity0 = plan_identity(dir.path());
+    let identity1 = plan_identity(dir.path());
 
     with_api_key(|| async {
         let req0 = AgentRunRequest {
@@ -2088,7 +2071,7 @@ async fn finalize_if_settled_skips_finalize_on_abort_even_with_a_pending_heal() 
                 sandbox.clone(),
                 dir.path().to_path_buf(),
             ),
-            declared_in: PathBuf::from("CHECKS.md"),
+            declared_in: PathBuf::from("CHECKS.toml"),
             attempt: 1,
             progress: None,
             plan: identity0,
@@ -2108,7 +2091,7 @@ async fn finalize_if_settled_skips_finalize_on_abort_even_with_a_pending_heal() 
             check: check1,
             source_dir: dir.path().to_path_buf(),
             sandbox: crate::checks::sandbox::SandboxLease::new(sandbox, dir.path().to_path_buf()),
-            declared_in: PathBuf::from("CHECKS.md"),
+            declared_in: PathBuf::from("CHECKS.toml"),
             attempt: 1,
             progress: None,
             plan: identity1,

@@ -18,7 +18,7 @@ use tempfile::TempDir;
 use tokio::sync::Barrier;
 
 use crate::checks::config::{Config, configuration};
-use crate::checks::discovery::discover;
+use crate::checks::discovery::{checks_toml, discover, unwrapped};
 use crate::checks::executor::{
     AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, FakeExecutor,
 };
@@ -35,46 +35,45 @@ fn plain_terminal() -> Terminal {
     Terminal::new(&cli)
 }
 
-/// A fixture tree spanning two files: a satisfied anonymous-check requirement, a
+/// A fixture tree spanning two files: a satisfied single-check requirement, a
 /// two-check (AND) requirement, and — nested — a failing requirement.
 fn write_fixture() -> TempDir {
     let dir = TempDir::new().unwrap();
     fs::write(
-        dir.path().join("CHECKS.md"),
-        "# Requirement Anon Satisfied\n\
-         scan and confirm this holds\n\
-         \n\
-         # Requirement Multi And\n\
-         ## Check First\n\
-         first prompt\n\
-         ## Check Second\n\
-         second prompt\n",
+        dir.path().join("CHECKS.toml"),
+        checks_toml(&[
+            (
+                "Single Satisfied",
+                &[("Single Satisfied", "scan and confirm this holds")],
+            ),
+            (
+                "Multi And",
+                &[("First", "first prompt"), ("Second", "second prompt")],
+            ),
+        ]),
     )
     .unwrap();
     fs::create_dir_all(dir.path().join("nested")).unwrap();
     fs::write(
-        dir.path().join("nested/CHECKS.md"),
-        "# Requirement Failing\n\
-         ## Check Bad\n\
-         this one fails\n",
+        dir.path().join("nested/CHECKS.toml"),
+        checks_toml(&[("Failing", &[("Bad", "this one fails")])]),
     )
     .unwrap();
     dir
 }
 
 #[tokio::test]
-async fn pipeline_satisfied_failed_multi_and_anonymous() {
+async fn pipeline_satisfied_failed_and_multi_and() {
     let dir = write_fixture();
     let reqs = discover(dir.path()).await.unwrap();
 
     // Discovery: three requirements across two files, sorted (root before nested).
     assert_eq!(reqs.len(), 3);
-    assert_eq!(reqs[0].title, "Anon Satisfied");
+    assert_eq!(reqs[0].title, "Single Satisfied");
     assert_eq!(reqs[1].title, "Multi And");
     assert_eq!(reqs[2].title, "Failing");
-    // The anonymous check inherits the requirement's title.
     assert_eq!(reqs[0].checks.len(), 1);
-    assert_eq!(reqs[0].checks[0].title, "Anon Satisfied");
+    assert_eq!(reqs[0].checks[0].id, "single-satisfied");
     // The multi-check requirement carries two checks (ANDed).
     assert_eq!(reqs[1].checks.len(), 2);
 
@@ -107,7 +106,7 @@ async fn pipeline_satisfied_failed_multi_and_anonymous() {
     // Aggregated verdicts: satisfied / satisfied(AND) / failed.
     assert!(
         outcomes[0].satisfied,
-        "anonymous-check requirement should pass"
+        "single-check requirement should pass"
     );
     assert!(
         outcomes[1].satisfied,
@@ -131,7 +130,11 @@ async fn pipeline_satisfied_failed_multi_and_anonymous() {
 #[tokio::test]
 async fn all_satisfied_exits_zero() {
     let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("CHECKS.md"), "# Requirement Ok\ndo it\n").unwrap();
+    fs::write(
+        dir.path().join("CHECKS.toml"),
+        checks_toml(&[("Ok", &[("Ok", "do it")])]),
+    )
+    .unwrap();
     let reqs = discover(dir.path()).await.unwrap();
 
     let fake = Arc::new(FakeExecutor::new().with_report(0, true, None));
@@ -208,8 +211,11 @@ async fn checks_execute_concurrently_not_in_a_barrier() {
     // default now tracks available parallelism, not a fixed value).
     let dir = TempDir::new().unwrap();
     fs::write(
-        dir.path().join("CHECKS.md"),
-        "# Requirement One\ncheck one\n\n# Requirement Two\ncheck two\n",
+        dir.path().join("CHECKS.toml"),
+        checks_toml(&[
+            ("One", &[("One", "check one")]),
+            ("Two", &[("Two", "check two")]),
+        ]),
     )
     .unwrap();
     let reqs = discover(dir.path()).await.unwrap();
@@ -238,11 +244,11 @@ async fn checks_execute_concurrently_not_in_a_barrier() {
 
 #[tokio::test]
 async fn invalid_suite_aborts_run_without_spawning_agents() {
-    // An orphan `## Check` (no preceding requirement) makes the suite invalid.
+    // A requirement with no checks makes the suite invalid.
     let dir = TempDir::new().unwrap();
     fs::write(
-        dir.path().join("CHECKS.md"),
-        "## Check Orphan\nno requirement above me\n",
+        dir.path().join("CHECKS.toml"),
+        checks_toml(&[("Lonely", &[])]),
     )
     .unwrap();
 
@@ -263,7 +269,10 @@ async fn invalid_suite_aborts_run_without_spawning_agents() {
     // The run aborts as an `Err` diagnostic (so CI distinguishes "tool errored"
     // from "checks failed"), and — crucially — no agent was ever spawned.
     let err = result.expect_err("an invalid suite must abort the run");
-    assert!(format!("{err:?}").contains("orphan"), "got: {err:?}");
+    assert!(
+        unwrapped(&err).contains("declares no checks"),
+        "got: {err:?}"
+    );
     assert!(
         fake.seen().is_empty(),
         "no agents should run for an invalid suite, saw: {:?}",
@@ -279,8 +288,8 @@ fn write_manifest_fixture() -> TempDir {
     fs::write(dir.path().join("MultiTool.toml"), "").unwrap();
     fs::create_dir_all(dir.path().join("services/keystore")).unwrap();
     fs::write(
-        dir.path().join("services/keystore/CHECKS.md"),
-        "# Requirement Keystore Scoped\ndo it\n",
+        dir.path().join("services/keystore/CHECKS.toml"),
+        checks_toml(&[("Keystore Scoped", &[("Keystore Scoped", "do it")])]),
     )
     .unwrap();
     dir
@@ -373,8 +382,8 @@ fn relative_scan_path_still_resolves_the_repository_root() {
         jail.create_file("MultiTool.toml", "")?;
         fs::create_dir_all("services/keystore").unwrap();
         fs::write(
-            "services/keystore/CHECKS.md",
-            "# Requirement Keystore Scoped\ndo it\n",
+            "services/keystore/CHECKS.toml",
+            checks_toml(&[("Keystore Scoped", &[("Keystore Scoped", "do it")])]),
         )
         .unwrap();
 
@@ -404,7 +413,7 @@ fn relative_scan_path_still_resolves_the_repository_root() {
             // root-relative — never an absolute host path.
             assert_eq!(
                 fake.declared_ins(),
-                vec![PathBuf::from("services/keystore/CHECKS.md")]
+                vec![PathBuf::from("services/keystore/CHECKS.toml")]
             );
         });
 
@@ -427,8 +436,8 @@ fn cwd_inside_a_subdirectory_scanning_dot_still_finds_the_root_above() {
         jail.create_file("MultiTool.toml", "")?;
         fs::create_dir_all("services/keystore").unwrap();
         fs::write(
-            "services/keystore/CHECKS.md",
-            "# Requirement Keystore Scoped\ndo it\n",
+            "services/keystore/CHECKS.toml",
+            checks_toml(&[("Keystore Scoped", &[("Keystore Scoped", "do it")])]),
         )
         .unwrap();
 
@@ -455,10 +464,10 @@ fn cwd_inside_a_subdirectory_scanning_dot_still_finds_the_root_above() {
             assert_eq!(sandbox.sources(), vec![repo_root.clone()]);
             // Same root-relative `declared_in` as the previous test, despite
             // the discovered file's own path being spelled differently
-            // (`./CHECKS.md` here vs. `services/keystore/CHECKS.md` there).
+            // (`./CHECKS.toml` here vs. `services/keystore/CHECKS.toml` there).
             assert_eq!(
                 fake.declared_ins(),
-                vec![PathBuf::from("services/keystore/CHECKS.md")]
+                vec![PathBuf::from("services/keystore/CHECKS.toml")]
             );
         });
 

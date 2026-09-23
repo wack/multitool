@@ -8,7 +8,6 @@
 //! Titles are **not** unique across the set — requirements and checks are
 //! grouped by the file that declares them, never keyed on their titles.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// A stable identifier for a check within a single `multi check` run.
@@ -24,10 +23,20 @@ pub type CheckId = usize;
 /// is true is **satisfied**.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Requirement {
-    /// The `CHECKS.md` file that declared this requirement.
+    /// The `CHECKS.toml` file that declared this requirement.
     pub filepath: PathBuf,
-    /// The requirement title (the text after the `# Requirement`/`# Req` sentinel).
+    /// The requirement's stable identifier: kebab-case, unique within its
+    /// declaring file. Titles are for display only; `id` is what a
+    /// `.check-plan.toml` keys on, so reordering or retitling requirements
+    /// never detaches them from their frozen evidence.
+    pub id: String,
+    /// The requirement title, for display.
     pub title: String,
+    /// Optional prose describing the requirement. Metadata only — never sent
+    /// to an agent.
+    pub description: Option<String>,
+    /// Optional free-form labels for filtering and reporting.
+    pub tags: Vec<String>,
     /// The checks that attest to this requirement.
     ///
     /// Invariant: guaranteed **non-empty** after discovery validation (M1). An
@@ -63,17 +72,48 @@ pub enum RootSource {
 }
 
 /// A check: instructions for deciding whether a requirement is satisfied.
-///
-/// In the MVP every check is a `prompt`-type check whose body is a prompt for a
-/// Claude Code agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
-    /// The check title. May be **inherited** from the requirement when the check
-    /// is anonymous (the requirement declared no explicit `## Check`).
+    /// The check's stable identifier: kebab-case, unique within its
+    /// requirement — see [`Requirement::id`].
+    pub id: String,
+    /// The check title, for display.
     pub title: String,
-    /// The agent prompt: the raw Markdown body beneath the `## Check` (or the
-    /// requirement prose, for an anonymous check).
-    pub prompt: String,
+    /// What kind of check this is, and that kind's own settings.
+    pub kind: CheckKind,
+}
+
+impl Check {
+    /// Build a `kind = "prompt"` check.
+    pub fn new_prompt(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            kind: CheckKind::Prompt {
+                prompt: prompt.into(),
+            },
+        }
+    }
+
+    /// The agent prompt this check runs with.
+    pub fn prompt(&self) -> &str {
+        match &self.kind {
+            CheckKind::Prompt { prompt } => prompt,
+        }
+    }
+}
+
+/// The kinds of check a `CHECKS.toml` can declare (its `kind` key). Each
+/// variant carries the settings specific to that kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckKind {
+    /// `kind = "prompt"` (the default): instructions for a reasoning agent
+    /// inspecting the repository.
+    Prompt { prompt: String },
 }
 
 /// The verdict for a single check after execution and reconciliation.
@@ -190,51 +230,19 @@ pub struct RequirementOutcome {
 // Plan identity (MULTI-1825)
 // ---------------------------------------------------------------------------
 
-/// The `(dir, source)` pair identifying which `.check-plan.toml` covers a
-/// requirements file: `dir` is `filepath`'s parent directory and `source` is
-/// its file name — the exact key
-/// [`crate::checks::jev::plan_file::PlanRequirement::source`] stores and
-/// [`crate::checks::jev::plan_file::PlanFile::lookup`] matches against.
-/// `pub(crate)`, not `#[cfg(feature = "jev")]`: unconditional so `multi
-/// check`'s `stream_requirements` (populating every `CheckJob`'s plan
-/// identity, MULTI-1825) and `multi plan`'s `group_by_directory`
-/// (MULTI-1824, `--features jev` only) derive it through the exact same
-/// function — the two commands must agree byte-for-byte on where a given
-/// requirement's plan lives.
-pub(crate) fn plan_dir_and_source(filepath: &Path) -> (PathBuf, String) {
-    let dir = filepath
+/// The directory whose `.check-plan.toml` covers a requirements file: its
+/// parent directory. A plan always sits beside the one `CHECKS.toml` it
+/// covers, and requirements/checks within it are keyed by their ids.
+/// Unconditional (not `#[cfg(feature = "jev")]`) so `multi check`'s
+/// `execution` (populating every check's plan identity, MULTI-1825) and
+/// `multi plan`'s `group_by_directory` (MULTI-1824, `--features jev` only)
+/// derive it through the exact same function — the two commands must agree
+/// on where a given requirement's plan lives.
+pub(crate) fn plan_dir(filepath: &Path) -> PathBuf {
+    filepath
         .parent()
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let source = filepath
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| filepath.display().to_string());
-    (dir, source)
-}
-
-/// Derive each requirement's plan-identity `(dir, source, ordinal)` triple —
-/// see [`plan_dir_and_source`]. `ordinal` is this requirement's 0-based
-/// position among every requirement sharing the same `(dir, source)` pair,
-/// i.e. its position within its own declaring file — the exact
-/// `req_ordinal` [`crate::checks::jev::plan_file::PlanFile::lookup`] keys
-/// on. Shared by `multi check`'s `stream_requirements` and `multi plan`'s
-/// `group_by_directory` so both commands compute the identical ordinal for
-/// the identical requirement.
-pub(crate) fn requirement_plan_identities(
-    requirements: &[Requirement],
-) -> Vec<(PathBuf, String, u32)> {
-    let mut ordinals: HashMap<(PathBuf, String), u32> = HashMap::new();
-    requirements
-        .iter()
-        .map(|req| {
-            let (dir, source) = plan_dir_and_source(&req.filepath);
-            let counter = ordinals.entry((dir.clone(), source.clone())).or_insert(0);
-            let ordinal = *counter;
-            *counter += 1;
-            (dir, source, ordinal)
-        })
-        .collect()
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 impl RequirementOutcome {
@@ -276,13 +284,13 @@ mod tests {
 
         let all_pass = RequirementOutcome::aggregate(
             "r".into(),
-            "CHECKS.md".into(),
+            "CHECKS.toml".into(),
             vec![pass.clone(), pass.clone()],
         );
         assert!(all_pass.satisfied);
 
         let one_fail =
-            RequirementOutcome::aggregate("r".into(), "CHECKS.md".into(), vec![pass, fail]);
+            RequirementOutcome::aggregate("r".into(), "CHECKS.toml".into(), vec![pass, fail]);
         assert!(!one_fail.satisfied);
         assert_eq!(one_fail.failing_checks().count(), 1);
     }

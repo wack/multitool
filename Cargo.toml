@@ -85,7 +85,6 @@ uuid = { version = "1.9", features = ["serde", "v4"] }
 ignore.workspace = true
 base64.workspace = true
 tokio-util.workspace = true
-comrak = { version = "0.52", default-features = false }
 libc = "0.2.186"
 tempfile = "3"
 cersei-agent = { git = "https://github.com/wack/cersei.git", branch = "trunk" }

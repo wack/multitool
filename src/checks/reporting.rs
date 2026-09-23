@@ -294,7 +294,7 @@ mod tests {
     fn outcome(title: &str, satisfied: bool, checks: Vec<CheckOutcome>) -> RequirementOutcome {
         RequirementOutcome {
             title: title.into(),
-            filepath: PathBuf::from("CHECKS.md"),
+            filepath: PathBuf::from("CHECKS.toml"),
             satisfied,
             check_outcomes: checks,
         }

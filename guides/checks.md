@@ -30,7 +30,7 @@ multi check
 ```
 
 `multi check` recursively scans the working directory for files named exactly
-`CHECKS.md`, runs every check it finds, and prints a report. You can point it at
+`CHECKS.toml`, runs every check it finds, and prints a report. You can point it at
 a different directory:
 
 ```bash
@@ -41,9 +41,9 @@ multi check path/to/project
 
 | Exit code | Meaning |
 | --------- | ------- |
-| `0`       | Every requirement is satisfied (an empty project — no `CHECKS.md` — also exits `0`). |
+| `0`       | Every requirement is satisfied (an empty project — no `CHECKS.toml` — also exits `0`). |
 | `1`       | One or more requirements are unsatisfied. |
-| non-zero  | An operational error (e.g. a malformed `CHECKS.md`), printed as a diagnostic. |
+| non-zero  | An operational error (e.g. a malformed `CHECKS.toml`), printed as a diagnostic. |
 
 Because a clean failure is exit `1`, you can gate CI on it directly:
 
@@ -54,7 +54,7 @@ multi check || echo "requirements not met"
 ## 🗂️ The repository root
 
 Each requirement is sandboxed at its own **repository root** — the nearest
-directory, at or above its `CHECKS.md`, that contains a MultiTool manifest
+directory, at or above its `CHECKS.toml`, that contains a MultiTool manifest
 (`MultiTool.toml`, `.json`, or `.jsonc`). The agent that validates a check can
 see everything under that root, and nothing outside it.
 
@@ -66,7 +66,7 @@ multi check                    # scans the whole tree
 multi check services/keystore  # scans only that subtree
 ```
 
-Both invocations discover the same `CHECKS.md` files under the given
+Both invocations discover the same `CHECKS.toml` files under the given
 directory and give each of their requirements the *same* sandbox — the
 `directory` argument only selects **which** requirements files run; it does
 not shrink what their agents can see. A check's verdict is therefore stable
@@ -82,16 +82,16 @@ repo/
 └── services/
     ├── keystore/
     │   ├── MultiTool.toml         # keystore's own manifest
-    │   └── CHECKS.md              # sandboxed to services/keystore/
+    │   └── CHECKS.toml            # sandboxed to services/keystore/
     └── metricstore/
-        └── CHECKS.md              # no manifest of its own — see below
+        └── CHECKS.toml            # no manifest of its own — see below
 ```
 
-`services/keystore/CHECKS.md`'s requirements are sandboxed to
+`services/keystore/CHECKS.toml`'s requirements are sandboxed to
 `services/keystore/` — the nearest manifest — while
-`services/metricstore/CHECKS.md` falls back to the rule below.
+`services/metricstore/CHECKS.toml` falls back to the rule below.
 
-**No manifest anywhere above a `CHECKS.md`**: its requirements fall back to
+**No manifest anywhere above a `CHECKS.toml`**: its requirements fall back to
 the directory `multi check` was scanned from. This is exactly the behavior
 from before this rule existed, so manifest-less projects keep working
 unchanged.
@@ -99,92 +99,114 @@ unchanged.
 Because the sandbox can now span more than the directory a requirement
 happens to live in, the agent's instructions also state where the requirement
 was declared, as a path relative to the repository root (e.g. "This
-requirement is declared in `services/keystore/CHECKS.md`") — so the agent
+requirement is declared in `services/keystore/CHECKS.toml`") — so the agent
 still knows where to focus even inside a larger sandbox.
 
-## ✍️ Authoring `CHECKS.md`
+## ✍️ Authoring `CHECKS.toml`
 
-`CHECKS.md` files are ordinary Markdown. Two header patterns carry metadata;
-everything else is prose.
+A `CHECKS.toml` declares requirements and their checks as TOML tables. Every
+file starts with the schema version:
+
+```toml
+version = 1
+```
 
 ### Requirements
 
-An **H1** whose text begins with `Requirement ` (or the alias `Req `) declares a
-requirement. The rest of the line is its **title**.
+Each `[[requirement]]` table declares a requirement:
 
-```markdown
-# Requirement No Yellow Text
+```toml
+[[requirement]]
+id = "no-yellow-text"
+title = "No Yellow Text"
+description = "I don't like the color yellow."
+tags = ["style"]
 ```
 
-```markdown
-# Req No Yellow Text
-```
-
-Both declare a requirement titled `No Yellow Text`.
+| Key           | Required | Notes |
+| ------------- | -------- | ----- |
+| `id`          | yes      | Lowercase kebab-case (`a-z`, `0-9`, single hyphens), unique within the file. |
+| `title`       | yes      | Shown in the report. Titles need not be unique. |
+| `description` | no       | Prose about the requirement. Metadata only; it is **never** sent to the agent. |
+| `tags`        | no       | A list of strings for filtering and reporting. |
 
 ### Checks
 
-An **H2** whose text begins with `Check ` declares a check. The text after
-`Check ` is the check's title, and the Markdown **beneath** it (up to the next
-requirement or check) is the **prompt** handed to the agent. A check belongs to
-the nearest requirement above it.
+Each `[[requirement.check]]` table declares a check belonging to the
+requirement above it. Its `prompt` is the instruction handed to the agent; use a
+`'''` literal string so Markdown and backslashes need no escaping:
 
-```markdown
-# Requirement No Yellow Text
-I don't like the color yellow.
+```toml
+[[requirement]]
+id = "no-yellow-text"
+title = "No Yellow Text"
 
-## Check Confirm No Yellow Text
-Scan each CSS file in this directory. For every rule that sets a `color`,
-ensure the value is not `yellow`.
+  [[requirement.check]]
+  id = "css-colors"
+  title = "Confirm No Yellow Text"
+  prompt = '''
+  Scan each CSS file in this directory. For every rule that sets a `color`,
+  ensure the value is not `yellow`.
+  '''
 ```
 
-Here, `I don't like the color yellow.` is **prose** — optional metadata that is
-ignored when a requirement has explicit `## Check` headers.
+| Key      | Required | Notes |
+| -------- | -------- | ----- |
+| `id`     | yes      | Lowercase kebab-case, unique within its requirement. |
+| `title`  | yes      | Shown in the report. |
+| `kind`   | no       | What kind of check this is. Defaults to `"prompt"`, currently the only kind. |
+| `prompt` | yes, for `kind = "prompt"` | The agent's instructions. Leading and trailing whitespace is trimmed. |
 
-### Anonymous checks (prose-as-check)
-
-If a requirement declares **no** `## Check`, its prose body becomes a single
-**anonymous check** that **inherits the requirement's title**:
-
-```markdown
-# Requirement No Serif Fonts
-Scan the CSS files in this directory. Check each font.
-Ensure none of the named fonts are serif fonts.
-```
-
-This is equivalent to one requirement `No Serif Fonts` with one check, also
-titled `No Serif Fonts`, whose prompt is the prose above.
-
-A requirement with **neither** a `## Check` **nor** prose is an error, as is a
-`## Check` with no requirement above it.
+Every requirement must declare at least one check.
 
 ### Multiple checks (ANDed)
 
 A requirement may declare several checks. It is satisfied only if **all** of
 them pass:
 
-```markdown
-# Requirement Images must be under 5 MB
-To keep downloads snappy, no image in this folder may exceed 5 MB.
+```toml
+[[requirement]]
+id = "small-images"
+title = "Images must be under 5 MB"
+description = "To keep downloads snappy, no image in this folder may exceed 5 MB."
 
-## Check JPEGs
-List the `.jpg` files with `ls`/`grep`, `stat` each one, and flag any larger
-than 5 MB.
+  [[requirement.check]]
+  id = "jpegs"
+  title = "JPEGs"
+  prompt = "List the `.jpg` files, `stat` each one, and flag any larger than 5 MB."
 
-## Check SVGs
-List the `.svg` files with `ls`/`grep`, `stat` each one, and flag any larger
-than 5 MB.
+  [[requirement.check]]
+  id = "svgs"
+  title = "SVGs"
+  prompt = "List the `.svg` files, `stat` each one, and flag any larger than 5 MB."
 ```
+
+### Ids and plans
+
+Ids, not titles or positions, identify requirements and checks. `multi plan`
+keys each `.check-plan.toml` entry by `(requirement id, check id)`, so you can
+reorder or retitle requirements and checks without losing their cached
+results. Changing an id, or a check's title or prompt, invalidates that
+check's cached entry.
+
+### Validation
+
+Discovery rejects the whole suite, with a diagnostic naming the file and
+pointing at the offending line, when a file:
+
+- is not valid TOML, or has a missing or unsupported `version`;
+- contains an unknown key (so a typo like `promt` is caught, not ignored);
+- has a requirement with no checks, or a check with a missing or blank `prompt`;
+- uses an unknown check `kind`;
+- has an id that is not kebab-case, or a duplicate requirement or check id.
 
 ### Multiple files
 
-You can keep more than one `CHECKS.md` in a project — colocate requirements with
-the code they describe, or split a long suite into pieces. Every `CHECKS.md`
-under the working directory is discovered recursively. (`.gitignore` rules are
-respected, so generated and vendored trees are skipped.)
-
-Titles are **not** unique — two requirements (or two checks) may share a title,
-and both are kept.
+You can keep more than one `CHECKS.toml` in a project — colocate requirements
+with the code they describe, or split a long suite into pieces. Every
+`CHECKS.toml` under the working directory is discovered recursively.
+(`.gitignore` rules are respected, so generated and vendored trees are
+skipped.) Ids only need to be unique within their own file.
 
 ## 📊 How results are reported
 

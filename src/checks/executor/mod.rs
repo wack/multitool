@@ -63,8 +63,8 @@ pub struct AgentRunRequest {
     /// executors need to; the clone is torn down when this request (and the
     /// lease within it) is dropped.
     pub sandbox: SandboxLease,
-    /// The declaring `CHECKS.md`'s path relative to the requirement's
-    /// repository root (MULTI-1834), e.g. `services/keystore/CHECKS.md`.
+    /// The declaring `CHECKS.toml`'s path relative to the requirement's
+    /// repository root (MULTI-1834), e.g. `services/keystore/CHECKS.toml`.
     /// Stated in the assembled instructions so the agent retains the scoping
     /// a smaller, per-scan-directory sandbox used to provide implicitly, now
     /// that the sandbox spans the requirement's whole repository root.
@@ -91,8 +91,8 @@ pub struct AgentRunRequest {
 }
 
 /// A check's identity within its frozen `.check-plan.toml` (MULTI-1825): which
-/// directory's plan covers it, its position within that plan
-/// (`req_ordinal`/`check_ordinal` — the exact key
+/// directory's plan covers it, its owning requirement's id (with the check's
+/// own [`Check::id`], the exact key
 /// [`crate::checks::jev::plan_file::PlanFile::lookup`] looks an entry up by),
 /// the owning requirement's title (sent to Jev as `state.requirement.title`),
 /// and whether the requirement's root is even manifest-derived (a
@@ -102,16 +102,11 @@ pub struct AgentRunRequest {
 #[derive(Debug, Clone)]
 pub struct PlanIdentity {
     /// The directory `.check-plan.toml` lives beside — the declaring
-    /// `CHECKS.md`'s own parent directory. See
-    /// [`crate::checks::model::plan_dir_and_source`].
+    /// `CHECKS.toml`'s own parent directory. See
+    /// [`crate::checks::model::plan_dir`].
     pub dir: PathBuf,
-    /// The declaring file's name (e.g. `"CHECKS.md"`) — see
-    /// [`crate::checks::jev::plan_file::PlanRequirement::source`].
-    pub source: String,
-    /// This requirement's 0-based position within `source`.
-    pub req_ordinal: u32,
-    /// This check's 0-based position within its requirement.
-    pub check_ordinal: u32,
+    /// The owning requirement's [`crate::checks::model::Requirement::id`].
+    pub requirement_id: String,
     /// The owning requirement's title.
     pub requirement_title: String,
     /// How the requirement's repository root was determined (MULTI-1834).
@@ -312,7 +307,7 @@ This requirement is declared in `{declared_in}`.\n\
         working_dir = working_dir.display(),
         declared_in = declared_in.display(),
         title = check.title,
-        prompt = check.prompt,
+        prompt = check.prompt(),
     )
 }
 
@@ -324,10 +319,7 @@ mod tests {
     assert_obj_safe!(CheckExecutor);
 
     fn check() -> Check {
-        Check {
-            title: "No yellow".into(),
-            prompt: "scan for yellow text".into(),
-        }
+        Check::new_prompt("no-yellow", "No yellow", "scan for yellow text")
     }
 
     #[test]
@@ -336,7 +328,7 @@ mod tests {
             &check(),
             &judge_tool_directive(),
             Path::new("/tmp/sandbox-copy"),
-            Path::new("CHECKS.md"),
+            Path::new("CHECKS.toml"),
             1,
         );
         assert!(text.contains("scan for yellow text"));
@@ -351,7 +343,7 @@ mod tests {
             &check(),
             &judge_tool_directive(),
             Path::new("/tmp/sandbox-copy"),
-            Path::new("CHECKS.md"),
+            Path::new("CHECKS.toml"),
             1,
         );
         assert!(text.contains("`/tmp/sandbox-copy`"));
@@ -366,7 +358,7 @@ mod tests {
             &check(),
             &judge_tool_directive(),
             Path::new("/tmp/sandbox-copy"),
-            Path::new("CHECKS.md"),
+            Path::new("CHECKS.toml"),
             2,
         );
         assert!(text.contains("attempt 2"));
@@ -382,9 +374,9 @@ mod tests {
             &check(),
             &judge_tool_directive(),
             Path::new("/tmp/sandbox-copy"),
-            Path::new("services/keystore/CHECKS.md"),
+            Path::new("services/keystore/CHECKS.toml"),
             1,
         );
-        assert!(text.contains("This requirement is declared in `services/keystore/CHECKS.md`"));
+        assert!(text.contains("This requirement is declared in `services/keystore/CHECKS.toml`"));
     }
 }

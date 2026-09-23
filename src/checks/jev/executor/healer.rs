@@ -63,9 +63,7 @@ const HEAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// `.check-plan.toml` — [`super::JevExecutor::finalize`] groups these by
 /// directory (via [`Healer::finish`]) before applying them.
 pub(super) struct Update {
-    pub(super) source: String,
-    pub(super) req_ordinal: u32,
-    pub(super) check_ordinal: u32,
+    pub(super) requirement_id: String,
     pub(super) requirement_title: String,
     pub(super) entry: PlanCheck,
 }
@@ -142,9 +140,7 @@ impl Healer {
             .entry(identity.dir.clone())
             .or_default()
             .push(Update {
-                source: identity.source.clone(),
-                req_ordinal: identity.req_ordinal,
-                check_ordinal: identity.check_ordinal,
+                requirement_id: identity.requirement_id.clone(),
                 requirement_title: identity.requirement_title.clone(),
                 entry,
             });
@@ -302,13 +298,11 @@ async fn build_entry(
     .await
     {
         Ok(Ok(planned)) => {
-            let entry = planned.into_plan_check(ctx.identity.check_ordinal);
+            let entry = planned.into_plan_check();
             Some((
                 ctx.identity.dir.clone(),
                 Update {
-                    source: ctx.identity.source.clone(),
-                    req_ordinal: ctx.identity.req_ordinal,
-                    check_ordinal: ctx.identity.check_ordinal,
+                    requirement_id: ctx.identity.requirement_id.clone(),
                     requirement_title: ctx.identity.requirement_title.clone(),
                     entry,
                 },

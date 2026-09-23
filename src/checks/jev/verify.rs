@@ -24,7 +24,7 @@
 //!
 //! `requirement.declared_in` is the requirements file's repository-root-
 //! relative path (MULTI-1834's scoping fact — a requirement declared in
-//! `services/keystore/CHECKS.md` is implicitly about that service, the same
+//! `services/keystore/CHECKS.toml` is implicitly about that service, the same
 //! way evidence paths are root-relative). This stack doesn't implement
 //! MULTI-1834 yet, so [`Requirement::declared_in`] is a plain `&str` a caller
 //! supplies directly, not something resolved from a sandboxed repository root.
@@ -248,7 +248,7 @@ const BYTES_PER_TOKEN: u64 = 3;
 pub struct Requirement<'a> {
     pub title: &'a str,
     /// The requirements file's repository-root-relative path (e.g.
-    /// `"services/keystore/CHECKS.md"`) — see the module docs.
+    /// `"services/keystore/CHECKS.toml"`) — see the module docs.
     pub declared_in: &'a str,
 }
 
@@ -499,7 +499,7 @@ fn build_state(requirement: &Requirement<'_>, check: &Check, evidence: &[Evidenc
         },
         check: CheckState {
             title: &check.title,
-            prompt: &check.prompt,
+            prompt: check.prompt(),
         },
         evidence,
     };
@@ -762,16 +762,16 @@ mod tests {
     fn sample_requirement() -> Requirement<'static> {
         Requirement {
             title: "Only Keystore signs JWTs",
-            declared_in: "services/keystore/CHECKS.md",
+            declared_in: "services/keystore/CHECKS.toml",
         }
     }
 
     fn sample_check() -> Check {
-        Check {
-            title: "Only Keystore imports the signing key".to_string(),
-            prompt: "Keystore alone imports the JWT signing key; no other service does."
-                .to_string(),
-        }
+        Check::new_prompt(
+            "only-keystore-imports-key",
+            "Only Keystore imports the signing key",
+            "Keystore alone imports the JWT signing key; no other service does.",
+        )
     }
 
     fn sample_evidence() -> Vec<Evidence> {
@@ -864,7 +864,7 @@ mod tests {
             serde_json::json!({
                 "requirement": {
                     "title": "Only Keystore signs JWTs",
-                    "declared_in": "services/keystore/CHECKS.md",
+                    "declared_in": "services/keystore/CHECKS.toml",
                 },
                 "check": {
                     "title": "Only Keystore imports the signing key",
@@ -947,7 +947,7 @@ mod tests {
         assert_eq!(actual, repeated);
 
         let expected = format!(
-            r#"{{"state":{{"check":{{"prompt":"Keystore alone imports the JWT signing key; no other service does.","title":"Only Keystore imports the signing key"}},"evidence":[{{"input":{{"file_path":"services/keystore/src/sign.rs"}},"output":"pub fn sign_jwt() {{ /* ... */ }}\n","tool":"Read"}},{{"input":{{"path":".","pattern":"sign_jwt"}},"output":"services/keystore/src/sign.rs:1:pub fn sign_jwt() {{ /* ... */ }}","tool":"Grep"}}],"requirement":{{"declared_in":"services/keystore/CHECKS.md","title":"Only Keystore signs JWTs"}}}},"model":"jev-latest","questions":{{"satisfied":{{"type":"noul","instructions":"{NOUL_INSTRUCTIONS}","criteria":{{"true":"The evidence affirmatively demonstrates the check is satisfied","false":"The evidence shows a violation, or is insufficient to demonstrate satisfaction"}}}},"reading":{{"type":"choice","instructions":"{CHOICE_INSTRUCTIONS}","criteria":{{"satisfied":"The evidence affirmatively demonstrates the check holds","violated":"The evidence shows the check does not hold","insufficient":"The evidence does not address the check either way"}}}}}}}}"#
+            r#"{{"state":{{"check":{{"prompt":"Keystore alone imports the JWT signing key; no other service does.","title":"Only Keystore imports the signing key"}},"evidence":[{{"input":{{"file_path":"services/keystore/src/sign.rs"}},"output":"pub fn sign_jwt() {{ /* ... */ }}\n","tool":"Read"}},{{"input":{{"path":".","pattern":"sign_jwt"}},"output":"services/keystore/src/sign.rs:1:pub fn sign_jwt() {{ /* ... */ }}","tool":"Grep"}}],"requirement":{{"declared_in":"services/keystore/CHECKS.toml","title":"Only Keystore signs JWTs"}}}},"model":"jev-latest","questions":{{"satisfied":{{"type":"noul","instructions":"{NOUL_INSTRUCTIONS}","criteria":{{"true":"The evidence affirmatively demonstrates the check is satisfied","false":"The evidence shows a violation, or is insufficient to demonstrate satisfaction"}}}},"reading":{{"type":"choice","instructions":"{CHOICE_INSTRUCTIONS}","criteria":{{"satisfied":"The evidence affirmatively demonstrates the check holds","violated":"The evidence shows the check does not hold","insufficient":"The evidence does not address the check either way"}}}}}}}}"#
         );
         assert_eq!(actual, expected);
     }

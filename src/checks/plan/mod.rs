@@ -4,7 +4,7 @@
 //! This is a **separate** subcommand and code path from `multi check` — see
 //! `crate::checks`' own module docs. It reuses [`discovery::discover`]'s
 //! walk/parse/validate function directly (not `DiscoveryActor`), so it gets
-//! the exact same strict whole-run abort on an invalid `CHECKS.md`, and
+//! the exact same strict whole-run abort on an invalid `CHECKS.toml`, and
 //! reuses [`crate::checks::executor::CheckExecutor`]/
 //! [`crate::checks::sandbox::Sandbox`] the same way `multi check` does — but
 //! does **not** reuse the actor pipeline. [`Planner`] is this module's own DI
@@ -40,7 +40,7 @@
 //! ## Caching
 //!
 //! Before invoking the planner for a check, its existing plan entry (looked
-//! up by `(source, req_ordinal, check_ordinal, prompt_xxh64)` — see
+//! up by `(requirement id, check id, prompt_xxh64)` — see
 //! [`plan_file::PlanFile::lookup`]) is replayed
 //! ([`replay::replay_check`]). A [`Freshness::Fresh`] result reuses the entry
 //! **untouched**: zero agent runs, zero Jev calls. `--force` skips this
@@ -130,7 +130,7 @@ pub(crate) use planner::{EntryContext, entry_from_outcome};
 ///
 /// Returns the process exit code (mirroring `crate::checks::run`'s own
 /// contract): `0` unless a check could not be planned. An invalid suite (a
-/// malformed `CHECKS.md`) or a Jev credential/request failure abort the run
+/// malformed `CHECKS.toml`) or a Jev credential/request failure abort the run
 /// as `Err` rather than reporting a numeric code.
 pub async fn run(
     terminal: &Terminal,
@@ -200,38 +200,33 @@ pub async fn run(
 // Grouping: requirements -> one `.check-plan.toml` per directory
 // ---------------------------------------------------------------------------
 
-/// Every requirement declared in one directory's requirements file(s),
-/// sharing one `.check-plan.toml` — see the module docs. Requirements within
-/// a group are paired with `(source file name, ordinal within that source)`;
+/// Every requirement declared in one directory's `CHECKS.toml`, sharing one
+/// `.check-plan.toml` — see the module docs. Requirements within a group are
+/// identified by their ids (unique within the file);
 /// `root`/`root_source` are identical for every requirement in a group by
 /// construction (both are resolved from the same directory — see
 /// `discovery::repo_root::resolve`).
 struct FileGroup<'a> {
     root: PathBuf,
     root_source: RootSource,
-    requirements: Vec<(String, u32, &'a Requirement)>,
+    requirements: Vec<&'a Requirement>,
 }
 
-/// Group `requirements` by the directory containing their declaring file,
-/// computing each requirement's `ordinal` via
-/// [`crate::checks::model::requirement_plan_identities`] — its 0-based
-/// position within its own `(directory, source file name)`, i.e. within its
-/// declaring file, since only `CHECKS.md` exists today (one source file per
-/// directory). Shared with `multi check`'s `stream_requirements`
-/// (MULTI-1825) so both commands derive the identical ordinal for the
-/// identical requirement. Insertion-ordered ([`IndexMap`]) so
-/// output/writing stays in discovery order.
+/// Group `requirements` by the directory containing their declaring file —
+/// see [`crate::checks::model::plan_dir`], shared with `multi check`'s
+/// execution (MULTI-1825) so both commands agree on where a requirement's
+/// plan lives. Insertion-ordered ([`IndexMap`]) so output/writing stays in
+/// discovery order.
 fn group_by_directory(requirements: &[Requirement]) -> IndexMap<PathBuf, FileGroup<'_>> {
     let mut groups: IndexMap<PathBuf, FileGroup<'_>> = IndexMap::new();
-    let identities = crate::checks::model::requirement_plan_identities(requirements);
-
-    for (req, (dir, source, ordinal)) in requirements.iter().zip(identities) {
-        let group = groups.entry(dir.clone()).or_insert_with(|| FileGroup {
+    for req in requirements {
+        let dir = crate::checks::model::plan_dir(&req.filepath);
+        let group = groups.entry(dir).or_insert_with(|| FileGroup {
             root: req.root.clone(),
             root_source: req.root_source,
             requirements: Vec::new(),
         });
-        group.requirements.push((source, ordinal, req));
+        group.requirements.push(req);
     }
     groups
 }
@@ -259,9 +254,7 @@ struct CheckDescriptor {
     /// unique within one run — see [`assign_req_indices`].
     req_index: usize,
     dir: PathBuf,
-    source: String,
-    req_ordinal: u32,
-    check_ordinal: u32,
+    requirement_id: String,
     requirement_title: String,
     check: Check,
     root: PathBuf,
@@ -278,24 +271,23 @@ struct RefusedCheck {
     message: String,
 }
 
-/// Assign each `(dir, source, req_ordinal)` requirement seen while walking
+/// Assign each `(dir, requirement_id)` requirement seen while walking
 /// `groups` a sequential id, in traversal order — the presenter-tree grouping
 /// key [`CheckDescriptor::req_index`]/[`RefusedCheck::req_index`] use. Covers
 /// **every** group (refused and valid alike), so a refused requirement gets
 /// its own stable id too and can still render a row in the live tree.
 fn assign_req_indices(
     groups: &IndexMap<PathBuf, FileGroup<'_>>,
-) -> HashMap<(PathBuf, String, u32), usize> {
+) -> HashMap<(PathBuf, String), usize> {
     let mut map = HashMap::new();
     let mut next = 0usize;
     for (dir, group) in groups {
-        for (source, req_ordinal, _req) in &group.requirements {
-            map.entry((dir.clone(), source.clone(), *req_ordinal))
-                .or_insert_with(|| {
-                    let id = next;
-                    next += 1;
-                    id
-                });
+        for req in &group.requirements {
+            map.entry((dir.clone(), req.id.clone())).or_insert_with(|| {
+                let id = next;
+                next += 1;
+                id
+            });
         }
     }
     map
@@ -318,8 +310,8 @@ fn partition_checks(
 
     for (dir, group) in groups {
         if group.root_source == RootSource::ScanDirectory {
-            for (source, req_ordinal, req) in &group.requirements {
-                let req_index = req_indices[&(dir.clone(), source.clone(), *req_ordinal)];
+            for req in &group.requirements {
+                let req_index = req_indices[&(dir.clone(), req.id.clone())];
                 for check in &req.checks {
                     refused.push(RefusedCheck {
                         req_index,
@@ -333,19 +325,17 @@ fn partition_checks(
         }
 
         valid_dirs.push(dir.clone());
-        for (source, req_ordinal, req) in &group.requirements {
-            let req_index = req_indices[&(dir.clone(), source.clone(), *req_ordinal)];
+        for req in &group.requirements {
+            let req_index = req_indices[&(dir.clone(), req.id.clone())];
             let declared_in =
                 crate::checks::execution::declared_in_relative_to_root(&req.filepath, &group.root);
-            for (check_ordinal, check) in req.checks.iter().enumerate() {
+            for check in &req.checks {
                 let index = descriptors.len();
                 descriptors.push(CheckDescriptor {
                     index,
                     req_index,
                     dir: dir.clone(),
-                    source: source.clone(),
-                    req_ordinal: *req_ordinal,
-                    check_ordinal: check_ordinal as u32,
+                    requirement_id: req.id.clone(),
                     requirement_title: req.title.clone(),
                     check: check.clone(),
                     root: group.root.clone(),
@@ -404,14 +394,9 @@ fn cached_entry(
         return None;
     }
     let plan = existing.get(&descriptor.dir)?;
-    let hash = plan_file::prompt_xxh64(&descriptor.check.title, &descriptor.check.prompt);
-    plan.lookup(
-        &descriptor.source,
-        descriptor.req_ordinal,
-        descriptor.check_ordinal,
-        &hash,
-    )
-    .cloned()
+    let hash = plan_file::prompt_xxh64(&descriptor.check.title, descriptor.check.prompt());
+    plan.lookup(&descriptor.requirement_id, &descriptor.check.id, &hash)
+        .cloned()
 }
 
 /// Everything [`process_check`] needs to know about a check's plan-cache
@@ -419,12 +404,12 @@ fn cached_entry(
 /// attempt replay against (`None` under `--force`, exactly like
 /// [`cached_entry`]), whether `--force` is what made it `None`, and — only
 /// meaningful when `matched` is `None` and `forced` is `false` — whether
-/// *some* entry existed at this exact position regardless of hash, which is
+/// *some* entry existed for this check's ids regardless of hash, which is
 /// what tells [`presenter::StaleReason::New`] apart from
 /// [`presenter::StaleReason::PromptChanged`].
 struct CacheLookup {
     matched: Option<plan_file::PlanCheck>,
-    existed_at_position: bool,
+    existed: bool,
     forced: bool,
 }
 
@@ -433,20 +418,13 @@ fn cache_lookup(
     existing: &HashMap<PathBuf, plan_file::PlanFile>,
     force: bool,
 ) -> CacheLookup {
-    let existed_at_position = existing
+    let existed = existing
         .get(&descriptor.dir)
-        .and_then(|plan| {
-            find_existing_entry(
-                plan,
-                &descriptor.source,
-                descriptor.req_ordinal,
-                descriptor.check_ordinal,
-            )
-        })
+        .and_then(|plan| plan.find(&descriptor.requirement_id, &descriptor.check.id))
         .is_some();
     CacheLookup {
         matched: cached_entry(descriptor, existing, force),
-        existed_at_position,
+        existed,
         forced: force,
     }
 }
@@ -534,7 +512,7 @@ async fn process_check(
         return plan_it(descriptor, planner, sink, reason).await;
     }
 
-    let reason = if lookup.existed_at_position {
+    let reason = if lookup.existed {
         presenter::StaleReason::PromptChanged
     } else {
         presenter::StaleReason::New
@@ -564,9 +542,7 @@ async fn plan_it(
         declared_in: descriptor.declared_in.clone(),
         root: descriptor.root.clone(),
         plan_dir: descriptor.dir.clone(),
-        plan_source: descriptor.source.clone(),
-        req_ordinal: descriptor.req_ordinal,
-        check_ordinal: descriptor.check_ordinal,
+        requirement_id: descriptor.requirement_id.clone(),
         // Every descriptor here comes from a manifest-derived group — a
         // `RootSource::ScanDirectory` file's checks are refused before a
         // `CheckDescriptor` is ever built (see `partition_checks`).
@@ -838,9 +814,9 @@ fn calls_have_truncated(calls: &[PlanCall]) -> bool {
 /// A requirement's checks under construction: title plus the checks
 /// assembled for it so far.
 type RequirementChecks = (String, Vec<plan_file::PlanCheck>);
-/// One directory's requirements under construction, keyed by
-/// `(source, req_ordinal)` — see [`build_plan_files`].
-type DirectoryRequirements = HashMap<(String, u32), RequirementChecks>;
+/// One directory's requirements under construction, keyed by requirement id
+/// — see [`build_plan_files`].
+type DirectoryRequirements = HashMap<String, RequirementChecks>;
 
 /// Assemble one [`plan_file::PlanFile`] per directory from `processed`.
 ///
@@ -853,12 +829,12 @@ type DirectoryRequirements = HashMap<(String, u32), RequirementChecks>;
 /// **deleted** whatever entry that check already had, destroying its cached
 /// verdict/calibration for no reason connected to that entry's own
 /// freshness. The ticket only calls for dropping entries for checks no
-/// longer present in `CHECKS.md` at all — which this function never even
+/// longer present in `CHECKS.toml` at all — which this function never even
 /// sees, since `processed` is built from the *current* discovery pass (see
 /// [`partition_checks`]), not from `existing`. So an errored check instead
-/// looks up whatever entry `existing` already had at its exact
-/// `(source, req_ordinal, check_ordinal)` position ([`find_existing_entry`],
-/// deliberately **not** gated on `prompt_xxh64` still matching — an entry
+/// looks up whatever entry `existing` already had for its exact
+/// `(requirement id, check id)` ([`plan_file::PlanFile::find`], deliberately
+/// **not** gated on `prompt_xxh64` still matching — an entry
 /// preserved this way may be stale, and that's fine: `multi check` handles a
 /// stale entry safely by replaying and escalating; a *missing* one loses the
 /// cached verdict/calibration outright). This preservation applies
@@ -875,16 +851,10 @@ fn build_plan_files(
     for p in processed {
         let entry = match &p.outcome {
             LineOutcome::Reused(entry) => Some(entry.clone()),
-            LineOutcome::Planned(planned) => {
-                Some(planned.clone().into_plan_check(p.descriptor.check_ordinal))
-            }
+            LineOutcome::Planned(planned) => Some(planned.clone().into_plan_check()),
             LineOutcome::Error(_) => existing.get(&p.descriptor.dir).and_then(|plan| {
-                find_existing_entry(
-                    plan,
-                    &p.descriptor.source,
-                    p.descriptor.req_ordinal,
-                    p.descriptor.check_ordinal,
-                )
+                plan.find(&p.descriptor.requirement_id, &p.descriptor.check.id)
+                    .cloned()
             }),
         };
         let Some(entry) = entry else { continue };
@@ -892,7 +862,7 @@ fn build_plan_files(
         let per_req = by_dir
             .entry(p.descriptor.dir.clone())
             .or_default()
-            .entry((p.descriptor.source.clone(), p.descriptor.req_ordinal))
+            .entry(p.descriptor.requirement_id.clone())
             .or_insert_with(|| (p.descriptor.requirement_title.clone(), Vec::new()));
         per_req.1.push(entry);
     }
@@ -902,43 +872,11 @@ fn build_plan_files(
         .map(|(dir, reqs)| {
             let requirements = reqs
                 .into_iter()
-                .map(
-                    |((source, ordinal), (title, checks))| plan_file::PlanRequirement {
-                        title,
-                        source,
-                        ordinal,
-                        checks,
-                    },
-                )
+                .map(|(id, (title, checks))| plan_file::PlanRequirement { id, title, checks })
                 .collect();
             (dir, plan_file::PlanFile::new(requirements))
         })
         .collect()
-}
-
-/// Look up an existing plan's entry by raw position
-/// `(source, req_ordinal, check_ordinal)` alone — unlike
-/// [`plan_file::PlanFile::lookup`], this does **not** require the stored
-/// `prompt_xxh64` to still match the check's current content. See
-/// [`build_plan_files`]'s docs: the point of this lookup is to preserve
-/// whatever was already there across a planning *failure*, stale or not —
-/// not to validate freshness (that's [`cached_entry`]'s job, for the reuse
-/// path). Also reused by [`cache_lookup`] (MULTI-1829) purely to detect
-/// *whether* an entry exists at this position, regardless of its hash — see
-/// [`presenter::StaleReason::New`] vs. [`presenter::StaleReason::PromptChanged`].
-fn find_existing_entry(
-    plan: &plan_file::PlanFile,
-    source: &str,
-    req_ordinal: u32,
-    check_ordinal: u32,
-) -> Option<plan_file::PlanCheck> {
-    plan.requirements
-        .iter()
-        .find(|r| r.source == source && r.ordinal == req_ordinal)?
-        .checks
-        .iter()
-        .find(|c| c.ordinal == check_ordinal)
-        .cloned()
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,5 @@
-//! The discovery phase: find `CHECKS.md` files, parse each to an AST, extract
-//! the requirement/check model (including anonymous checks), validate, and
-//! assemble the final `Vec<Requirement>` consumed by execution.
+//! The discovery phase: find `CHECKS.toml` files, parse and validate each,
+//! and assemble the final `Vec<Requirement>` consumed by execution.
 //!
 //! File loading + parsing run in parallel (one blocking task per file); this
 //! module joins the results in deterministic (sorted-file) order and aggregates
@@ -40,7 +39,7 @@ use crate::checks::reporting::ReportingActor;
 /// relative, breaking the sandbox/`declared_in` machinery downstream that
 /// assumes `Requirement::root` is always absolute. `scan_root` is therefore
 /// resolved to absolute once, here, for root resolution/sandboxing only. The
-/// `CHECKS.md` paths [`walk::find_checks_files`] discovers (and thus
+/// `CHECKS.toml` paths [`walk::find_checks_files`] discovers (and thus
 /// `Requirement::filepath`) are left exactly as `root` produced them, so any
 /// diagnostic naming a file (a malformed-file error, for instance) keeps
 /// displaying the same path the user typed — unaffected by this ticket.
@@ -153,6 +152,53 @@ impl Message<BeginDiscovery> for DiscoveryActor {
     }
 }
 
+/// Render a minimal valid `CHECKS.toml` for tests: each requirement is
+/// `(title, checks)` and each check is `(title, prompt)`. Ids are the
+/// kebab-cased titles (see [`slug`]), so titles must be unique within their
+/// scope — tests that need duplicate titles write the TOML by hand.
+#[cfg(test)]
+pub(crate) fn checks_toml(requirements: &[(&str, &[(&str, &str)])]) -> String {
+    let mut out = String::from("version = 1\n");
+    for (req_title, checks) in requirements {
+        out.push_str(&format!(
+            "\n[[requirement]]\nid = {:?}\ntitle = {:?}\n",
+            slug(req_title),
+            req_title
+        ));
+        for (check_title, prompt) in *checks {
+            out.push_str(&format!(
+                "\n[[requirement.check]]\nid = {:?}\ntitle = {:?}\nprompt = {:?}\n",
+                slug(check_title),
+                check_title,
+                prompt
+            ));
+        }
+    }
+    out
+}
+
+/// Render `err` as miette does, with its line wrapping undone, so tests can
+/// match a message regardless of where the renderer broke it.
+#[cfg(test)]
+pub(crate) fn unwrapped(err: &miette::Report) -> String {
+    format!("{err:?}")
+        .split_whitespace()
+        .filter(|word| *word != "│")
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Kebab-case `title` into a valid id (test helper for [`checks_toml`]).
+#[cfg(test)]
+pub(crate) fn slug(title: &str) -> String {
+    title
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,11 +208,15 @@ mod tests {
     #[tokio::test]
     async fn valid_multi_file_tree_returns_all_requirements() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("CHECKS.md"), "# Requirement A\ndo a\n").unwrap();
+        fs::write(
+            dir.path().join("CHECKS.toml"),
+            checks_toml(&[("A", &[("A", "do a")])]),
+        )
+        .unwrap();
         fs::create_dir_all(dir.path().join("sub")).unwrap();
         fs::write(
-            dir.path().join("sub/CHECKS.md"),
-            "# Requirement B\n## Check B1\nb1\n## Check B2\nb2\n",
+            dir.path().join("sub/CHECKS.toml"),
+            checks_toml(&[("B", &[("B1", "b1"), ("B2", "b2")])]),
         )
         .unwrap();
 
@@ -174,7 +224,7 @@ mod tests {
         assert_eq!(reqs.len(), 2);
         // Each requirement has at least one check.
         assert!(reqs.iter().all(|r| !r.checks.is_empty()));
-        // Sorted-file order: root CHECKS.md ("A") before sub/CHECKS.md ("B").
+        // Sorted-file order: root CHECKS.toml ("A") before sub/CHECKS.toml ("B").
         assert_eq!(reqs[0].title, "A");
         assert_eq!(reqs[1].checks.len(), 2);
     }
@@ -187,14 +237,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orphan_check_aborts_discovery() {
+    async fn checkless_requirement_aborts_discovery() {
         let dir = TempDir::new().unwrap();
         fs::write(
-            dir.path().join("CHECKS.md"),
-            "## Check Orphan\nno req above\n",
+            dir.path().join("CHECKS.toml"),
+            checks_toml(&[("Lonely", &[])]),
         )
         .unwrap();
         let err = discover(dir.path()).await.unwrap_err();
-        assert!(format!("{err:?}").contains("orphan"));
+        assert!(unwrapped(&err).contains("declares no checks"));
     }
 }

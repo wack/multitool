@@ -50,7 +50,7 @@ mod tests {
         fs::write(dir.path().join("MultiTool.toml"), "").unwrap();
         let nested = dir.path().join("services/keystore");
         fs::create_dir_all(&nested).unwrap();
-        let declared_in = nested.join("CHECKS.md");
+        let declared_in = nested.join("CHECKS.toml");
 
         let (root, source) = resolve(&declared_in, Path::new("/unused-scan-root"));
         assert_eq!(root, dir.path());
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn no_manifest_falls_back_to_the_scan_directory() {
         let dir = TempDir::new().unwrap();
-        let declared_in = dir.path().join("CHECKS.md");
+        let declared_in = dir.path().join("CHECKS.toml");
         let scan_root = dir.path().join("elsewhere-scan-root");
 
         let (root, source) = resolve(&declared_in, &scan_root);

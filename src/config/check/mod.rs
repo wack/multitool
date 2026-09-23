@@ -5,7 +5,7 @@ use clap::Args;
 
 use crate::checks::config::{CliOverrides, Effort, ProviderKind};
 
-/// `multi check`: validate the requirements declared in `CHECKS.md` files.
+/// `multi check`: validate the requirements declared in `CHECKS.toml` files.
 ///
 /// The model/provider/effort flags are the highest-precedence config layer
 /// (`flag > env > file`). They are intentionally `Option<T>` with **no**
@@ -13,7 +13,7 @@ use crate::checks::config::{CliOverrides, Effort, ProviderKind};
 /// otherwise clap's defaults would silently clobber the env/file layers.
 #[derive(Args, Clone)]
 pub struct CheckSubcommand {
-    /// The directory to recursively scan for `CHECKS.md` files.
+    /// The directory to recursively scan for `CHECKS.toml` files.
     #[arg(default_value = ".")]
     directory: PathBuf,
 

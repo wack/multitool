@@ -252,7 +252,7 @@ pub struct JevExecutor {
     /// [`crate::checks::executor::PlanIdentity::dir`]. A plain
     /// `Mutex<HashSet<..>>` rather than per-check-local state because
     /// concurrent checks under the same requirements file (the common case:
-    /// several checks share one `CHECKS.md`) all reach this executor
+    /// several checks share one `CHECKS.toml`) all reach this executor
     /// through the same `Arc`-shared instance, and the warning must
     /// de-duplicate across that concurrency, not just within one check.
     warned_no_root: Mutex<HashSet<PathBuf>>,
@@ -379,14 +379,9 @@ impl JevExecutor {
             return Ok(Decision::Agent);
         };
 
-        let prompt_hash = plan_file::prompt_xxh64(&req.check.title, &req.check.prompt);
+        let prompt_hash = plan_file::prompt_xxh64(&req.check.title, req.check.prompt());
         let Some(entry) = plan
-            .lookup(
-                &req.plan.source,
-                req.plan.req_ordinal,
-                req.plan.check_ordinal,
-                &prompt_hash,
-            )
+            .lookup(&req.plan.requirement_id, &req.check.id, &prompt_hash)
             .cloned()
         else {
             // No entry, or `prompt_xxh64` no longer matches.
@@ -639,10 +634,10 @@ impl CheckExecutor for JevExecutor {
 }
 
 /// Merge every collected [`Update`] onto `base` — creating a new
-/// [`PlanRequirement`] when an update's `(source, req_ordinal)` isn't in
-/// `base` yet (a directory with no prior plan at all, or a requirement a
-/// stale plan never covered), and replacing-or-appending each update's check
-/// by `check_ordinal` within its requirement. Drops nothing else: every
+/// [`PlanRequirement`] when an update's `requirement_id` isn't in `base` yet
+/// (a directory with no prior plan at all, or a requirement a stale plan
+/// never covered), and replacing-or-appending each update's check by its
+/// `id` within its requirement. Drops nothing else: every
 /// requirement/check `base` already had that no update touches is carried
 /// through unchanged. [`PlanStore::write`] re-sorts and dedups on its own, so
 /// insertion order here doesn't matter.
@@ -651,12 +646,11 @@ fn apply_updates(mut base: PlanFile, updates: Vec<Update>) -> PlanFile {
         let req_index = base
             .requirements
             .iter()
-            .position(|r| r.source == update.source && r.ordinal == update.req_ordinal)
+            .position(|r| r.id == update.requirement_id)
             .unwrap_or_else(|| {
                 base.requirements.push(PlanRequirement {
+                    id: update.requirement_id.clone(),
                     title: update.requirement_title.clone(),
-                    source: update.source.clone(),
-                    ordinal: update.req_ordinal,
                     checks: Vec::new(),
                 });
                 base.requirements.len() - 1
@@ -666,7 +660,7 @@ fn apply_updates(mut base: PlanFile, updates: Vec<Update>) -> PlanFile {
         match requirement
             .checks
             .iter_mut()
-            .find(|c| c.ordinal == update.check_ordinal)
+            .find(|c| c.id == update.entry.id)
         {
             Some(existing) => *existing = update.entry,
             None => requirement.checks.push(update.entry),
@@ -720,8 +714,8 @@ fn refreshed_entry(entry: &PlanCheck, replayed_calls: &[ReplayedCall], noul: f64
     let model = jev.as_ref().map_or("", |j| j.model.as_str());
 
     PlanCheck {
+        id: entry.id.clone(),
         title: entry.title.clone(),
-        ordinal: entry.ordinal,
         prompt_xxh64: entry.prompt_xxh64.clone(),
         decider: Decider::Jev,
         verdict: true,
