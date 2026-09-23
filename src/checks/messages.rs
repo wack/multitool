@@ -25,7 +25,7 @@ pub struct CheckJob {
     pub req_index: usize,
     /// The requirement's title, for the final per-requirement render.
     pub req_title: String,
-    /// The `CHECKS.md` that declared the requirement.
+    /// The `CHECKS.toml` that declared the requirement.
     pub filepath: PathBuf,
     /// The requirement's repository root (MULTI-1834): what execution
     /// sandboxes for this check — see [`crate::checks::model::Requirement::root`].
@@ -35,14 +35,10 @@ pub struct CheckJob {
     /// usable for this check: a [`RootSource::ScanDirectory`] root isn't
     /// stable across invocations, so no plan is read or written for it.
     pub root_source: RootSource,
-    /// This requirement's 0-based position within its own declaring file
-    /// (MULTI-1825's plan identity) — see
-    /// [`crate::checks::model::requirement_plan_identities`].
-    pub req_ordinal: u32,
-    /// This check's 0-based position within its requirement (MULTI-1825's
-    /// plan identity).
-    pub check_ordinal: u32,
-    /// The check itself (title + prompt).
+    /// The requirement's id (MULTI-1825's plan identity, with
+    /// [`Check::id`]) — see [`crate::checks::model::Requirement::id`].
+    pub req_id: String,
+    /// The check itself (id, title, and kind).
     pub check: Check,
 }
 
@@ -74,7 +70,7 @@ pub struct ExecutionComplete {
     pub total_checks: usize,
 }
 
-/// Discovery -> Reporting: the suite contained an invalid `CHECKS.md`; abort the
+/// Discovery -> Reporting: the suite contained an invalid `CHECKS.toml`; abort the
 /// whole run (strict whole-run abort, decision #3). No checks were ever streamed,
 /// so no agents are spawned.
 pub struct DiscoveryFailed {

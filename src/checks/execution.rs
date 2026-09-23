@@ -411,7 +411,6 @@ async fn run_one(
     // open forever.
     let _forwarder_guard = AbortOnDrop(forwarder);
 
-    let (plan_dir, plan_source) = crate::checks::model::plan_dir_and_source(&job.filepath);
     let request = crate::checks::executor::AgentRunRequest {
         check_id: job.id,
         check: job.check.clone(),
@@ -421,10 +420,8 @@ async fn run_one(
         attempt,
         progress: Some(progress),
         plan: PlanIdentity {
-            dir: plan_dir,
-            source: plan_source,
-            req_ordinal: job.req_ordinal,
-            check_ordinal: job.check_ordinal,
+            dir: crate::checks::model::plan_dir(&job.filepath),
+            requirement_id: job.req_id.clone(),
             requirement_title: job.req_title.clone(),
             root_source: job.root_source,
         },
@@ -447,12 +444,12 @@ impl Drop for AbortOnDrop {
 }
 
 /// The declaring file's path relative to `root`, for display in the agent's
-/// instructions (MULTI-1834), e.g. `services/keystore/CHECKS.md`. Stated so
+/// instructions (MULTI-1834), e.g. `services/keystore/CHECKS.toml`. Stated so
 /// the agent retains the scoping a smaller, per-scan-directory sandbox used
 /// to provide for free, now that the sandbox spans the whole repository root.
 ///
 /// `filepath` may be relative to the process's current directory —
-/// [`super::discovery::discover`] leaves discovered `CHECKS.md` paths exactly
+/// [`super::discovery::discover`] leaves discovered `CHECKS.toml` paths exactly
 /// as found, so diagnostics elsewhere that name a file keep their
 /// pre-MULTI-1834 display — while `root` is always absolute (resolved during
 /// discovery). This absolutizes `filepath` before stripping `root` off, so
@@ -583,10 +580,10 @@ mod tests {
         use figment::Jail;
         Jail::expect_with(|jail| {
             let root = jail.directory().to_path_buf();
-            let filepath = PathBuf::from("services/keystore/CHECKS.md");
+            let filepath = PathBuf::from("services/keystore/CHECKS.toml");
             assert_eq!(
                 super::declared_in_relative_to_root(&filepath, &root),
-                PathBuf::from("services/keystore/CHECKS.md")
+                PathBuf::from("services/keystore/CHECKS.toml")
             );
             Ok(())
         });
@@ -598,22 +595,23 @@ mod tests {
     /// host path into an agent's instructions.
     #[test]
     fn declared_in_never_leaks_an_absolute_path_on_mismatch() {
-        let filepath = PathBuf::from("/some/unrelated/tree/CHECKS.md");
+        let filepath = PathBuf::from("/some/unrelated/tree/CHECKS.toml");
         let root = PathBuf::from("/a/totally/different/root");
         let declared_in = super::declared_in_relative_to_root(&filepath, &root);
-        assert_eq!(declared_in, PathBuf::from("CHECKS.md"));
+        assert_eq!(declared_in, PathBuf::from("CHECKS.toml"));
     }
 
     fn req(title: &str, checks: Vec<(&str, &str)>) -> Requirement {
         Requirement {
-            filepath: PathBuf::from("CHECKS.md"),
+            filepath: PathBuf::from("CHECKS.toml"),
+            id: crate::checks::discovery::slug(title),
             title: title.to_string(),
+            description: None,
+            tags: Vec::new(),
             checks: checks
                 .into_iter()
-                .map(|(t, p)| Check {
-                    title: t.to_string(),
-                    prompt: p.to_string(),
-                })
+                .enumerate()
+                .map(|(i, (t, p))| Check::new_prompt(format!("c{i}"), t, p))
                 .collect(),
             root: PathBuf::from("."),
             root_source: RootSource::ScanDirectory,
@@ -783,14 +781,11 @@ mod jev_abort_tests {
         write_file(dir.path(), "src/a.rs", "fn a() {}\n");
         let xxh64 = read_checksum(dir.path(), "src/a.rs").await;
 
-        let check0 = Check {
-            title: "Check A".to_string(),
-            prompt: "prompt a".to_string(),
-        };
+        let check0 = Check::new_prompt("check-a", "Check A", "prompt a");
         let entry = PlanCheck {
+            id: check0.id.clone(),
             title: check0.title.clone(),
-            ordinal: 0,
-            prompt_xxh64: prompt_xxh64(&check0.title, &check0.prompt),
+            prompt_xxh64: prompt_xxh64(&check0.title, check0.prompt()),
             decider: Decider::Jev,
             verdict: true,
             evidence: Some("cached".to_string()),
@@ -806,9 +801,8 @@ mod jev_abort_tests {
             }],
         };
         let plan = PlanFile::new(vec![PlanRequirement {
+            id: "r".to_string(),
             title: "R".to_string(),
-            source: "CHECKS.md".to_string(),
-            ordinal: 0,
             checks: vec![entry],
         }]);
         PlanStore::write(dir.path(), &plan).unwrap();
@@ -840,17 +834,17 @@ mod jev_abort_tests {
             false,
         ));
 
-        // One requirement, two checks under the same `CHECKS.md`: check 0
+        // One requirement, two checks under the same `CHECKS.toml`: check 0
         // has the plan entry above; check 1 has no entry at all (would
         // ordinarily decide `Agent` immediately) — proving the abort stops
         // it before it ever starts.
-        let check1 = Check {
-            title: "Check B".to_string(),
-            prompt: "prompt b".to_string(),
-        };
+        let check1 = Check::new_prompt("check-b", "Check B", "prompt b");
         let reqs = vec![Requirement {
-            filepath: dir.path().join("CHECKS.md"),
+            filepath: dir.path().join("CHECKS.toml"),
+            id: "r".to_string(),
             title: "R".to_string(),
+            description: None,
+            tags: Vec::new(),
             checks: vec![check0, check1],
             root: dir.path().to_path_buf(),
             root_source: RootSource::Manifest,

@@ -22,7 +22,7 @@ impl Plan {
         let _guard = rt.enter();
         // Mirrors `Check::dispatch`: a plan that could not be fully written
         // exits non-zero cleanly (`Ok(1)`); an operational error (invalid
-        // `CHECKS.md`, an aborting Jev credential failure) surfaces as a
+        // `CHECKS.toml`, an aborting Jev credential failure) surfaces as a
         // `miette` diagnostic (`Err`) instead.
         let code = rt.block_on(crate::checks::plan::run(
             &self.terminal,

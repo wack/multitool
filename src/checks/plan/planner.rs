@@ -90,8 +90,8 @@ pub struct PlanRequest {
     pub check: Check,
     /// The owning requirement's title, sent to Jev as `state.requirement.title`.
     pub requirement_title: String,
-    /// The declaring `CHECKS.md`'s path relative to [`Self::root`]
-    /// (MULTI-1834), e.g. `services/keystore/CHECKS.md` — used both in the
+    /// The declaring `CHECKS.toml`'s path relative to [`Self::root`]
+    /// (MULTI-1834), e.g. `services/keystore/CHECKS.toml` — used both in the
     /// agent's instructions (identically to `multi check`) and as
     /// `state.requirement.declared_in` in the Jev verification request.
     pub declared_in: PathBuf,
@@ -100,18 +100,14 @@ pub struct PlanRequest {
     /// replay are rooted at.
     pub root: PathBuf,
     /// The directory `.check-plan.toml` lives beside — see
-    /// [`crate::checks::model::plan_dir_and_source`]. Populates
+    /// [`crate::checks::model::plan_dir`]. Populates
     /// [`AgentRunRequest::plan`] (MULTI-1825), which this planner's own
     /// executor never reads (see [`AgentPlanner::run_agent`]'s docs) but
     /// which keeps every `AgentRunRequest` this crate ever builds carrying
     /// accurate plan identity, not a placeholder.
     pub plan_dir: PathBuf,
-    /// The declaring file's name (e.g. `"CHECKS.md"`).
-    pub plan_source: String,
-    /// This requirement's 0-based position within `plan_source`.
-    pub req_ordinal: u32,
-    /// This check's 0-based position within its requirement.
-    pub check_ordinal: u32,
+    /// The owning requirement's id.
+    pub requirement_id: String,
     /// How [`Self::root`] was determined (MULTI-1834). Every [`PlanRequest`]
     /// reaching [`AgentPlanner::plan_check`] is for a check under a
     /// manifest-derived root — `multi plan` refuses a
@@ -129,12 +125,10 @@ pub struct PlanRequest {
 }
 
 /// One check's planned entry — everything
-/// [`crate::checks::jev::plan_file::PlanCheck`] needs except `ordinal`, which
-/// is assigned by the caller: it knows the check's position within its
-/// declaring file, and a `PlannedCheck` alone (built from just a check + its
-/// agent outcome) does not.
+/// [`crate::checks::jev::plan_file::PlanCheck`] needs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedCheck {
+    pub id: String,
     pub title: String,
     pub prompt_xxh64: String,
     pub decider: Decider,
@@ -145,11 +139,11 @@ pub struct PlannedCheck {
 }
 
 impl PlannedCheck {
-    /// Attach `ordinal` to build the on-disk [`plan_file::PlanCheck`].
-    pub fn into_plan_check(self, ordinal: u32) -> plan_file::PlanCheck {
+    /// Convert to the on-disk [`plan_file::PlanCheck`].
+    pub fn into_plan_check(self) -> plan_file::PlanCheck {
         plan_file::PlanCheck {
+            id: self.id,
             title: self.title,
-            ordinal,
             prompt_xxh64: self.prompt_xxh64,
             decider: self.decider,
             verdict: self.verdict,
@@ -297,9 +291,7 @@ impl AgentPlanner {
                 progress,
                 plan: PlanIdentity {
                     dir: req.plan_dir.clone(),
-                    source: req.plan_source.clone(),
-                    req_ordinal: req.req_ordinal,
-                    check_ordinal: req.check_ordinal,
+                    requirement_id: req.requirement_id.clone(),
                     requirement_title: req.requirement_title.clone(),
                     root_source: req.root_source,
                 },
@@ -425,7 +417,7 @@ pub async fn entry_from_outcome(
         .verdict
         .clone()
         .ok_or_else(|| miette!("entry_from_outcome called on an outcome with no verdict"))?;
-    let prompt_hash = plan_file::prompt_xxh64(&check.title, &check.prompt);
+    let prompt_hash = plan_file::prompt_xxh64(&check.title, check.prompt());
 
     if outcome.tool_calls.is_empty() {
         return Ok(no_calibration_entry(
@@ -521,6 +513,7 @@ pub async fn entry_from_outcome(
     .await?;
 
     Ok(PlannedCheck {
+        id: check.id.clone(),
         title: check.title.clone(),
         prompt_xxh64: prompt_hash,
         decider,
@@ -543,6 +536,7 @@ fn no_calibration_entry(
     calls: Vec<PlanCall>,
 ) -> PlannedCheck {
     PlannedCheck {
+        id: check.id.clone(),
         title: check.title.clone(),
         prompt_xxh64: prompt_hash.to_string(),
         decider: Decider::Agent(reason),
@@ -775,10 +769,7 @@ mod tests {
     // -- fixtures ---------------------------------------------------------
 
     fn check() -> Check {
-        Check {
-            title: "No yellow".to_string(),
-            prompt: "scan for yellow text".to_string(),
-        }
+        Check::new_prompt("no-yellow", "No yellow", "scan for yellow text")
     }
 
     fn jev_config(threshold: f64, base_url: &str) -> JevConfig {
@@ -959,7 +950,7 @@ mod tests {
         let client = JevClient::new("https://unused.invalid").unwrap();
         let cfg = jev_config(0.75, "https://unused.invalid");
         let outcome = AgentOutcome::default();
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
         assert!(entry_from_outcome(&check(), &outcome, &ec).await.is_err());
     }
 
@@ -969,7 +960,7 @@ mod tests {
         let client = JevClient::new("https://unused.invalid").unwrap();
         let cfg = jev_config(0.75, "https://unused.invalid");
         let outcome = outcome_with_calls(true, vec![]);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let planned = entry_from_outcome(&check(), &outcome, &ec).await.unwrap();
         assert_eq!(planned.decider, Decider::Agent(AgentReason::NoToolCalls));
@@ -990,7 +981,7 @@ mod tests {
             input: json!({"pattern": "NEEDLE", "path": dir.path().to_string_lossy()}),
         }];
         let outcome = outcome_with_calls(true, calls);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let planned = entry_from_outcome(&check(), &outcome, &ec).await.unwrap();
         assert_eq!(
@@ -1019,7 +1010,7 @@ mod tests {
             input: json!({"file_path": "/etc/passwd"}),
         }];
         let outcome = outcome_with_calls(true, calls);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let err = entry_from_outcome(&check(), &outcome, &ec)
             .await
@@ -1048,7 +1039,7 @@ mod tests {
             input: json!({"file_path": escaping}),
         }];
         let outcome = outcome_with_calls(true, calls);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let err = entry_from_outcome(&check(), &outcome, &ec)
             .await
@@ -1142,7 +1133,7 @@ mod tests {
             input: json!({"file_path": dir.path().join("src/lib.rs").to_string_lossy()}),
         }];
         let outcome = outcome_with_calls(true, calls);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let c = check();
         let planned = with_api_key(|| entry_from_outcome(&c, &outcome, &ec))
@@ -1171,7 +1162,7 @@ mod tests {
             input: json!({"file_path": dir.path().join("src/lib.rs").to_string_lossy()}),
         }];
         let outcome = outcome_with_calls(true, calls);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let c = check();
         let planned = with_api_key(|| entry_from_outcome(&c, &outcome, &ec))
@@ -1199,7 +1190,7 @@ mod tests {
             input: json!({"file_path": dir.path().join("src/lib.rs").to_string_lossy()}),
         }];
         let outcome = outcome_with_calls(true, calls);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let c = check();
         let err = with_api_key(|| entry_from_outcome(&c, &outcome, &ec))
@@ -1227,7 +1218,7 @@ mod tests {
             input: json!({"file_path": dir.path().join("src/lib.rs").to_string_lossy()}),
         }];
         let outcome = outcome_with_calls(true, calls);
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
 
         let c = check();
         let err = with_api_key(|| entry_from_outcome(&c, &outcome, &ec))
@@ -1276,12 +1267,10 @@ mod tests {
             check_id: 0,
             check: check(),
             requirement_title: "R".to_string(),
-            declared_in: PathBuf::from("CHECKS.md"),
+            declared_in: PathBuf::from("CHECKS.toml"),
             root: dir.path().to_path_buf(),
             plan_dir: dir.path().to_path_buf(),
-            plan_source: "CHECKS.md".to_string(),
-            req_ordinal: 0,
-            check_ordinal: 0,
+            requirement_id: "r".to_string(),
             root_source: RootSource::Manifest,
             sink: None,
         };
@@ -1294,7 +1283,7 @@ mod tests {
         // `RecordingSandbox` (like `NoopSandbox`) hands back the source path
         // itself as the "sandbox root" — the same root `plan_check`'s lease
         // acquired.
-        let ec = ctx("R", "CHECKS.md", dir.path(), dir.path(), &client, &cfg);
+        let ec = ctx("R", "CHECKS.toml", dir.path(), dir.path(), &client, &cfg);
         let c = check();
         let via_entry_from_outcome = with_api_key(|| entry_from_outcome(&c, &outcome, &ec))
             .await
@@ -1316,12 +1305,10 @@ mod tests {
             check_id: 0,
             check: check(),
             requirement_title: "R".to_string(),
-            declared_in: PathBuf::from("CHECKS.md"),
+            declared_in: PathBuf::from("CHECKS.toml"),
             root: dir.path().to_path_buf(),
             plan_dir: dir.path().to_path_buf(),
-            plan_source: "CHECKS.md".to_string(),
-            req_ordinal: 0,
-            check_ordinal: 0,
+            requirement_id: "r".to_string(),
             root_source: RootSource::Manifest,
             sink: None,
         };
@@ -1356,12 +1343,10 @@ mod tests {
             check_id: 0,
             check: check(),
             requirement_title: "R".to_string(),
-            declared_in: PathBuf::from("CHECKS.md"),
+            declared_in: PathBuf::from("CHECKS.toml"),
             root: dir.path().to_path_buf(),
             plan_dir: dir.path().to_path_buf(),
-            plan_source: "CHECKS.md".to_string(),
-            req_ordinal: 0,
-            check_ordinal: 0,
+            requirement_id: "r".to_string(),
             root_source: RootSource::Manifest,
             sink: None,
         };

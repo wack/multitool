@@ -14,7 +14,7 @@
 //! The phases, each in its own submodule:
 //!
 //! 1. [`config`] — the (hardcoded, dependency-injected) configuration phase.
-//! 2. [`discovery`] — find/parse/validate `CHECKS.md` files, then stream each
+//! 2. [`discovery`] — find/parse/validate `CHECKS.toml` files, then stream each
 //!    validated check downstream (strict whole-run abort on any invalid file).
 //! 3. [`execution`] — run each check in a CoW [`sandbox`] via a boxed
 //!    [`executor`], fanned out through a bounded-concurrency cersei `foreach`
@@ -75,7 +75,7 @@ use crate::checks::sandbox::Sandbox;
 ///
 /// Returns the process exit code: `0` if every requirement is satisfied (an
 /// empty tree counts as success), `1` if any requirement is unsatisfied.
-/// Operational errors (e.g. an invalid `CHECKS.md`) surface as `Err` diagnostics
+/// Operational errors (e.g. an invalid `CHECKS.toml`) surface as `Err` diagnostics
 /// rather than an exit code, so CI can tell "checks failed" from "tool errored".
 ///
 /// `no_cache` is `multi check --no-cache` (jev builds only — see
@@ -293,14 +293,8 @@ async fn stream_requirements(
 ) -> Result<()> {
     let mut id = 0;
     let mut total = 0;
-    // Plan identity (MULTI-1825): each requirement's `(dir, source,
-    // req_ordinal)` triple, computed the exact same way `multi plan`'s
-    // `group_by_directory` does — see `requirement_plan_identities`'s docs.
-    let identities = crate::checks::model::requirement_plan_identities(requirements);
-    for ((req_index, req), (_dir, _source, req_ordinal)) in
-        requirements.iter().enumerate().zip(identities)
-    {
-        for (check_ordinal, check) in req.checks.iter().enumerate() {
+    for (req_index, req) in requirements.iter().enumerate() {
+        for check in &req.checks {
             // Tell the presenter about the check first so its tree row exists
             // before execution can emit `CheckStarted` for it.
             let _ = presenter
@@ -318,8 +312,7 @@ async fn stream_requirements(
                 filepath: req.filepath.clone(),
                 root: req.root.clone(),
                 root_source: req.root_source,
-                req_ordinal,
-                check_ordinal: check_ordinal as u32,
+                req_id: req.id.clone(),
                 check: check.clone(),
             };
             execution
@@ -429,7 +422,7 @@ async fn run_pipeline(
 /// Test-only entrypoint: drive **execution + reporting** over an in-memory,
 /// already-validated requirement set (bypassing discovery), returning the
 /// ordered outcomes. Lets execution-phase tests inject fakes without writing
-/// `CHECKS.md` files.
+/// `CHECKS.toml` files.
 #[cfg(test)]
 async fn run_to_outcomes(
     cfg: &Config,

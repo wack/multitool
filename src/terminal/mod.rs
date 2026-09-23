@@ -1,6 +1,6 @@
 use dialoguer::{Input, Password, Select};
 use logging::setup_logger;
-use miette::{DebugReportHandler, GraphicalReportHandler, IntoDiagnostic, Result};
+use miette::{GraphicalReportHandler, GraphicalTheme, IntoDiagnostic, Result};
 
 use crate::Cli;
 
@@ -28,22 +28,26 @@ impl Terminal {
         Self { stdout, stderr }
     }
 
-    /// This constructs and sets the global error reporter we use -- constructed during
-    /// initialization, this handler is graphical if the user allows
-    /// terminal colors, and simple otherwise.
-    /// This field is used to set the error reporting hook.
     /// Sets the global error handler for Miette. This should be called
     /// close to `main`.
+    ///
+    /// Errors always render through miette's graphical handler (message,
+    /// labeled source snippet, help). Only its theme follows the user's
+    /// color preference for stderr: colored when allowed, plain Unicode
+    /// otherwise. (miette's `DebugReportHandler` is not a "plain" mode — it
+    /// prints the raw `Diagnostic { .. }` struct plus a note to enable the
+    /// `fancy` feature, which this crate already enables.)
     pub fn set_error_hook(&self) -> Result<()> {
         let allow_color = self.stderr.allow_color();
         // Set the hook and coerce the `InstallError` into an `ErrorReport`
         miette::set_hook(Box::new(move |_| {
-            if allow_color {
-                // TODO: Add brand colors using ``::new_themed()`
-                Box::new(GraphicalReportHandler::new())
+            // TODO: Add brand colors to the colored theme.
+            let theme = if allow_color {
+                GraphicalTheme::unicode()
             } else {
-                Box::new(DebugReportHandler)
-            }
+                GraphicalTheme::unicode_nocolor()
+            };
+            Box::new(GraphicalReportHandler::new_themed(theme))
         }))?;
 
         Ok(())

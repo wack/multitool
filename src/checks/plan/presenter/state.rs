@@ -25,9 +25,9 @@ const RECENT_LOGS_CAP: usize = 3;
 /// [`crate::checks::jev::replay::Freshness`]'s two non-fresh variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StaleReason {
-    /// No plan entry exists at this check's position at all.
+    /// No plan entry exists for this check's ids at all.
     New,
-    /// An entry exists at this position, but its stored `prompt_xxh64` no
+    /// An entry exists for this check's ids, but its stored `prompt_xxh64` no
     /// longer matches the check's current title/prompt.
     PromptChanged,
     /// [`crate::checks::jev::replay::Freshness::ReadsStale`]: some call's

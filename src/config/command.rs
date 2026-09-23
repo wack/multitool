@@ -41,7 +41,7 @@ pub enum MultiCommand {
     /// immediately deploy the provided artifact and start canarying.
     #[command(hide = true)]
     Run(RunSubcommand),
-    /// Validate the requirements declared in `CHECKS.md` files using AI-agent checks.
+    /// Validate the requirements declared in `CHECKS.toml` files using AI-agent checks.
     Check(CheckSubcommand),
     /// Establish what evidence is necessary to verify each check and freeze it
     /// into `.check-plan.toml` (the Jev decision engine).

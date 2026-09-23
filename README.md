@@ -8,7 +8,7 @@
 
 ## ❓ What is MultiTool Checks?
 
-MultiTool Checks is a free, open-source CLI for verifying that a codebase satisfies your requirements. It runs like a test suite (invoked from the CLI, with a pass/fail exit code) but targets the non-functional "-ility" requirements that have no unit to test, like "authentication lives in one service" or "every public function is documented." You declare requirements in a `CHECKS.md` file, each with one or more checks, and the tool evaluates every check with an AI agent in its own fresh context window, then reports a pass/fail conclusion for each.
+MultiTool Checks is a free, open-source CLI for verifying that a codebase satisfies your requirements. It runs like a test suite (invoked from the CLI, with a pass/fail exit code) but targets the non-functional "-ility" requirements that have no unit to test, like "authentication lives in one service" or "every public function is documented." You declare requirements in a `CHECKS.toml` file, each with one or more checks, and the tool evaluates every check with an AI agent in its own fresh context window, then reports a pass/fail conclusion for each.
 
 We built this tool for internal use to stop multi-session drift, whereby your intent erodes across multiple agent sessions and earlier decisions are quietly forgotten downstream.
 
@@ -17,7 +17,7 @@ We built this tool for internal use to stop multi-session drift, whereby your in
 * [Pre-requisites](#-pre-requisites)  
 * [Install](#-pre-requisites)  
 * [Get started](#-pre-requisites)  
-* [The CHECKS.md format](#-the-checksmd-format)  
+* [The CHECKS.toml format](#-the-checkstoml-format)  
 * [Roadmap](#%EF%B8%8F-roadmap)  
 * [Mission](#-mission)  
 * [Support](#-support)  
@@ -47,21 +47,37 @@ Alternatively, visit [Releases](https://github.com/wack/multitool/releases/tag/v
 
 ## ⭐ Get started
 
-**1\. Create a `CHECKS.md` at your repo root.** An `# Requirement <title>` heading declares a requirement; `## Check <title>` subheadings declare its checks. A requirement with no `## Check` uses its body as a single check.
+**1\. Create a `CHECKS.toml` at your repo root.** Each `[[requirement]]` declares a requirement, and each `[[requirement.check]]` beneath it declares one of its checks.
 
-```
-# Requirement Handlers contain no business logic
-HTTP handlers delegate to a service layer. A handler that accesses the database
-or applies business rules directly fails this check.
+```toml
+version = 1
 
-# Requirement Authentication lives in Keystore
-Token issuance is centralized so credentials never sprawl across services.
+[[requirement]]
+id = "thin-handlers"
+title = "Handlers contain no business logic"
 
-## Check Only Keystore signs JWTs
-No service other than Keystore signs or issues JWTs.
+  [[requirement.check]]
+  id = "handlers-delegate"
+  title = "Handlers delegate to the service layer"
+  prompt = '''
+  HTTP handlers delegate to a service layer. A handler that accesses the
+  database or applies business rules directly fails this check.
+  '''
 
-## Check Aviary delegates token issuance
-Aviary calls Keystore for token issuance rather than signing tokens itself.
+[[requirement]]
+id = "auth-in-keystore"
+title = "Authentication lives in Keystore"
+description = "Token issuance is centralized so credentials never sprawl across services."
+
+  [[requirement.check]]
+  id = "only-keystore-signs"
+  title = "Only Keystore signs JWTs"
+  prompt = "No service other than Keystore signs or issues JWTs."
+
+  [[requirement.check]]
+  id = "aviary-delegates"
+  title = "Aviary delegates token issuance"
+  prompt = "Aviary calls Keystore for token issuance rather than signing tokens itself."
 ```
 
 **2\. Run the checks:**
@@ -70,7 +86,7 @@ Aviary calls Keystore for token issuance rather than signing tokens itself.
 multi check
 ```
 
-`multi check` scans the working directory recursively for every `CHECKS.md` (respecting `.gitignore`), or you can point it at a path: `multi check path/to/project`.
+`multi check` scans the working directory recursively for every `CHECKS.toml` (respecting `.gitignore`), or you can point it at a path: `multi check path/to/project`.
 
 **3\. Read the report.** Passed requirements are shown in green and failed ones in red. Under each failure, the failing checks are listed with the agent's evidence so you can act on them, or hand them back to an agent to fix. Passing checks are omitted to keep the output focused.
 
@@ -83,13 +99,13 @@ multi check
 
 A non-zero exit code on any failure makes it drop-in for CI.
 
-## 📋 The CHECKS.md format
+## 📋 The CHECKS.toml format
 
-`CHECKS.md` files are ordinary Markdown; two heading patterns carry meaning.
-
-* **`# Requirement <title>`** (H1) declares a requirement. `Req` is an accepted alias.  
-* **`## Check <title>`** (H2) declares a check belonging to the requirement above it. The Markdown beneath it, up to the next heading, is the prompt handed to the agent.  
-* **A requirement with no `## Check`** turns its prose body into a single check that inherits the requirement's title. A requirement with neither a check nor prose is an error.  
+* **`version = 1`** starts every file.  
+* **`[[requirement]]`** declares a requirement: an `id` (any non-empty string, unique within the file), a `title`, and optional `description` and `tags`. The description is metadata only; it is never sent to the agent.  
+* **`[[requirement.check]]`** declares a check belonging to the requirement above it: an `id` (unique within its requirement), a `title`, and a `prompt` handed to the agent. `kind = "prompt"` is the default and, for now, the only kind.  
+* **Every requirement needs at least one check.** Unknown keys, duplicate ids, and a missing `prompt` are errors that point at the exact line.  
+* **Ids are identity.** Plans (`.check-plan.toml`) are keyed by ids, so you can reorder requirements and checks, or retitle requirements, without losing cached results.  
 * **Checks are ANDed.** A requirement passes only if all of its checks pass.  
 * **Checks are independent.** Each runs in its own fresh context window, in no guaranteed order; a check should never assume another ran first.  
 * **Keep each check narrow.** If a check needs the word "and," it is probably two checks.

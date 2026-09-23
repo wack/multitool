@@ -1,0 +1,207 @@
+# Self-validation suite for MultiTool Checks. Each requirement below is a
+# non-functional ("-ility") property of the `multi check` implementation,
+# validated by a `prompt`-kind check — instructions for an AI agent inspecting
+# this repository. Run `multi check` at the repository root to dogfood the
+# tool on itself.
+
+version = 1
+
+[[requirement]]
+id = "provider-agnostic-execution"
+title = "Provider-Agnostic Execution"
+description = """
+The agent executor is defined behind a trait so execution can run over the
+in-process `cersei-agent` executor or a test fake without rewriting the
+execution phase. This extensibility is the whole point of the
+configuration/executor seam.
+"""
+
+  [[requirement.check]]
+  id = "boxed-executor-trait"
+  title = "Boxed Executor Trait"
+  prompt = '''
+Inspect the Rust sources for the `multi check` feature. Confirm that agent execution is defined behind a trait (for example `CheckExecutor`) that is consumed as a boxed or `Arc`-wrapped, dynamically-dispatched trait object — for example a type alias of the form `Box<dyn CheckExecutor + Send + Sync>`, mirroring the existing `BoxedIngress`, `BoxedMonitor`, and `BoxedPlatform` aliases. The check passes only if the execution phase depends on this trait rather than naming a concrete executor type. Report a failure if the execution path references a concrete executor struct (such as the cersei executor) directly instead of the trait object.
+'''
+
+[[requirement]]
+id = "in-process-agent-execution"
+title = "In-Process Agent Execution"
+description = """
+The executor runs each check's agent inside the CLI process via the
+`cersei-agent` library — there is no requirement to shell out to any external
+CLI for a check to run.
+"""
+
+  [[requirement.check]]
+  id = "default-executor-runs-in-process"
+  title = "Default Executor Runs In-Process"
+  prompt = '''
+Inspect the executor implementation and how it is constructed from configuration. Confirm that the execution engine builds and runs a `cersei_agent::Agent` in-process (calling its `run`/`run_stream` method) rather than spawning an external process. The check fails if running a check requires spawning an external `claude` process.
+'''
+
+[[requirement]]
+id = "trustworthy-in-process-reporting"
+title = "Trustworthy In-Process Reporting"
+description = """
+Check verdicts must arrive through a single in-process judge tool,
+`report-check-result`, registered on the agent — not from agent stdout, a
+sentinel file, or a process exit code. Capturing the verdict in-process is what
+makes results reliable despite agent nondeterminism.
+"""
+
+  [[requirement.check]]
+  id = "verdict-captured-via-judge-tool"
+  title = "Verdict Captured Via Judge Tool"
+  prompt = '''
+Inspect how a check's verdict is reported and captured. Confirm there is an in-process tool named `report-check-result` (implementing the cersei `Tool` trait) that is registered fresh on each check's agent and writes the verdict into an in-process sink the executor reads after the run. Confirm the verdict is **not** carried over a network MCP server or an external transport: there should be no in-process HTTP/`rmcp` server standing up per-check endpoints for reporting. The check fails if verdict reporting relies on an out-of-process server or a network endpoint.
+'''
+
+  [[requirement.check]]
+  id = "verdict-from-tool-call-not-stdout"
+  title = "Verdict From Tool Call Not Stdout"
+  prompt = '''
+Confirm that a check's pass/fail verdict is derived from the `success` boolean reported through the `report-check-result` judge tool, and never from the agent's stdout, stderr, or process exit code. Verify that a check whose agent finishes without ever calling the tool (for example by hitting the turn limit) is treated as a failure or error rather than silently passing. The check fails if the verdict is obtained by parsing stdout or by reading an exit status.
+'''
+
+[[requirement]]
+id = "least-privilege-agent-permissions"
+title = "Least-Privilege Agent Permissions"
+description = """
+A verification agent should observe, not mutate. By default each check's agent
+gets a read-only tool set and a permission policy that denies anything beyond
+read-only, so a check cannot alter files even within its sandbox.
+"""
+
+  [[requirement.check]]
+  id = "read-only-tools-by-default"
+  title = "Read-Only Tools By Default"
+  prompt = '''
+Inspect how the in-process executor configures its agent's tools and permission policy. Confirm that, by default, the agent is given a read-only tool set (such as file-read, grep, and glob) plus the reporting/judge tool, and a read-only permission policy (for example `AllowReadOnly`) — not a full read-write-execute tool set with an allow-all policy. The check fails if the default agent is granted write or shell-execution tools, or an allow-everything permission policy.
+'''
+
+[[requirement]]
+id = "isolated-agent-sessions"
+title = "Isolated Agent Sessions"
+description = """
+Checks run concurrently and the agent's shell tools persist per-session state in
+a process-global registry. Each check must therefore use a distinct session
+identifier so parallel agents cannot clobber one another's shell state.
+"""
+
+  [[requirement.check]]
+  id = "distinct-session-per-check"
+  title = "Distinct Session Per Check"
+  prompt = '''
+Inspect how the in-process executor assigns a session identifier to each check's agent. Confirm that each check is given a unique `session_id` (for example derived from the check's id) rather than a shared constant, and that the per-session shell state is cleared on teardown. The check fails if all checks share one session id, or if per-check shell state is never cleared.
+'''
+
+[[requirement]]
+id = "checks-cannot-corrupt-workspace"
+title = "Checks Cannot Corrupt the Workspace"
+description = """
+Every check runs against a copy-on-write clone of the working tree, so a
+misbehaving agent cannot mutate the user's real files. Both checks below must
+pass for this requirement to be satisfied.
+"""
+
+  [[requirement.check]]
+  id = "sandbox-cross-platform"
+  title = "Sandbox Is Cross-Platform and Platform-Gated"
+  prompt = '''
+Inspect the sandboxing code. Confirm there is a sandbox abstraction (a trait such as `Sandbox`) with a working copy-on-write implementation on **both** macOS and Linux: macOS built on APFS `clonefile`, and Linux built on reflinks (the `FICLONE` ioctl) with a plain-copy fallback for filesystems that lack reflink support. Operating-system-specific code must be selected with `cfg` attributes so the crate still compiles on every target. The check fails if a real sandbox is created on only one of macOS or Linux (for example, if Linux falls through to a stub that returns an "unsupported platform" error instead of cloning the working tree), or if sandboxing is compiled unconditionally for a single operating system in a way that would break the build on other targets.
+'''
+
+  [[requirement.check]]
+  id = "execution-uses-sandbox"
+  title = "Execution Uses the Sandbox"
+  prompt = '''
+Confirm that the execution phase creates a sandbox for each check and runs the agent with the sandbox directory as its working directory, rather than executing the agent against the real working directory. The check fails if any check is executed outside of a sandbox.
+'''
+
+[[requirement]]
+id = "concurrent-check-execution"
+title = "Concurrent Check Execution"
+description = """
+Checks are independent and each one spawns a potentially slow agent, so they
+must run concurrently rather than one after another.
+"""
+
+  [[requirement.check]]
+  id = "concurrent-dispatch"
+  title = "Concurrent Dispatch"
+  prompt = '''
+Inspect the execution phase. Confirm that checks are dispatched concurrently — for example via a `JoinSet`, `FuturesUnordered`, or per-check `tokio::spawn` — and awaited together, rather than run inside a blocking loop that starts and awaits one check before beginning the next. The check fails if check execution is strictly sequential.
+'''
+
+[[requirement]]
+id = "concurrency-defaults-to-core-count"
+title = "Concurrency Defaults To The Host's Core Count"
+description = """
+The concurrency cap is user-configurable (a `--concurrency` flag, layered the
+same way as `--provider`/`--model`/`--effort`), but absent any override its
+default must equal the number of CPU cores available on the machine running
+`multi check` — not a hardcoded constant. A fixed default either strands cores
+on big machines or overcommits small ones.
+"""
+
+  [[requirement.check]]
+  id = "default-concurrency-equals-available-parallelism"
+  title = "Default Concurrency Equals Available Parallelism"
+  prompt = '''
+Inspect how the default check concurrency is computed. Confirm that, with no `--concurrency` flag, no `MULTI_CHECKS_CONCURRENCY` environment variable, and no `checks.concurrency` config-file value set, the resolved concurrency is derived from the host's available parallelism (for example via `std::thread::available_parallelism`) rather than a fixed literal such as `2`. The check fails if the default concurrency is a hardcoded number instead of a value computed from the running machine's core count.
+'''
+
+[[requirement]]
+id = "authoring-errors-are-actionable"
+title = "Authoring Errors Are Actionable"
+description = """
+When a `CHECKS.toml` file is malformed, the tool must tell the author exactly
+what is wrong and where, instead of failing opaquely. Clear diagnostics are what
+make the format usable.
+"""
+
+  [[requirement.check]]
+  id = "diagnostics-name-the-file"
+  title = "Diagnostics Name the File"
+  prompt = '''
+Inspect discovery-time validation of `CHECKS.toml` files. Confirm that it produces `miette` diagnostics for each malformed case — invalid TOML, an unsupported `version`, an unknown key, a requirement with no checks, a check missing its `prompt`, an unknown check `kind`, an empty id or one with leading/trailing whitespace or control characters, and a duplicate requirement or check id — and that each diagnostic names the offending `CHECKS.toml` file. The check fails if any of these conditions is unhandled, or if a diagnostic does not name the source file.
+'''
+
+[[requirement]]
+id = "ci-friendly-exit-status"
+title = "CI-Friendly Exit Status"
+description = """
+`multi check` must work as a CI gate: a clean pass exits zero, and any
+unsatisfied requirement exits non-zero.
+"""
+
+  [[requirement.check]]
+  id = "exit-code-reflects-result"
+  title = "Exit Code Reflects Result"
+  prompt = '''
+Confirm that the command exits with status code 0 when every requirement is satisfied (including the trivial case of an empty suite), and with status code 1 when one or more requirements are unsatisfied. The check fails if a run containing an unsatisfied requirement can exit 0, or if an all-satisfied run exits with a non-zero code.
+'''
+
+[[requirement]]
+id = "layered-configuration"
+title = "Layered Configuration"
+description = """
+The model, provider, and effort are resolved from three sources with standard
+CLI precedence — flag, then environment, then config file (flag wins) — while
+credentials are read only from each provider's native environment variable,
+never from the config file.
+"""
+
+  [[requirement.check]]
+  id = "precedence-and-validation"
+  title = "Precedence And Validation"
+  prompt = '''
+Inspect the configuration phase of `multi check`. Confirm that provider/model/effort are merged from a config file, `MULTI_`-prefixed environment variables, and CLI flags, with flags overriding environment overriding file. Confirm the selected model is validated against a hardcoded allowlist of known IDs for the provider (an unknown ID is a clear error). The check fails if any of these values cannot be set from configuration, or if the merge precedence is not flag > env > file.
+'''
+
+  [[requirement.check]]
+  id = "credentials-are-environment-only"
+  title = "Credentials Are Environment-Only"
+  prompt = '''
+Confirm that provider API keys are read directly from each provider's native environment variable (for example `ANTHROPIC_API_KEY`) and are never loaded from the config file or from a `MULTI_`-prefixed variable. The check fails if a credential can be supplied through the config file or the `MULTI_` namespace.
+'''

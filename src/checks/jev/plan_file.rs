@@ -3,7 +3,7 @@
 //! A plan freezes, per check, the read-only tool calls needed to verify it —
 //! captured once by [`crate::checks::executor::tool_capture`] at plan time —
 //! plus a checksum of each call's replay output. `multi plan` (MULTI-1824)
-//! writes one `.check-plan.toml` beside every `CHECKS.md`; `multi check`
+//! writes one `.check-plan.toml` beside every `CHECKS.toml`; `multi check`
 //! (MULTI-1822/1825) replays the frozen calls, compares checksums, and only
 //! falls back to a full reasoning-agent run when the evidence changed. Plans
 //! are meant to be committed, so every value here is portable: no absolute
@@ -48,9 +48,9 @@
 //! Deterministic output is a property of [`PlanStore::write`], not of
 //! whatever order a caller happens to assemble a [`PlanFile`] in —
 //! MULTI-1824's planner collects results from bounded-concurrency tasks, so
-//! assembly order will vary run to run. `write` stable-sorts a cloned plan's
-//! `requirements` by `(source, ordinal)` and each requirement's `checks` by
-//! `ordinal` before rendering; [`PlanFile::to_toml_string`] itself renders
+//! assembly order will vary run to run. `write` sorts a cloned plan's
+//! `requirements` by `id` and each requirement's `checks` by `id` before
+//! rendering; [`PlanFile::to_toml_string`] itself renders
 //! whatever order it's handed, verbatim. A call's order within its check is
 //! left untouched — replay order is meaningful, not an artifact to sort away
 //! — only exact duplicates are removed (see
@@ -89,9 +89,13 @@ use crate::checks::executor::ReadOnlyTool;
 /// The only schema version this module understands. [`PlanStore::load`]
 /// rejects any other value with [`PlanError::UnknownVersion`] rather than
 /// attempting to parse a plan it can't interpret.
-pub const CURRENT_VERSION: u32 = 1;
+///
+/// Version 1 keyed entries by `(source, ordinal)` position within a
+/// `CHECKS.md`; version 2 keys them by the requirement/check `id`s declared
+/// in `CHECKS.toml`, so a v1 plan is rejected and must be re-planned.
+pub const CURRENT_VERSION: u32 = 2;
 
-/// The plan file's name, a fixed sibling of the `CHECKS.md`/`CHECKS.toml` it
+/// The plan file's name, a fixed sibling of the `CHECKS.toml` it
 /// covers — never configurable, so a plan is always found the same way
 /// regardless of invocation directory (see the module docs on portability).
 pub const PLAN_FILE_NAME: &str = ".check-plan.toml";
@@ -155,27 +159,25 @@ impl PlanFile {
         }
     }
 
-    /// Find the frozen check identified by `(source, req_ordinal,
-    /// check_ordinal)`, but only when its stored `prompt_xxh64` still matches
-    /// `prompt_xxh64` — a mismatch means the check's title/prompt changed
-    /// since the plan was written, so its frozen evidence no longer applies
-    /// and callers must treat it exactly like a missing plan.
-    pub fn lookup(
-        &self,
-        source: &str,
-        req_ordinal: u32,
-        check_ordinal: u32,
-        prompt_xxh64: &str,
-    ) -> Option<&PlanCheck> {
-        let requirement = self
-            .requirements
+    /// Find the frozen check identified by `(req_id, check_id)`, but only
+    /// when its stored `prompt_xxh64` still matches `prompt_xxh64` — a
+    /// mismatch means the check's title/prompt changed since the plan was
+    /// written, so its frozen evidence no longer applies and callers must
+    /// treat it exactly like a missing plan.
+    pub fn lookup(&self, req_id: &str, check_id: &str, prompt_xxh64: &str) -> Option<&PlanCheck> {
+        let check = self.find(req_id, check_id)?;
+        (check.prompt_xxh64 == prompt_xxh64).then_some(check)
+    }
+
+    /// Find the stored entry for `(req_id, check_id)` regardless of whether
+    /// its `prompt_xxh64` is still current.
+    pub fn find(&self, req_id: &str, check_id: &str) -> Option<&PlanCheck> {
+        self.requirements
             .iter()
-            .find(|r| r.source == source && r.ordinal == req_ordinal)?;
-        let check = requirement
+            .find(|r| r.id == req_id)?
             .checks
             .iter()
-            .find(|c| c.ordinal == check_ordinal)?;
-        (check.prompt_xxh64 == prompt_xxh64).then_some(check)
+            .find(|c| c.id == check_id)
     }
 
     /// Hand-render this plan as TOML text (see the module docs for why this
@@ -193,19 +195,14 @@ impl PlanFile {
     }
 }
 
-/// One `[[requirement]]` block: a single non-functional requirement declared
-/// by a `CHECKS.md` (or, later, `CHECKS.toml` — MULTI-1831) file.
+/// One `[[requirement]]` block: a single requirement declared by the
+/// sibling `CHECKS.toml`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PlanRequirement {
+    /// The requirement's `id` in `CHECKS.toml` — what identifies it. Titles
+    /// are not unique and are recorded only for readability.
+    pub id: String,
     pub title: String,
-    /// The declaring file's name (e.g. `"CHECKS.md"`) — not a path. A plan
-    /// always sits beside the file(s) it covers, so this is only ever used to
-    /// disambiguate which declaring file a requirement came from once a
-    /// directory can hold both `CHECKS.md` and `CHECKS.toml` (MULTI-1831).
-    pub source: String,
-    /// This requirement's position within `source`. Titles are not unique, so
-    /// `(source, ordinal)` — not `title` — identifies a requirement.
-    pub ordinal: u32,
     #[serde(rename = "check", default)]
     pub checks: Vec<PlanCheck>,
 }
@@ -213,9 +210,8 @@ pub struct PlanRequirement {
 impl PlanRequirement {
     fn render(&self, out: &mut String) -> Result<(), PlanError> {
         out.push_str("\n[[requirement]]\n");
+        write_kv(out, "id", &self.id)?;
         write_kv(out, "title", &self.title)?;
-        write_kv(out, "source", &self.source)?;
-        write_kv(out, "ordinal", &self.ordinal)?;
         for check in &self.checks {
             check.render(out)?;
         }
@@ -234,11 +230,10 @@ impl PlanRequirement {
 /// unrepresentable in memory too — see [`Decider`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanCheck {
+    /// The check's `id` in `CHECKS.toml`, unique within its requirement —
+    /// what identifies it. `title` is recorded only for readability.
+    pub id: String,
     pub title: String,
-    /// This check's position within its requirement. Titles are not unique
-    /// (a check may inherit its requirement's title when anonymous), so
-    /// `(requirement, ordinal)` — not `title` — identifies a check.
-    pub ordinal: u32,
     /// Hash of `title` + the check's prompt (see [`prompt_xxh64`]); a
     /// mismatch invalidates this entry — see [`PlanFile::lookup`].
     pub prompt_xxh64: String,
@@ -258,8 +253,8 @@ pub struct PlanCheck {
 impl PlanCheck {
     fn render(&self, out: &mut String) -> Result<(), PlanError> {
         out.push_str("\n[[requirement.check]]\n");
+        write_kv(out, "id", &self.id)?;
         write_kv(out, "title", &self.title)?;
-        write_kv(out, "ordinal", &self.ordinal)?;
         write_kv(out, "prompt_xxh64", &self.prompt_xxh64)?;
         write_kv(out, "decider", self.decider.wire_str())?;
         write_kv(out, "verdict", &self.verdict)?;
@@ -286,8 +281,8 @@ impl PlanCheck {
 /// enforced-shape type.
 #[derive(Debug, Deserialize)]
 struct RawPlanCheck {
+    id: String,
     title: String,
-    ordinal: u32,
     prompt_xxh64: String,
     decider: DeciderTag,
     verdict: bool,
@@ -320,8 +315,8 @@ impl TryFrom<RawPlanCheck> for PlanCheck {
             }
         };
         Ok(PlanCheck {
+            id: raw.id,
             title: raw.title,
-            ordinal: raw.ordinal,
             prompt_xxh64: raw.prompt_xxh64,
             decider,
             verdict: raw.verdict,
@@ -967,8 +962,8 @@ impl PlanStore {
     ///
     /// Output is deterministic regardless of the order `plan.requirements`
     /// (and each requirement's `checks`) arrive in — a cloned copy is
-    /// stable-sorted first: requirements by `(source, ordinal)`, checks by
-    /// `ordinal`. This matters because MULTI-1824's planner assembles a plan
+    /// sorted first: requirements by `id`, checks by `id` (both unique in
+    /// their scope, so the order is total). This matters because MULTI-1824's planner assembles a plan
     /// from bounded-concurrency tasks, whose completion (and thus arrival)
     /// order varies run to run; without normalizing it here, two runs over an
     /// unchanged suite would produce spuriously different bytes. A call's
@@ -977,10 +972,9 @@ impl PlanStore {
     /// first-occurrence order (see [`dedup_calls_preserving_order`]).
     pub fn write(dir: &Path, plan: &PlanFile) -> Result<(), PlanError> {
         let mut plan = plan.clone();
-        plan.requirements
-            .sort_by(|a, b| (a.source.as_str(), a.ordinal).cmp(&(b.source.as_str(), b.ordinal)));
+        plan.requirements.sort_by(|a, b| a.id.cmp(&b.id));
         for requirement in &mut plan.requirements {
-            requirement.checks.sort_by_key(|check| check.ordinal);
+            requirement.checks.sort_by(|a, b| a.id.cmp(&b.id));
             for check in &mut requirement.checks {
                 check.calls = dedup_calls_preserving_order(std::mem::take(&mut check.calls));
             }
@@ -1112,12 +1106,11 @@ mod tests {
 
     fn sample_plan() -> PlanFile {
         PlanFile::new(vec![PlanRequirement {
+            id: "auth-in-keystore".to_string(),
             title: "Authentication lives in Keystore".to_string(),
-            source: "CHECKS.md".to_string(),
-            ordinal: 1,
             checks: vec![PlanCheck {
+                id: "only-keystore-signs".to_string(),
                 title: "Only Keystore signs JWTs".to_string(),
-                ordinal: 0,
                 prompt_xxh64: prompt_xxh64("Only Keystore signs JWTs", "check body"),
                 decider: Decider::Agent(AgentReason::ControlFailed),
                 verdict: true,
@@ -1143,12 +1136,12 @@ mod tests {
         }])
     }
 
-    /// A minimal, otherwise-empty check with the given `ordinal` — for tests
+    /// A minimal, otherwise-empty check with the given `id` — for tests
     /// that only care about requirement/check *ordering*, not content.
-    fn minimal_check(ordinal: u32, title: &str) -> PlanCheck {
+    fn minimal_check(id: &str, title: &str) -> PlanCheck {
         PlanCheck {
+            id: id.to_string(),
             title: title.to_string(),
-            ordinal,
             prompt_xxh64: prompt_xxh64(title, ""),
             decider: Decider::Jev,
             verdict: true,
@@ -1165,13 +1158,15 @@ mod tests {
         let plan = sample_plan();
         let rendered = plan.to_toml_string().unwrap();
 
-        assert!(rendered.contains("version = 1"));
+        assert!(rendered.contains("version = 2"));
         assert!(rendered.contains("[[requirement]]"));
+        assert!(rendered.contains(r#"id = "auth-in-keystore""#));
         assert!(rendered.contains(r#"title = "Authentication lives in Keystore""#));
-        assert!(rendered.contains(r#"source = "CHECKS.md""#));
-        assert!(rendered.contains("ordinal = 1"));
+        assert!(!rendered.contains("source ="));
+        assert!(!rendered.contains("ordinal ="));
 
         assert!(rendered.contains("[[requirement.check]]"));
+        assert!(rendered.contains(r#"id = "only-keystore-signs""#));
         assert!(rendered.contains(r#"title = "Only Keystore signs JWTs""#));
         assert!(rendered.contains(r#"decider = "agent""#));
         assert!(rendered.contains("verdict = true"));
@@ -1298,13 +1293,12 @@ mod tests {
 
         let plan = PlanFile::new(vec![
             PlanRequirement {
+                id: "weird".to_string(),
                 title: requirement_title.to_string(),
-                source: "CHECKS.md".to_string(),
-                ordinal: 0,
                 checks: vec![
                     PlanCheck {
+                        id: "adversarial".to_string(),
                         title: check_title.to_string(),
-                        ordinal: 0,
                         prompt_xxh64: prompt_xxh64(check_title, evidence),
                         decider: Decider::Agent(AgentReason::TruncatedDiscovery),
                         verdict: false,
@@ -1323,14 +1317,13 @@ mod tests {
                         ],
                     },
                     // A check with zero calls.
-                    minimal_check(1, "no calls"),
+                    minimal_check("no-calls", "no calls"),
                 ],
             },
             // A requirement with zero checks.
             PlanRequirement {
+                id: "zz-empty".to_string(),
                 title: "empty requirement".to_string(),
-                source: "CHECKS.md".to_string(),
-                ordinal: 1,
                 checks: vec![],
             },
         ]);
@@ -1374,21 +1367,25 @@ mod tests {
 
     #[test]
     fn write_output_is_independent_of_requirement_and_check_assembly_order() {
-        // Two requirements (by `(source, ordinal)`), each with two checks
-        // (by `ordinal`), assembled in two different orders — arrival order
+        // Two requirements, each with two checks, assembled in two
+        // different orders — arrival order
         // varies run to run once MULTI-1824's planner collects results from
         // bounded-concurrency tasks, so `write` itself must normalize it.
         let req_a = PlanRequirement {
+            id: "req-a".to_string(),
             title: "Req A".to_string(),
-            source: "CHECKS.md".to_string(),
-            ordinal: 0,
-            checks: vec![minimal_check(0, "A check 0"), minimal_check(1, "A check 1")],
+            checks: vec![
+                minimal_check("a0", "A check 0"),
+                minimal_check("a1", "A check 1"),
+            ],
         };
         let req_b = PlanRequirement {
+            id: "req-b".to_string(),
             title: "Req B".to_string(),
-            source: "CHECKS.md".to_string(),
-            ordinal: 1,
-            checks: vec![minimal_check(0, "B check 0"), minimal_check(1, "B check 1")],
+            checks: vec![
+                minimal_check("b0", "B check 0"),
+                minimal_check("b1", "B check 1"),
+            ],
         };
 
         let canonical = PlanFile::new(vec![req_a.clone(), req_b.clone()]);
@@ -1450,24 +1447,38 @@ mod tests {
     fn lookup_finds_a_matching_check() {
         let plan = sample_plan();
         let hash = prompt_xxh64("Only Keystore signs JWTs", "check body");
-        let found = plan.lookup("CHECKS.md", 1, 0, &hash);
+        let found = plan.lookup("auth-in-keystore", "only-keystore-signs", &hash);
         assert_eq!(found, Some(&plan.requirements[0].checks[0]));
     }
 
     #[test]
     fn lookup_returns_none_on_prompt_hash_mismatch() {
         let plan = sample_plan();
-        let found = plan.lookup("CHECKS.md", 1, 0, "0000000000000000");
+        let found = plan.lookup(
+            "auth-in-keystore",
+            "only-keystore-signs",
+            "0000000000000000",
+        );
         assert!(found.is_none());
+        // `find` ignores the hash.
+        assert!(
+            plan.find("auth-in-keystore", "only-keystore-signs")
+                .is_some()
+        );
     }
 
     #[test]
-    fn lookup_returns_none_for_unknown_source_or_ordinals() {
+    fn lookup_returns_none_for_unknown_ids() {
         let plan = sample_plan();
         let hash = prompt_xxh64("Only Keystore signs JWTs", "check body");
-        assert!(plan.lookup("CHECKS.toml", 1, 0, &hash).is_none());
-        assert!(plan.lookup("CHECKS.md", 2, 0, &hash).is_none());
-        assert!(plan.lookup("CHECKS.md", 1, 5, &hash).is_none());
+        assert!(
+            plan.lookup("other-req", "only-keystore-signs", &hash)
+                .is_none()
+        );
+        assert!(
+            plan.lookup("auth-in-keystore", "other-check", &hash)
+                .is_none()
+        );
     }
 
     // -- version handling -----------------------------------------------------------
@@ -1508,14 +1519,13 @@ mod tests {
     /// testing that invalid pairing is rejected on load.
     fn minimal_plan_toml_with_check_body(body: &str) -> String {
         format!(
-            "version = 1\n\n\
+            "version = 2\n\n\
              [[requirement]]\n\
-             title = \"R\"\n\
-             source = \"CHECKS.md\"\n\
-             ordinal = 0\n\n\
+             id = \"r\"\n\
+             title = \"R\"\n\n\
              [[requirement.check]]\n\
+             id = \"c\"\n\
              title = \"C\"\n\
-             ordinal = 0\n\
              prompt_xxh64 = \"0000000000000000\"\n\
              verdict = true\n\
              {body}\n"

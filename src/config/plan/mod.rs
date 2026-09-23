@@ -16,7 +16,7 @@ use crate::checks::config::{CliOverrides, Effort, ProviderKind};
 /// `multi check`, but trace capture is out of scope for this milestone.
 #[derive(Args, Clone)]
 pub struct PlanSubcommand {
-    /// The directory to recursively scan for `CHECKS.md` files.
+    /// The directory to recursively scan for `CHECKS.toml` files.
     #[arg(default_value = ".")]
     directory: PathBuf,
 

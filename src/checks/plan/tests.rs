@@ -15,7 +15,7 @@ use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::*;
-use crate::checks::discovery::discover;
+use crate::checks::discovery::{checks_toml, discover};
 use crate::checks::executor::{FakeExecutor, ReadOnlyTool};
 use crate::checks::jev::error::TYPESAFE_API_KEY_VAR;
 use crate::checks::jev::plan_file::{AgentReason, Decider, JevCalibration, PlanCall, Reading};
@@ -48,8 +48,9 @@ async fn read_checksum(root: &std::path::Path, relative: &str) -> String {
 async fn planned_for(root: &std::path::Path, check: &Check, relative_file: &str) -> PlannedCheck {
     let xxh64 = read_checksum(root, relative_file).await;
     PlannedCheck {
+        id: check.id.clone(),
         title: check.title.clone(),
-        prompt_xxh64: plan_file::prompt_xxh64(&check.title, &check.prompt),
+        prompt_xxh64: plan_file::prompt_xxh64(&check.title, check.prompt()),
         decider: Decider::Jev,
         verdict: true,
         evidence: Some("looks fine".to_string()),
@@ -72,8 +73,8 @@ fn write_two_check_fixture(dir: &std::path::Path) {
     std::fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
     std::fs::write(dir.join("src/b.rs"), "fn b() {}\n").unwrap();
     std::fs::write(
-        dir.join("CHECKS.md"),
-        "# Requirement Demo\n## Check A\nCheck A prompt\n## Check B\nCheck B prompt\n",
+        dir.join("CHECKS.toml"),
+        checks_toml(&[("Demo", &[("A", "Check A prompt"), ("B", "Check B prompt")])]),
     )
     .unwrap();
 }
@@ -180,13 +181,16 @@ async fn editing_a_checks_prompt_replans_it() {
     // Edit check B's prompt text only — its evidence file is untouched, but
     // `prompt_xxh64` no longer matches the stored entry.
     std::fs::write(
-        dir.path().join("CHECKS.md"),
-        "# Requirement Demo\n## Check A\nCheck A prompt\n## Check B\nCheck B prompt CHANGED\n",
+        dir.path().join("CHECKS.toml"),
+        checks_toml(&[(
+            "Demo",
+            &[("A", "Check A prompt"), ("B", "Check B prompt CHANGED")],
+        )]),
     )
     .unwrap();
 
     let reqs2 = discover(dir.path()).await.unwrap();
-    assert_ne!(reqs2[0].checks[1].prompt, reqs[0].checks[1].prompt);
+    assert_ne!(reqs2[0].checks[1].prompt(), reqs[0].checks[1].prompt());
     let replanned_b = planned_for(dir.path(), &reqs2[0].checks[1], "src/b.rs").await;
     let fake2 = Arc::new(FakePlanner::new().with_planned(1, replanned_b));
     let report = run_with_planner(&term, &reqs2, fake2.clone(), 2, false, None)
@@ -250,16 +254,17 @@ async fn truncated_discovery_entry_is_reused_not_replanned() {
         std::fs::write(dir.path().join(format!("f{i:04}.txt")), "NEEDLE\n").unwrap();
     }
     std::fs::write(
-        dir.path().join("CHECKS.md"),
-        "# Requirement Search\n## Check Grep\nfind needle\n",
+        dir.path().join("CHECKS.toml"),
+        checks_toml(&[("Search", &[("Grep", "find needle")])]),
     )
     .unwrap();
 
     let reqs = discover(dir.path()).await.unwrap();
     let check = &reqs[0].checks[0];
     let planned = PlannedCheck {
+        id: check.id.clone(),
         title: check.title.clone(),
-        prompt_xxh64: plan_file::prompt_xxh64(&check.title, &check.prompt),
+        prompt_xxh64: plan_file::prompt_xxh64(&check.title, check.prompt()),
         decider: Decider::Agent(AgentReason::TruncatedDiscovery),
         verdict: true,
         evidence: Some("many matches".to_string()),
@@ -307,8 +312,8 @@ fn entry_has_truncated_call_detects_either_outcome_kind() {
         input: json!({}),
     };
     let reused = LineOutcome::Reused(plan_file::PlanCheck {
+        id: "t".to_string(),
         title: "t".to_string(),
-        ordinal: 0,
         prompt_xxh64: "0".repeat(16),
         decider: Decider::Agent(AgentReason::TruncatedDiscovery),
         verdict: true,
@@ -319,6 +324,7 @@ fn entry_has_truncated_call_detects_either_outcome_kind() {
     assert!(entry_has_truncated_call(&reused));
 
     let planned = LineOutcome::Planned(PlannedCheck {
+        id: "t".to_string(),
         title: "t".to_string(),
         prompt_xxh64: "0".repeat(16),
         decider: Decider::Jev,
@@ -349,10 +355,10 @@ fn summary_line_is_absent_when_the_truncated_count_is_zero() {
 
 #[test]
 fn refused_message_names_the_file_and_mentions_the_manifest() {
-    let path = std::path::Path::new("services/legacy/CHECKS.md");
+    let path = std::path::Path::new("services/legacy/CHECKS.toml");
     let message = refused_message(path);
     assert!(
-        message.contains("services/legacy/CHECKS.md"),
+        message.contains("services/legacy/CHECKS.toml"),
         "names the file: {message}"
     );
     assert!(
@@ -372,14 +378,14 @@ async fn requirements_file_without_a_manifest_is_refused_other_files_still_plann
     std::fs::write(dir.path().join("good/MultiTool.toml"), "").unwrap();
     std::fs::write(dir.path().join("good/src/ok.rs"), "fn ok() {}\n").unwrap();
     std::fs::write(
-        dir.path().join("good/CHECKS.md"),
-        "# Requirement Good\n## Check OK\nprompt\n",
+        dir.path().join("good/CHECKS.toml"),
+        checks_toml(&[("Good", &[("OK", "prompt")])]),
     )
     .unwrap();
     std::fs::create_dir_all(dir.path().join("bad")).unwrap();
     std::fs::write(
-        dir.path().join("bad/CHECKS.md"),
-        "# Requirement Bad\n## Check Nope\nprompt\n",
+        dir.path().join("bad/CHECKS.toml"),
+        checks_toml(&[("Bad", &[("Nope", "prompt")])]),
     )
     .unwrap();
 
@@ -520,11 +526,11 @@ async fn a_planning_error_under_force_still_preserves_the_old_entry() {
         .iter()
         .find(|c| c.title == "A")
         .expect("check A's old entry survives the forced-but-failed replan");
-    assert_eq!(check_a, &planned_a.into_plan_check(0));
+    assert_eq!(check_a, &planned_a.into_plan_check());
 }
 
 #[tokio::test]
-async fn a_check_removed_from_checksmd_is_dropped_from_the_plan() {
+async fn a_check_removed_from_checks_toml_is_dropped_from_the_plan() {
     let dir = TempDir::new().unwrap();
     write_two_check_fixture(dir.path());
     let reqs = discover(dir.path()).await.unwrap();
@@ -540,10 +546,10 @@ async fn a_check_removed_from_checksmd_is_dropped_from_the_plan() {
         .await
         .unwrap();
 
-    // Remove check B from CHECKS.md entirely.
+    // Remove check B from CHECKS.toml entirely.
     std::fs::write(
-        dir.path().join("CHECKS.md"),
-        "# Requirement Demo\n## Check A\nCheck A prompt\n",
+        dir.path().join("CHECKS.toml"),
+        checks_toml(&[("Demo", &[("A", "Check A prompt")])]),
     )
     .unwrap();
 
@@ -623,8 +629,8 @@ async fn planning_from_repo_root_or_a_subdirectory_is_byte_identical() {
     )
     .unwrap();
     std::fs::write(
-        dir.path().join("services/keystore/CHECKS.md"),
-        "# Requirement Keystore\n## Check Sign\nverify signing\n",
+        dir.path().join("services/keystore/CHECKS.toml"),
+        checks_toml(&[("Keystore", &[("Sign", "verify signing")])]),
     )
     .unwrap();
 
