@@ -36,6 +36,7 @@ pub use tool_capture::ToolCall;
 pub use tool_capture::ReadOnlyTool;
 
 use crate::checks::model::{Check, CheckId};
+use crate::checks::sandbox::SandboxLease;
 
 #[cfg(test)]
 pub use fake::FakeExecutor;
@@ -48,8 +49,19 @@ pub struct AgentRunRequest {
     /// The check to validate (title + prompt). Each executor assembles its own
     /// instructions from this so it can describe its own reporting channel.
     pub check: Check,
-    /// The sandbox directory to run the agent in (its working directory).
-    pub working_dir: PathBuf,
+    /// The requirement's repository root — the real, unsandboxed source
+    /// directory (`job.root`; see
+    /// [`Requirement::root`](crate::checks::model::Requirement::root)).
+    /// Available without acquiring [`Self::sandbox`], so an executor that
+    /// settles a check without running an agent (the Jev decision engine's
+    /// in-host replay, MULTI-1825) can read evidence straight from here at
+    /// zero sandboxing cost.
+    pub source_dir: PathBuf,
+    /// A lazy CoW sandbox lease over [`Self::source_dir`] (MULTI-1818). Call
+    /// [`SandboxLease::acquire`] to create the clone — only agent-running
+    /// executors need to; the clone is torn down when this request (and the
+    /// lease within it) is dropped.
+    pub sandbox: SandboxLease,
     /// The declaring `CHECKS.md`'s path relative to the requirement's
     /// repository root (MULTI-1834), e.g. `services/keystore/CHECKS.md`.
     /// Stated in the assembled instructions so the agent retains the scoping
