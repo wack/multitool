@@ -43,6 +43,12 @@ pub struct PlanSubcommand {
     /// zero Jev calls — whenever its frozen evidence replays fresh).
     #[arg(long)]
     force: bool,
+
+    /// Run each check's agent in a copy-on-write clone of its repository root
+    /// (off by default). Planning agents only get read-only tools, so without
+    /// this they read the repository root directly.
+    #[arg(long)]
+    sandbox: bool,
 }
 
 impl PlanSubcommand {
@@ -68,5 +74,10 @@ impl PlanSubcommand {
     /// every check from scratch.
     pub fn force(&self) -> bool {
         self.force
+    }
+
+    /// Whether `--sandbox` was passed: run each agent in a CoW clone.
+    pub fn sandbox(&self) -> bool {
+        self.sandbox
     }
 }

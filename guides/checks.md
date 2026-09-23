@@ -18,8 +18,9 @@ requirement is satisfied only if **all** of its checks pass (logical AND).
       `ANTHROPIC_API_KEY`) — see [Configuration](#️-configuration). The
       in-process executor talks to the provider directly; **no `claude` CLI is
       required**.
-- [ ] **macOS** — the MVP sandboxes each check with an APFS copy-on-write clone.
-      Other operating systems are not yet supported.
+- [ ] **Only with `--sandbox`:** macOS (APFS) or Linux on a filesystem with
+      reflink support. The flag runs each check in a copy-on-write clone.
+      Other operating systems don't support it yet.
 
 ## 🏃 Running it
 
@@ -228,6 +229,11 @@ trustworthy despite agent nondeterminism.
 
 Agents run with a **least-privilege, read-only** tool set by default (Read, Grep,
 Glob, plus the judge tool) — a verification agent observes, it does not mutate.
+Each path-bearing tool is confined to the requirement's repository root.
+
+Because agents cannot write, checks read the repository root **directly** by
+default. Pass `--sandbox` (to `multi check` or `multi plan`) to run each check
+in a copy-on-write clone of its repository root instead.
 
 ## ⚙️ Configuration
 
@@ -305,8 +311,8 @@ before pointing `base_url` at it.
 
 ## ⚠️ MVP constraints
 
-- **macOS only** — copy-on-write sandboxing uses APFS `clonefile`. Linux and
-  Windows support is planned.
+- **Opt-in sandboxing on macOS and Linux only.** `--sandbox` uses APFS
+  `clonefile` on macOS and reflinks on Linux. Windows support is planned.
 - **`prompt`-type checks only** — checks run an in-process agent against the
   configured model (the `sonnet` family by default). A `shell` check type is
   planned.

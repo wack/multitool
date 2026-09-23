@@ -137,6 +137,7 @@ pub async fn run(
     working_dir: &Path,
     overrides: CliOverrides,
     force: bool,
+    sandbox_enabled: bool,
 ) -> Result<i32> {
     // Two separate merges over the same `flag > env > file` layers: `load`
     // resolves everything `multi check` also resolves (and validates
@@ -149,7 +150,8 @@ pub async fn run(
     let requirements = discovery::discover(working_dir).await?;
 
     let executor: Arc<dyn CheckExecutor + Send + Sync> = Arc::new(resolved.build_agent_executor());
-    let sandbox: Arc<dyn Sandbox + Send + Sync> = Arc::from(sandbox::select_sandbox());
+    let sandbox: Arc<dyn Sandbox + Send + Sync> =
+        Arc::from(sandbox::select_sandbox(sandbox_enabled));
     let jev_client = Arc::new(JevClient::from_config(&jev_config)?);
     let planner: Arc<dyn Planner + Send + Sync> = Arc::new(AgentPlanner::new(
         executor,

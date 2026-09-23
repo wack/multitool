@@ -93,12 +93,22 @@ impl SandboxLease {
     }
 }
 
-/// Select the platform sandbox implementation.
+/// Select the sandbox implementation.
 ///
-/// macOS → the APFS `clonefile` CoW sandbox. Linux → the reflink (`FICLONE`) CoW
-/// sandbox. Any other platform → an unsupported stub that fails with a clear
-/// diagnostic (Windows CoW support is tracked under *Future work*).
-pub fn select_sandbox() -> BoxedSandbox {
+/// Sandboxing is opt-in (`--sandbox`): check agents only get read-only tools
+/// (Read, Grep, Glob — each jailed to the agent's working directory — plus the
+/// judge tool), so they have no way to mutate the tree they inspect. With
+/// `enabled` false this returns [`NoopSandbox`], which hands back the source
+/// directory itself and clones nothing.
+///
+/// With `enabled` true: macOS → the APFS `clonefile` CoW sandbox. Linux → the
+/// reflink (`FICLONE`) CoW sandbox. Any other platform → an unsupported stub
+/// that fails with a clear diagnostic (Windows CoW support is tracked under
+/// *Future work*).
+pub fn select_sandbox(enabled: bool) -> BoxedSandbox {
+    if !enabled {
+        return Box::new(NoopSandbox);
+    }
     #[cfg(target_os = "macos")]
     {
         Box::new(macos::ApfsSandbox::new())
@@ -113,12 +123,11 @@ pub fn select_sandbox() -> BoxedSandbox {
     }
 }
 
-/// A test-only sandbox that does not clone: it hands back the source path
-/// directly (agents in tests are fakes that never touch the filesystem).
-#[cfg(test)]
+/// A sandbox that does not clone: it hands back the source path directly. The
+/// default when `--sandbox` is not passed (see [`select_sandbox`]), and used
+/// by tests whose agents are fakes that never touch the filesystem.
 pub struct NoopSandbox;
 
-#[cfg(test)]
 #[async_trait]
 impl Sandbox for NoopSandbox {
     async fn create(&self, source: &Path) -> Result<SandboxHandle> {
@@ -180,7 +189,7 @@ mod tests {
         fs::create_dir(src.path().join("nested")).unwrap();
         fs::write(src.path().join("nested/b.txt"), "b").unwrap();
 
-        let sandbox = select_sandbox();
+        let sandbox = select_sandbox(true);
         let handle = sandbox.create(src.path()).await.unwrap();
 
         // The clone has the files.
@@ -204,6 +213,16 @@ mod tests {
         let clone_path = handle.path().to_path_buf();
         drop(handle);
         assert!(!clone_path.exists());
+    }
+
+    /// Without `--sandbox`, nothing is cloned: the handle is the source itself.
+    #[tokio::test]
+    async fn disabled_sandbox_hands_back_the_source() {
+        let src = tempfile::TempDir::new().unwrap();
+        let handle = select_sandbox(false).create(src.path()).await.unwrap();
+        assert_eq!(handle.path(), src.path());
+        drop(handle);
+        assert!(src.path().exists());
     }
 
     /// MULTI-1818 acceptance: a lease that is never acquired triggers zero
