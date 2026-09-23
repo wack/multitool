@@ -93,10 +93,12 @@ pub(crate) use planner::entry_from_outcome;
 pub(crate) use planner::fake::FakePlanner;
 
 /// Run `multi plan` rooted at `working_dir`. Builds the real [`AgentPlanner`]
-/// (composing the same [`CheckExecutor`]/[`Sandbox`] `multi check` builds —
-/// see [`config::Resolved::build_executor`]) and delegates to
-/// [`run_with_planner`], the injectable core the tests drive directly with a
-/// [`FakePlanner`].
+/// (composing the same raw agent executor/[`Sandbox`] `multi check` composes
+/// as its own `JevExecutor`'s inner escalation target — see
+/// [`config::Resolved::build_agent_executor`]'s docs on why `multi plan`
+/// calls that directly rather than [`config::Resolved::build_executor`]) and
+/// delegates to [`run_with_planner`], the injectable core the tests drive
+/// directly with a [`FakePlanner`].
 ///
 /// Returns the process exit code (mirroring `crate::checks::run`'s own
 /// contract): `0` unless a check could not be planned. An invalid suite (a
@@ -118,7 +120,7 @@ pub async fn run(
     let jev_config = config::load_jev(overrides)?;
     let requirements = discovery::discover(working_dir).await?;
 
-    let executor: Arc<dyn CheckExecutor + Send + Sync> = Arc::from(resolved.build_executor()?);
+    let executor: Arc<dyn CheckExecutor + Send + Sync> = Arc::new(resolved.build_agent_executor());
     let sandbox: Arc<dyn Sandbox + Send + Sync> = Arc::from(sandbox::select_sandbox());
     let jev_client = Arc::new(JevClient::from_config(&jev_config)?);
     let planner: Arc<dyn Planner + Send + Sync> = Arc::new(AgentPlanner::new(
@@ -157,31 +159,19 @@ struct FileGroup<'a> {
 }
 
 /// Group `requirements` by the directory containing their declaring file,
-/// computing each requirement's `ordinal` as its 0-based position within its
-/// own `(directory, source file name)` — i.e. within its declaring file,
-/// since only `CHECKS.md` exists today (one source file per directory).
-/// Insertion-ordered ([`IndexMap`]) so output/writing stays in discovery
-/// order.
+/// computing each requirement's `ordinal` via
+/// [`crate::checks::model::requirement_plan_identities`] — its 0-based
+/// position within its own `(directory, source file name)`, i.e. within its
+/// declaring file, since only `CHECKS.md` exists today (one source file per
+/// directory). Shared with `multi check`'s `stream_requirements`
+/// (MULTI-1825) so both commands derive the identical ordinal for the
+/// identical requirement. Insertion-ordered ([`IndexMap`]) so
+/// output/writing stays in discovery order.
 fn group_by_directory(requirements: &[Requirement]) -> IndexMap<PathBuf, FileGroup<'_>> {
     let mut groups: IndexMap<PathBuf, FileGroup<'_>> = IndexMap::new();
-    let mut ordinals: HashMap<(PathBuf, String), u32> = HashMap::new();
+    let identities = crate::checks::model::requirement_plan_identities(requirements);
 
-    for req in requirements {
-        let dir = req
-            .filepath
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let source = req
-            .filepath
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| req.filepath.display().to_string());
-
-        let counter = ordinals.entry((dir.clone(), source.clone())).or_insert(0);
-        let ordinal = *counter;
-        *counter += 1;
-
+    for (req, (dir, source, ordinal)) in requirements.iter().zip(identities) {
         let group = groups.entry(dir.clone()).or_insert_with(|| FileGroup {
             root: req.root.clone(),
             root_source: req.root_source,
@@ -375,6 +365,14 @@ async fn process_check(
         requirement_title: descriptor.requirement_title.clone(),
         declared_in: descriptor.declared_in.clone(),
         root: descriptor.root.clone(),
+        plan_dir: descriptor.dir.clone(),
+        plan_source: descriptor.source.clone(),
+        req_ordinal: descriptor.req_ordinal,
+        check_ordinal: descriptor.check_ordinal,
+        // Every descriptor here comes from a manifest-derived group — a
+        // `RootSource::ScanDirectory` file's checks are refused before a
+        // `CheckDescriptor` is ever built (see `partition_checks`).
+        root_source: RootSource::Manifest,
     };
     let outcome = match planner.plan_check(req).await {
         Ok(planned) => LineOutcome::Planned(planned),

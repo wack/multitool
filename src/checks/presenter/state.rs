@@ -315,12 +315,14 @@ impl PresenterState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checks::model::DecidedBy;
 
     fn settled(verdict: Verdict) -> CheckOutcome {
         CheckOutcome {
             title: "c".into(),
             verdict,
             evidence: None,
+            decided_by: DecidedBy::Agent,
         }
     }
 

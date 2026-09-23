@@ -196,6 +196,7 @@ impl CheckExecutor for InterleavingExecutor {
             error: None,
             trace_jsonl: None,
             tool_calls: Vec::new(),
+            ..Default::default()
         })
     }
 }
@@ -487,6 +488,7 @@ impl CheckExecutor for NeverAcquiresExecutor {
             error: None,
             trace_jsonl: None,
             tool_calls: Vec::new(),
+            ..Default::default()
         })
     }
 }

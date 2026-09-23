@@ -26,6 +26,12 @@
 // only through `client`/`verify`.
 pub(crate) mod client;
 pub(crate) mod error;
+// MULTI-1825 ("Decide `multi check` with Jev under the `jev` feature") is the
+// first consumer of `client`/`plan_file`/`replay`/`verify` from OUTSIDE
+// `crate::checks::plan` — `crate::checks::execution` (unconditional) reaches
+// `executor::AbortCheckRun` directly (see that module's docs), so `executor`
+// is `pub(crate)` for the same reason `crate::checks::plan` itself is.
+pub(crate) mod executor;
 pub(crate) mod plan_file;
 pub(crate) mod replay;
 mod types;

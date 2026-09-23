@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use crate::checks::model::{Check, CheckId, CheckOutcome};
+use crate::checks::model::{Check, CheckId, CheckOutcome, RootSource};
 
 /// One validated check, ready to run, carried end-to-end through the pipeline so
 /// reporting can group + order results without consulting the original suite.
@@ -30,6 +30,18 @@ pub struct CheckJob {
     /// The requirement's repository root (MULTI-1834): what execution
     /// sandboxes for this check — see [`crate::checks::model::Requirement::root`].
     pub root: PathBuf,
+    /// How [`Self::root`] was determined (MULTI-1834) — carried through so
+    /// the Jev decision engine (MULTI-1825) knows whether a plan is even
+    /// usable for this check: a [`RootSource::ScanDirectory`] root isn't
+    /// stable across invocations, so no plan is read or written for it.
+    pub root_source: RootSource,
+    /// This requirement's 0-based position within its own declaring file
+    /// (MULTI-1825's plan identity) — see
+    /// [`crate::checks::model::requirement_plan_identities`].
+    pub req_ordinal: u32,
+    /// This check's 0-based position within its requirement (MULTI-1825's
+    /// plan identity).
+    pub check_ordinal: u32,
     /// The check itself (title + prompt).
     pub check: Check,
 }
@@ -66,5 +78,18 @@ pub struct ExecutionComplete {
 /// whole run (strict whole-run abort, decision #3). No checks were ever streamed,
 /// so no agents are spawned.
 pub struct DiscoveryFailed {
+    pub report: miette::Report,
+}
+
+/// Execution -> Reporting (MULTI-1825, `--features jev` only): a check's
+/// [`crate::checks::jev::executor::JevExecutor`] hit an unrecoverable Jev
+/// failure (`Unauthorized`/`MissingApiKey`/a non-context `Invalid`) — abort
+/// the whole run with the diagnostic, exactly like [`DiscoveryFailed`], but
+/// raised from execution rather than discovery: a bad or missing TypeSafe
+/// credential must not silently turn every remaining check into an agent
+/// run. Mirrors `multi plan`'s `AbortPlanRun`'s "abort, not just-this-check"
+/// treatment of the same error kinds.
+#[cfg(feature = "jev")]
+pub struct AbortRun {
     pub report: miette::Report,
 }

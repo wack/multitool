@@ -23,6 +23,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cersei_workflows::{FnStep, RunStatus, StepRegistry, Workflow, WorkflowBuilder};
 use kameo::Actor;
@@ -31,11 +32,17 @@ use kameo::message::{Context, Message};
 use miette::Result;
 use serde_json::{Value, json};
 
-use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport, ProgressSink};
+use crate::checks::executor::{
+    AgentOutcome, CheckExecutor, CheckReport, PlanIdentity, ProgressSink,
+};
+#[cfg(feature = "jev")]
+use crate::checks::jev::executor::AbortCheckRun;
+#[cfg(feature = "jev")]
+use crate::checks::messages::AbortRun;
 use crate::checks::messages::{
     CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete,
 };
-use crate::checks::model::{CheckOutcome, Verdict};
+use crate::checks::model::{CheckOutcome, DecidedBy, Verdict};
 use crate::checks::presenter::{PresenterActor, UiEvent};
 use crate::checks::reporting::ReportingActor;
 use crate::checks::sandbox::{Sandbox, SandboxLease};
@@ -62,6 +69,21 @@ pub(crate) struct ExecutionActor {
     /// Checks buffered as discovery streams them, drained into the workflow when
     /// the [`DiscoveryComplete`] sentinel arrives.
     jobs: Vec<CheckJob>,
+    /// Whole-run abort flag (MULTI-1825): flips `true` the instant a check's
+    /// executor fails with an unrecoverable Jev error
+    /// (`Unauthorized`/`MissingApiKey`/a non-context `Invalid`, `--features
+    /// jev` only — see `crate::checks::jev::executor`). Checked at the top of
+    /// every `execute_check_job` call so a queued-but-not-yet-started check
+    /// never runs (no agent, no report) once the run is aborting; a check
+    /// already past that point runs to completion, but its outcome is never
+    /// reported, since reporting's oneshot has already fired with the abort
+    /// diagnostic by the time it would arrive. Always `false` in the default
+    /// build — `CerseiExecutor` never returns an error that sets it — kept
+    /// unconditional (rather than `#[cfg(feature = "jev")]`) so this field
+    /// and the top-of-loop check need no per-build duplication; only the
+    /// jev-specific pieces (the `AbortCheckRun` downcast and the `AbortRun`
+    /// message that sets it) are feature-gated.
+    aborted: Arc<AtomicBool>,
 }
 
 impl Actor for ExecutionActor {
@@ -97,6 +119,7 @@ impl ExecutionActor {
             presenter,
             trace_collector,
             jobs: Vec::new(),
+            aborted: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -117,6 +140,7 @@ impl ExecutionActor {
         let presenter = self.presenter.clone();
         let trace_collector = self.trace_collector.clone();
         let max_attempts = self.max_attempts;
+        let aborted = self.aborted.clone();
 
         let registry = StepRegistry::new();
         registry.register(Arc::new(FnStep::new(
@@ -128,6 +152,7 @@ impl ExecutionActor {
                 let presenter = presenter.clone();
                 let trace_collector = trace_collector.clone();
                 let jobs = jobs.clone();
+                let aborted = aborted.clone();
                 async move {
                     let id = input.get("id").and_then(Value::as_u64).unwrap_or(0) as usize;
                     let job = jobs[id].clone();
@@ -139,6 +164,7 @@ impl ExecutionActor {
                         trace_collector.as_ref(),
                         max_attempts,
                         job,
+                        &aborted,
                     )
                     .await;
                     Ok(json!({ "id": id }))
@@ -225,7 +251,16 @@ async fn execute_check_job(
     trace_collector: Option<&Arc<TraceCollector>>,
     max_attempts: usize,
     job: CheckJob,
+    aborted: &Arc<AtomicBool>,
 ) {
+    // Whole-run abort already signaled by another check (MULTI-1825,
+    // `--features jev`; always `false` in the default build — see
+    // `ExecutionActor::aborted`'s docs). A queued check that hasn't started
+    // yet stops here: no presenter event, no agent run, no report.
+    if aborted.load(Ordering::Relaxed) {
+        return;
+    }
+
     let id = job.id;
     let mut attempt = 1;
     loop {
@@ -241,6 +276,27 @@ async fn execute_check_job(
             .await;
 
         let mut result = run_one(executor.clone(), sandbox.clone(), presenter, &job, attempt).await;
+
+        // An unrecoverable Jev failure (`--features jev` only —
+        // `Unauthorized`/`MissingApiKey`/a non-context `Invalid`; see
+        // `crate::checks::jev::executor`) aborts the whole run rather than
+        // failing just this check: flip the shared flag so no further queued
+        // check starts its agent, tell reporting the diagnostic directly
+        // (bypassing the normal `CheckCompleted` path — reporting's oneshot
+        // fires immediately, exactly like `DiscoveryFailed`), and return
+        // without retrying. `CerseiExecutor` never produces this error, so
+        // this branch is unreachable in the default build.
+        #[cfg(feature = "jev")]
+        if matches!(&result, Err(e) if e.downcast_ref::<AbortCheckRun>().is_some()) {
+            aborted.store(true, Ordering::Relaxed);
+            let Err(report) = result else {
+                unreachable!("the `matches!` above just confirmed this is `Err`")
+            };
+            if let Err(err) = reporting.tell(AbortRun { report }).await {
+                tracing::debug!(?err, "reporting actor unavailable for run abort");
+            }
+            return;
+        }
 
         // Harvest this attempt's trace *before* signalling completion, so it is
         // collected even for retried attempts (whose outcome never reaches
@@ -355,6 +411,7 @@ async fn run_one(
     // open forever.
     let _forwarder_guard = AbortOnDrop(forwarder);
 
+    let (plan_dir, plan_source) = crate::checks::model::plan_dir_and_source(&job.filepath);
     let request = crate::checks::executor::AgentRunRequest {
         check_id: job.id,
         check: job.check.clone(),
@@ -363,6 +420,14 @@ async fn run_one(
         declared_in,
         attempt,
         progress: Some(progress),
+        plan: PlanIdentity {
+            dir: plan_dir,
+            source: plan_source,
+            req_ordinal: job.req_ordinal,
+            check_ordinal: job.check_ordinal,
+            requirement_title: job.req_title.clone(),
+            root_source: job.root_source,
+        },
     };
 
     executor.run_check(request).await
@@ -436,6 +501,7 @@ fn reconcile(agent: Option<&Result<AgentOutcome>>, title: &str) -> CheckOutcome 
             title: title.to_string(),
             verdict,
             evidence: report.evidence,
+            decided_by: decided_by(agent),
         };
     }
 
@@ -455,6 +521,11 @@ fn reconcile(agent: Option<&Result<AgentOutcome>>, title: &str) -> CheckOutcome 
         title: title.to_string(),
         verdict: Verdict::Errored,
         evidence: Some(reason),
+        // An errored check (no verdict at all — crashed, timed out, or the
+        // executor itself errored) is never a `Cached`/`Jev` outcome (both
+        // always carry a verdict — see `AgentOutcome::decided_by`'s docs), so
+        // the default is always correct here, not just a placeholder.
+        decided_by: DecidedBy::default(),
     }
 }
 
@@ -462,6 +533,15 @@ fn reported_verdict(agent: Option<&Result<AgentOutcome>>) -> Option<CheckReport>
     match agent {
         Some(Ok(o)) => o.verdict.clone(),
         _ => None,
+    }
+}
+
+/// Which decision engine produced `agent`'s outcome (MULTI-1825) — see
+/// [`AgentOutcome::decided_by`].
+fn decided_by(agent: Option<&Result<AgentOutcome>>) -> DecidedBy {
+    match agent {
+        Some(Ok(o)) => o.decided_by,
+        _ => DecidedBy::default(),
     }
 }
 
@@ -617,5 +697,182 @@ mod tests {
         // executor was told which attempt each was (retries must be able to
         // vary temperature/instructions rather than replaying attempt 1).
         assert_eq!(executor.seen_attempts(), vec![(0, 1), (0, 2)]);
+    }
+}
+
+/// Pipeline-level abort tests for MULTI-1825's whole-run abort mechanism
+/// (`--features jev` only): a real [`JevExecutor`](crate::checks::jev::executor::JevExecutor)
+/// driven through the actual actor pipeline ([`crate::checks::run_to_outcomes`]),
+/// not just `JevExecutor::run_check` in isolation — this is what proves the
+/// `aborted` flag actually stops a second, queued check's agent from ever
+/// starting, not merely that the first check's own call returns `Err`.
+#[cfg(all(test, feature = "jev"))]
+mod jev_abort_tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tempfile::TempDir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::checks::config::{JevConfig, configuration};
+    use crate::checks::executor::{CheckExecutor, FakeExecutor, ReadOnlyTool};
+    use crate::checks::jev::client::JevClient;
+    use crate::checks::jev::error::TYPESAFE_API_KEY_VAR;
+    use crate::checks::jev::executor::JevExecutor;
+    use crate::checks::jev::plan_file::{
+        Decider, JevCalibration, PlanCall, PlanCheck, PlanFile, PlanRequirement, PlanStore,
+        Reading, prompt_xxh64,
+    };
+    use crate::checks::jev::replay::{self, CallChecksum};
+    use crate::checks::model::{Check, Requirement, RootSource};
+    use crate::checks::presenter::null_backend;
+    use crate::checks::run_to_outcomes;
+    use crate::checks::sandbox::NoopSandbox;
+
+    static API_KEY_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn with_api_key<F, Fut, T>(body: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let _guard = API_KEY_ENV_LOCK.lock().await;
+        let previous = std::env::var(TYPESAFE_API_KEY_VAR).ok();
+        // SAFETY: serialized by `API_KEY_ENV_LOCK`.
+        unsafe {
+            std::env::set_var(TYPESAFE_API_KEY_VAR, "test-key");
+        }
+        let result = body().await;
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var(TYPESAFE_API_KEY_VAR, value),
+                None => std::env::remove_var(TYPESAFE_API_KEY_VAR),
+            }
+        }
+        result
+    }
+
+    fn write_file(dir: &Path, relative: &str, content: &str) {
+        let p = dir.join(relative);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(p, content).unwrap();
+    }
+
+    async fn read_checksum(root: &Path, relative: &str) -> String {
+        let call =
+            replay::replay_call(ReadOnlyTool::Read, &json!({"file_path": relative}), root).await;
+        match call.checksums {
+            Some(CallChecksum::Single(x)) => x,
+            other => panic!("expected a single checksum, got {other:?}"),
+        }
+    }
+
+    /// MULTI-1825 acceptance: an `Unauthorized` Jev failure aborts the whole
+    /// run with the diagnostic and zero agent runs — including for a
+    /// SECOND, still-queued check that has no plan entry at all (and so
+    /// would ordinarily run the agent immediately). `cfg.concurrency = 1`
+    /// makes dispatch order deterministic: check 0 (the one that aborts)
+    /// is fully handled before check 1 is ever dispatched.
+    #[tokio::test]
+    async fn unauthorized_aborts_the_whole_run_and_stops_a_queued_check() {
+        let dir = TempDir::new().unwrap();
+        write_file(dir.path(), "src/a.rs", "fn a() {}\n");
+        let xxh64 = read_checksum(dir.path(), "src/a.rs").await;
+
+        let check0 = Check {
+            title: "Check A".to_string(),
+            prompt: "prompt a".to_string(),
+        };
+        let entry = PlanCheck {
+            title: check0.title.clone(),
+            ordinal: 0,
+            prompt_xxh64: prompt_xxh64(&check0.title, &check0.prompt),
+            decider: Decider::Jev,
+            verdict: true,
+            evidence: Some("cached".to_string()),
+            jev: Some(JevCalibration {
+                model: "jev-1.13.0".to_string(),
+                noul: 0.9,
+                control_noul: 0.02,
+                reading: Some(Reading::Satisfied),
+            }),
+            calls: vec![PlanCall::Read {
+                input: json!({"file_path": "src/a.rs"}),
+                xxh64,
+            }],
+        };
+        let plan = PlanFile::new(vec![PlanRequirement {
+            title: "R".to_string(),
+            source: "CHECKS.md".to_string(),
+            ordinal: 0,
+            checks: vec![entry],
+        }]);
+        PlanStore::write(dir.path(), &plan).unwrap();
+        // Edited after freezing: replay reports `ReadsStale`, so check 0
+        // consults Jev live — and that call 401s.
+        write_file(dir.path(), "src/a.rs", "fn a() { /* changed */ }\n");
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let jev_config = JevConfig {
+            model: "jev-latest".to_string(),
+            threshold: 0.75,
+            base_url: server.uri(),
+        };
+        let jev_client = Arc::new(JevClient::new(server.uri()).unwrap());
+        // Check 1 (id 1) would report satisfied if the agent ever ran it —
+        // it must not.
+        let inner = Arc::new(FakeExecutor::new().with_report(1, true, Some("must never run")));
+        let exec: Arc<dyn CheckExecutor + Send + Sync> = Arc::new(JevExecutor::new(
+            inner.clone(),
+            jev_client,
+            jev_config,
+            false,
+        ));
+
+        // One requirement, two checks under the same `CHECKS.md`: check 0
+        // has the plan entry above; check 1 has no entry at all (would
+        // ordinarily decide `Agent` immediately) — proving the abort stops
+        // it before it ever starts.
+        let check1 = Check {
+            title: "Check B".to_string(),
+            prompt: "prompt b".to_string(),
+        };
+        let reqs = vec![Requirement {
+            filepath: dir.path().join("CHECKS.md"),
+            title: "R".to_string(),
+            checks: vec![check0, check1],
+            root: dir.path().to_path_buf(),
+            root_source: RootSource::Manifest,
+        }];
+
+        let mut cfg = configuration();
+        cfg.concurrency = 1;
+
+        let result = with_api_key(|| {
+            run_to_outcomes(&cfg, exec, Arc::new(NoopSandbox), &reqs, null_backend())
+        })
+        .await;
+
+        let err = result.expect_err("an Unauthorized Jev failure must abort the whole run");
+        let rendered = format!("{err:?}");
+        assert!(
+            rendered.contains("rejected") || rendered.contains("unauthorized"),
+            "the abort diagnostic should name the underlying Jev failure: {rendered}"
+        );
+        assert!(
+            inner.seen().is_empty(),
+            "zero agent runs across the whole run, including the queued check: {:?}",
+            inner.seen()
+        );
     }
 }

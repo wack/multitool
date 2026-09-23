@@ -36,7 +36,7 @@ pub use tool_capture::ToolCall;
 #[cfg(feature = "jev")]
 pub use tool_capture::ReadOnlyTool;
 
-use crate::checks::model::{Check, CheckId};
+use crate::checks::model::{Check, CheckId, DecidedBy, RootSource};
 use crate::checks::sandbox::SandboxLease;
 
 #[cfg(test)]
@@ -81,6 +81,41 @@ pub struct AgentRunRequest {
     /// care to surface it — progress is display-only, never required for
     /// correctness.
     pub progress: Option<ProgressSink>,
+    /// This check's identity within its frozen plan (MULTI-1825) — see
+    /// [`PlanIdentity`]. Populated unconditionally (by `execution::run_one`
+    /// from `CheckJob`, and by `plan::planner::AgentPlanner` from
+    /// `PlanRequest`) so every `AgentRunRequest { .. }` literal in this
+    /// crate compiles in both feature sets; read only by the `jev` build's
+    /// `JevExecutor`.
+    pub plan: PlanIdentity,
+}
+
+/// A check's identity within its frozen `.check-plan.toml` (MULTI-1825): which
+/// directory's plan covers it, its position within that plan
+/// (`req_ordinal`/`check_ordinal` — the exact key
+/// [`crate::checks::jev::plan_file::PlanFile::lookup`] looks an entry up by),
+/// the owning requirement's title (sent to Jev as `state.requirement.title`),
+/// and whether the requirement's root is even manifest-derived (a
+/// [`RootSource::ScanDirectory`] root has no stable plan location, so
+/// `JevExecutor` never reads or writes a plan for it — MULTI-1834's
+/// scan-directory fallback).
+#[derive(Debug, Clone)]
+pub struct PlanIdentity {
+    /// The directory `.check-plan.toml` lives beside — the declaring
+    /// `CHECKS.md`'s own parent directory. See
+    /// [`crate::checks::model::plan_dir_and_source`].
+    pub dir: PathBuf,
+    /// The declaring file's name (e.g. `"CHECKS.md"`) — see
+    /// [`crate::checks::jev::plan_file::PlanRequirement::source`].
+    pub source: String,
+    /// This requirement's 0-based position within `source`.
+    pub req_ordinal: u32,
+    /// This check's 0-based position within its requirement.
+    pub check_ordinal: u32,
+    /// The owning requirement's title.
+    pub requirement_title: String,
+    /// How the requirement's repository root was determined (MULTI-1834).
+    pub root_source: RootSource,
 }
 
 /// One progress update from a running check's agent (MULTI-1828), emitted
@@ -159,6 +194,16 @@ pub struct AgentOutcome {
     /// unconditionally — this is the frozen evidence the Jev decision engine
     /// replays; it has no non-test reader until the `jev` modules land.
     pub tool_calls: Vec<ToolCall>,
+    /// Which decision engine produced this outcome (MULTI-1825): default
+    /// [`DecidedBy::Agent`] — every executor except `JevExecutor` leaves this
+    /// at its default, since they only ever run the agent. `JevExecutor`
+    /// sets [`DecidedBy::Cached`]/[`DecidedBy::Jev`] on the well-formed
+    /// [`AgentOutcome`] it synthesizes when it settles a check without
+    /// running the agent at all (`turns: 0`, empty `tool_calls`, no trace —
+    /// see that module's docs). Carried through
+    /// [`crate::checks::execution::reconcile`] into
+    /// [`crate::checks::model::CheckOutcome::decided_by`].
+    pub decided_by: DecidedBy,
 }
 
 impl AgentOutcome {

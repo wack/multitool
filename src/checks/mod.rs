@@ -77,10 +77,27 @@ use crate::checks::sandbox::Sandbox;
 /// empty tree counts as success), `1` if any requirement is unsatisfied.
 /// Operational errors (e.g. an invalid `CHECKS.md`) surface as `Err` diagnostics
 /// rather than an exit code, so CI can tell "checks failed" from "tool errored".
-pub async fn run(terminal: &Terminal, working_dir: &Path, overrides: CliOverrides) -> Result<i32> {
+///
+/// `no_cache` is `multi check --no-cache` (jev builds only — see
+/// `crate::config::CheckSubcommand::no_cache`): always `false` in a
+/// default-feature build, where the flag doesn't exist in the clap surface
+/// at all, so this parameter is unread there.
+pub async fn run(
+    terminal: &Terminal,
+    working_dir: &Path,
+    overrides: CliOverrides,
+    #[cfg_attr(not(feature = "jev"), allow(unused_variables))] no_cache: bool,
+) -> Result<i32> {
     // Phase 1: configuration — resolve provider/model/effort
     // (flag > env > file) and construct the provider registry, injected forward.
+    // Under `--features jev`, `overrides` is needed a second time below (to
+    // resolve `[checks.jev]` via `config::load_jev` — `multi check`'s own
+    // `load` deliberately never validates that table, see its doc comment),
+    // so only that build clones it here; the default build moves it once.
+    #[cfg(not(feature = "jev"))]
     let resolved = config::load(overrides)?;
+    #[cfg(feature = "jev")]
+    let resolved = config::load(overrides.clone())?;
 
     tracing::debug!(
         provider = resolved.config.provider.as_str(),
@@ -90,8 +107,20 @@ pub async fn run(terminal: &Terminal, working_dir: &Path, overrides: CliOverride
         "resolved checks configuration and provider registry",
     );
 
-    // Build the injected executor (default: in-process cersei) and sandbox.
+    // Build the injected executor and sandbox. Default build: the in-process
+    // cersei agent alone. `--features jev`: the agent wrapped in
+    // `JevExecutor` (MULTI-1825) — `Resolved::build_executor` is the single
+    // `cfg` switch (see that method's docs).
+    #[cfg(not(feature = "jev"))]
     let executor: Arc<dyn CheckExecutor + Send + Sync> = Arc::from(resolved.build_executor()?);
+    #[cfg(feature = "jev")]
+    let executor: Arc<dyn CheckExecutor + Send + Sync> = {
+        let jev_config = config::load_jev(overrides)?;
+        let jev_client = Arc::new(crate::checks::jev::client::JevClient::from_config(
+            &jev_config,
+        )?);
+        Arc::from(resolved.build_executor(jev_client, jev_config, no_cache)?)
+    };
     let sandbox: Arc<dyn Sandbox + Send + Sync> = Arc::from(sandbox::select_sandbox());
 
     // Spawn the live presenter's backend up front (the inline viewport reserves
@@ -214,8 +243,14 @@ async fn stream_requirements(
 ) -> Result<()> {
     let mut id = 0;
     let mut total = 0;
-    for (req_index, req) in requirements.iter().enumerate() {
-        for check in &req.checks {
+    // Plan identity (MULTI-1825): each requirement's `(dir, source,
+    // req_ordinal)` triple, computed the exact same way `multi plan`'s
+    // `group_by_directory` does — see `requirement_plan_identities`'s docs.
+    let identities = crate::checks::model::requirement_plan_identities(requirements);
+    for ((req_index, req), (_dir, _source, req_ordinal)) in
+        requirements.iter().enumerate().zip(identities)
+    {
+        for (check_ordinal, check) in req.checks.iter().enumerate() {
             // Tell the presenter about the check first so its tree row exists
             // before execution can emit `CheckStarted` for it.
             let _ = presenter
@@ -232,6 +267,9 @@ async fn stream_requirements(
                 req_title: req.title.clone(),
                 filepath: req.filepath.clone(),
                 root: req.root.clone(),
+                root_source: req.root_source,
+                req_ordinal,
+                check_ordinal: check_ordinal as u32,
                 check: check.clone(),
             };
             execution

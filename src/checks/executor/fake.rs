@@ -12,7 +12,7 @@ use miette::Result;
 
 use super::judge::CheckReport;
 use super::tool_capture::ToolCall;
-use super::{AgentOutcome, AgentRunRequest, CheckExecutor};
+use super::{AgentOutcome, AgentRunRequest, CheckExecutor, PlanIdentity};
 use crate::checks::model::CheckId;
 
 #[derive(Default)]
@@ -147,6 +147,7 @@ impl CheckExecutor for FakeExecutor {
                 error: None,
                 trace_jsonl: None,
                 tool_calls,
+                ..Default::default()
             });
         }
 
@@ -160,6 +161,7 @@ impl CheckExecutor for FakeExecutor {
                 error: None,
                 trace_jsonl: None,
                 tool_calls,
+                ..Default::default()
             });
         }
 
@@ -170,6 +172,7 @@ impl CheckExecutor for FakeExecutor {
             error: None,
             trace_jsonl: None,
             tool_calls,
+            ..Default::default()
         })
     }
 }
@@ -196,6 +199,14 @@ mod tests {
             declared_in: std::path::PathBuf::from("CHECKS.md"),
             attempt: 1,
             progress: None,
+            plan: PlanIdentity {
+                dir: std::path::PathBuf::from("."),
+                source: "CHECKS.md".to_string(),
+                req_ordinal: 0,
+                check_ordinal: check_id as u32,
+                requirement_title: "R".to_string(),
+                root_source: crate::checks::model::RootSource::Manifest,
+            },
         }
     }
 

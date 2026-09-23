@@ -127,7 +127,7 @@ impl RenderBackend for HeartbeatBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checks::model::{CheckOutcome, Verdict};
+    use crate::checks::model::{CheckOutcome, DecidedBy, Verdict};
 
     fn queued(state: &mut PresenterState, id: usize) {
         state.apply(&UiEvent::CheckQueued {
@@ -166,6 +166,7 @@ mod tests {
                 title: "c".into(),
                 verdict: Verdict::Satisfied,
                 evidence: None,
+                decided_by: DecidedBy::Agent,
             },
         });
         let line = backend.line(&state).unwrap();

@@ -144,12 +144,24 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    /// Construct the [`BoxedExecutor`]: the in-process cersei agent. This is the
-    /// injection point — execution depends on the trait object, not this
-    /// concrete type.
-    pub fn build_executor(&self) -> Result<BoxedExecutor> {
+    /// Construct the raw in-process reasoning-agent executor
+    /// ([`CerseiExecutor`]), with **no** Jev wrapping regardless of feature.
+    ///
+    /// `multi plan`'s `AgentPlanner` (MULTI-1824, `--features jev`) calls
+    /// this directly rather than [`Self::build_executor`]: it exists
+    /// specifically to run the reasoning agent so it can (re-)establish a
+    /// plan entry, and wrapping it in
+    /// `JevExecutor`([`crate::checks::jev::executor::JevExecutor`]) would let
+    /// a cached/Jev-decided verdict silently short-circuit that very run —
+    /// `entry_from_outcome` would then see an outcome with zero captured
+    /// tool calls (a well-formed `Cached`/`Jev` `AgentOutcome` never ran an
+    /// agent) and overwrite the entry being (re-)planned with a degenerate
+    /// "no tool calls" one. [`Self::build_executor`] (the switch `multi
+    /// check`'s pipeline goes through) composes this same executor as its
+    /// own inner, agent-escalation target.
+    pub fn build_agent_executor(&self) -> CerseiExecutor {
         let cfg = &self.config;
-        Ok(Box::new(CerseiExecutor::new(
+        CerseiExecutor::new(
             self.factory.clone(),
             cfg.model.clone(),
             cfg.effort,
@@ -157,6 +169,35 @@ impl Resolved {
             // The archive path lives at the orchestration layer; the executor
             // only needs to know whether to capture a per-execution trace.
             cfg.trace_archive.is_some(),
+        )
+    }
+
+    /// Construct the [`BoxedExecutor`] `multi check`'s pipeline runs — the
+    /// single `cfg` switch (MULTI-1825): [`Self::build_agent_executor`]
+    /// alone in the default build.
+    #[cfg(not(feature = "jev"))]
+    pub fn build_executor(&self) -> Result<BoxedExecutor> {
+        Ok(Box::new(self.build_agent_executor()))
+    }
+
+    /// See the `#[cfg(not(feature = "jev"))]` overload's docs: under
+    /// `--features jev`, [`Self::build_agent_executor`] wrapped in
+    /// [`crate::checks::jev::executor::JevExecutor`] for escalation.
+    /// `jev_client`/`jev_config` are resolved separately from `Self` — see
+    /// [`load_jev`], whose own docs explain why `multi check`'s [`load`]
+    /// deliberately never validates `[checks.jev]` — and `no_cache` is
+    /// `multi check --no-cache`.
+    #[cfg(feature = "jev")]
+    pub fn build_executor(
+        &self,
+        jev_client: std::sync::Arc<crate::checks::jev::client::JevClient>,
+        jev_config: JevConfig,
+        no_cache: bool,
+    ) -> Result<BoxedExecutor> {
+        let inner: std::sync::Arc<dyn crate::checks::executor::CheckExecutor + Send + Sync> =
+            std::sync::Arc::new(self.build_agent_executor());
+        Ok(Box::new(crate::checks::jev::executor::JevExecutor::new(
+            inner, jev_client, jev_config, no_cache,
         )))
     }
 }

@@ -28,6 +28,7 @@ impl Check {
             &self.terminal,
             self.args.directory(),
             self.args.overrides(),
+            self.args.no_cache(),
         ))?;
         // Exit directly rather than returning and letting `rt` drop: dropping a
         // `Runtime` blocks the calling thread until every task it ever spawned
