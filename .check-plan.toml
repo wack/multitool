@@ -47,19 +47,52 @@ id = "checks-cannot-corrupt-workspace"
 title = "Checks Cannot Corrupt the Workspace"
 
 [[requirement.check]]
+id = "execution-uses-sandbox"
+title = "Execution Uses the Sandbox"
+prompt_xxh64 = "3fcd9f22cea68679"
+decider = "agent"
+verdict = true
+evidence = "The codebase includes multiple references to sandboxing, indicating that checks are executed within a sandbox. The `src/checks/execution.rs` and `src/checks/executor/mod.rs` files describe the use of a sandbox for running agents, and the `src/checks/sandbox/mod.rs` file confirms that the sandbox allows modifications without affecting the real working directory."
+agent_reason = "truncated discovery"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "sandbox" }
+truncated = true
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "working directory" }
+files_xxh64 = "d3da2e429ccc718c"
+lines_xxh64 = "dc4c9f2e60ccdc83"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "real working directory" }
+files_xxh64 = "86cb6fd73b23062c"
+lines_xxh64 = "512fb7c347d9c332"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "sandbox directory" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "sandboxed" }
+files_xxh64 = "5562f5ad1a9763c9"
+lines_xxh64 = "6068d4ef0a2046fe"
+
+[[requirement.check]]
 id = "sandbox-cross-platform"
 title = "Sandbox Is Cross-Platform and Platform-Gated"
 prompt_xxh64 = "a99d7b24502d2754"
 decider = "agent"
 verdict = true
-evidence = "The sandboxing code provides a trait `Sandbox` with platform-specific implementations for both macOS and Linux. macOS uses `clonefile` for APFS, and Linux uses `FICLONE` for reflinks, with a plain-copy fallback. These implementations are selected using `cfg` attributes, ensuring cross-platform compatibility."
-jev = { model = "jev-1.13.0", noul = 0.62, control_noul = 0.01, reading = "satisfied" }
+evidence = "The sandboxing code provides a `Sandbox` trait with platform-specific implementations for macOS using `clonefile` and Linux using `FICLONE`, selected via `cfg` attributes. This ensures cross-platform compatibility and correct functionality on both macOS and Linux."
+jev = { model = "jev-1.13.0", noul = 0.55, control_noul = 0.01, reading = "satisfied" }
 agent_reason = "jev uncertain"
-
-[[requirement.check.call]]
-tool = "Glob"
-input = { path = ".", pattern = "**/*.rs" }
-xxh64 = "b5318e5c3bd386d8"
 
 [[requirement.check.call]]
 tool = "Grep"
@@ -69,27 +102,21 @@ lines_xxh64 = "7ae1e66112af61c3"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { path = "src/checks/sandbox/macos.rs", pattern = "clonefile" }
-files_xxh64 = "986f82682903205b"
-lines_xxh64 = "8dd22f1434bb0b1a"
+input = { path = ".", pattern = "clonefile" }
+files_xxh64 = "28024dcc1d10ce80"
+lines_xxh64 = "48b020c26a464378"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { path = "src/checks/sandbox/linux.rs", pattern = "FICLONE" }
-files_xxh64 = "e6e0d5cfd90b39e6"
-lines_xxh64 = "1654657e32754629"
+input = { path = ".", pattern = "FICLONE" }
+files_xxh64 = "6c783d23373b148c"
+lines_xxh64 = "897322443b3545af"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/sandbox/*.rs", path = ".", pattern = "cfg" }
+input = { glob = "**/sandbox/**", path = ".", pattern = "cfg" }
 files_xxh64 = "86cb6fd73b23062c"
 lines_xxh64 = "e08987d556fc40e9"
-
-[[requirement.check.call]]
-tool = "Grep"
-input = { glob = "**/sandbox/*.rs", path = ".", pattern = "fallback" }
-files_xxh64 = "eda0cad4a13e3fc1"
-lines_xxh64 = "54b650ca40457f39"
 
 [[requirement]]
 id = "ci-friendly-exit-status"
@@ -229,11 +256,10 @@ title = "Concurrent Check Execution"
 id = "concurrent-dispatch"
 title = "Concurrent Dispatch"
 prompt_xxh64 = "c625b9c131c1b822"
-decider = "agent"
+decider = "jev"
 verdict = true
-evidence = "The codebase uses `tokio::spawn` and `JoinSet`, indicating concurrent execution. No blocking loop patterns were found."
-jev = { model = "jev-1.13.0", noul = 0.51, control_noul = 0.02, reading = "satisfied" }
-agent_reason = "jev uncertain"
+evidence = "The execution phase uses a bounded-concurrency cersei `foreach` workflow to dispatch checks, indicating concurrent dispatch up to a specified concurrency limit."
+jev = { model = "jev-1.13.0", noul = 0.79, control_noul = 0.02, reading = "satisfied" }
 
 [[requirement.check.call]]
 tool = "Grep"
@@ -243,15 +269,37 @@ lines_xxh64 = "c609a8d9f0f5efa6"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = 'for .* in .* \{[^}]*?\.await' }
+input = { glob = "**/*.rs", path = ".", pattern = 'for .* in .* \{[^\}]*await' }
 files_xxh64 = "ef46db3751d8e999"
 lines_xxh64 = "ef46db3751d8e999"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = 'for .* in .* \{[^}]*?tokio::spawn' }
+input = { glob = "**/*.rs", path = ".", pattern = 'for .* in .* \{[^\}]*\}' }
 files_xxh64 = "ef46db3751d8e999"
 lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = 'for .* in .* \{[^\}]*tokio::spawn' }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "FuturesUnordered" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/execution.rs" }
+xxh64 = "e3584330c45633d7"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/execution.rs" }
+xxh64 = "d16683195119f60d"
 
 [[requirement]]
 id = "in-process-agent-execution"
@@ -263,19 +311,25 @@ title = "Default Executor Runs In-Process"
 prompt_xxh64 = "9f4bfea20e8599f1"
 decider = "agent"
 verdict = true
-evidence = "The CerseiExecutor runs checks in-process using cersei_agent::Agent, without spawning external processes."
+evidence = "The CerseiExecutor runs each check by driving an in-process cersei agent, as confirmed by the documentation and implementation in `src/checks/executor/cersei.rs`. There is no indication of spawning an external process for execution."
 agent_reason = "truncated discovery"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "cersei_agent::Agent" }
-files_xxh64 = "fe781837d76fe203"
-lines_xxh64 = "2903a5a520730d6e"
+input = { path = ".", pattern = "cersei_agent::Agent" }
+files_xxh64 = "f65aba2fd38a1bbe"
+lines_xxh64 = "0aff87c590ac27d4"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "run|run_stream" }
+input = { glob = "*.rs", path = ".", pattern = "run|run_stream" }
 truncated = true
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = ".", pattern = "spawn|process" }
+files_xxh64 = "4b4f808681dd3ce8"
+lines_xxh64 = "f77a93fc13614965"
 
 [[requirement.check.call]]
 tool = "Read"
@@ -321,7 +375,7 @@ title = "Credentials Are Environment-Only"
 prompt_xxh64 = "64c061f129685f82"
 decider = "agent"
 verdict = true
-evidence = "API keys are read from native environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) and not from config files or `MULTI_`-prefixed variables."
+evidence = "Provider API keys are read directly from native environment variables like `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`, and not from config files or `MULTI_`-prefixed variables, as confirmed by the code in `src/checks/config/providers.rs`."
 agent_reason = "truncated discovery"
 
 [[requirement.check.call]]
@@ -331,24 +385,39 @@ truncated = true
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "*.rs", path = ".", pattern = "MULTI_" }
-files_xxh64 = "9ebc07626db36b83"
-lines_xxh64 = "01f12b4fe1091946"
+input = { path = ".", pattern = "MULTI_" }
+files_xxh64 = "26295d4eea9d9b67"
+lines_xxh64 = "eb1d1f3ac19248da"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "*.rs", path = ".", pattern = "API_KEY" }
-files_xxh64 = "7d0519d5a7fc2d7b"
-lines_xxh64 = "9e15fbe5c5fbb150"
+input = { path = ".", pattern = "API_KEY" }
+files_xxh64 = "427a6c93cce75adc"
+lines_xxh64 = "b8cfdca5d89f8169"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "config" }
+truncated = true
 
 [[requirement.check]]
 id = "precedence-and-validation"
 title = "Precedence And Validation"
 prompt_xxh64 = "ddff6675e5b058ea"
-decider = "agent"
+decider = "jev"
 verdict = true
-evidence = "Configuration values are merged from file, env, and flags with precedence flag > env > file. Model validation against a hardcoded allowlist is implemented."
-agent_reason = "truncated discovery"
+evidence = "The configuration merging logic follows the required precedence of flags > env > file, and model validation is enforced against a hardcoded allowlist. These are implemented and confirmed in the configuration phase of 'multi check.'"
+jev = { model = "jev-1.13.0", noul = 0.79, control_noul = 0.02, reading = "satisfied" }
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/CHECKS.toml" }
+xxh64 = "321ce8c38e256c5b"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "CHECKS.toml" }
+xxh64 = "850a842b47046382"
 
 [[requirement.check.call]]
 tool = "Glob"
@@ -357,29 +426,54 @@ xxh64 = "b5318e5c3bd386d8"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "multi check" }
-files_xxh64 = "396e3191fc4080fe"
-lines_xxh64 = "d324b1f075470fd9"
+input = { glob = "**/*.rs", path = ".", pattern = "resolve.*provider|resolve.*model|resolve.*effort|set.*provider|set.*model|set.*effort" }
+files_xxh64 = "659e77162b66ef14"
+lines_xxh64 = "f0b10e31b9fe6f77"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "config" }
-truncated = true
+input = { glob = "**/*.rs", path = ".", pattern = "(parse|read|load).*config.*file" }
+files_xxh64 = "6dac0c814d9bc98d"
+lines_xxh64 = "1a82736e8e9a5e73"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "model" }
-truncated = true
+input = { glob = "**/*.rs", path = ".", pattern = "(env::var|dotenv::var|var_os|env::set).*MULTI_" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "(parse|read|handle|get|fetch|set).*env" }
+files_xxh64 = "b6c0c0638fb8b8bf"
+lines_xxh64 = "6050042816f1e587"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "allowlist|allow_list" }
+files_xxh64 = "2f004b46b246506a"
+lines_xxh64 = "932bb04bd10df892"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/src/checks/config/**.rs", path = ".", pattern = "(fn|pub fn).*" }
+files_xxh64 = "2f3f2421422ac360"
+lines_xxh64 = "b89cfae4e30de4c3"
 
 [[requirement.check.call]]
 tool = "Read"
-input = { file_path = "src/checks/config/mod.rs", limit = 100, offset = 200 }
-xxh64 = "545ef65ff1f0472d"
+input = { file_path = "src/checks/config/mod.rs", limit = 100, offset = 0 }
+xxh64 = "27ce597b4e7f23a7"
 
 [[requirement.check.call]]
 tool = "Read"
 input = { file_path = "src/checks/config/mod.rs", limit = 100, offset = 100 }
 xxh64 = "f03eb67921b4a785"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/config/mod.rs", limit = 100, offset = 200 }
+xxh64 = "545ef65ff1f0472d"
 
 [[requirement]]
 id = "least-privilege-agent-permissions"
@@ -391,37 +485,28 @@ title = "Read-Only Tools By Default"
 prompt_xxh64 = "3c282e318f84b21b"
 decider = "agent"
 verdict = true
-evidence = "The default tool set for a verification agent is read-only, consisting of FileReadTool, GrepTool, and GlobTool, all jailed to the agent's working directory. Execution-requiring tools are gated separately, ensuring a least privilege policy."
-jev = { model = "jev-1.13.0", noul = 0.26, control_noul = 0.02, reading = "insufficient" }
-agent_reason = "jev uncertain"
-
-[[requirement.check.call]]
-tool = "Glob"
-input = { path = ".", pattern = "**/*.rs" }
-xxh64 = "b5318e5c3bd386d8"
+evidence = "The agent is configured with a read-only tool set (FileReadTool, GrepTool, GlobTool) and a read-only permission policy (AllowReadOnly) by default."
+agent_reason = "truncated discovery"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "in-process executor" }
-files_xxh64 = "074e008e386ff47d"
-lines_xxh64 = "9eea5605be6e5ab9"
+input = { glob = "**/*.rs", path = ".", pattern = "(tool|permission)" }
+truncated = true
 
 [[requirement.check.call]]
-tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "tools and permission policy" }
-files_xxh64 = "ef46db3751d8e999"
-lines_xxh64 = "ef46db3751d8e999"
-
-[[requirement.check.call]]
-tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "read-only tool set" }
-files_xxh64 = "7716ca4ca35ad990"
-lines_xxh64 = "d4b61317a131ae7d"
+tool = "Read"
+input = { file_path = "src/checks/executor/cersei.rs", limit = 50 }
+xxh64 = "304cd8767a2382ef"
 
 [[requirement.check.call]]
 tool = "Read"
 input = { file_path = "src/checks/executor/cersei.rs", limit = 50, offset = 70 }
 xxh64 = "1ec1fc95e8b10f4a"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/cersei.rs", limit = 50, offset = 200 }
+xxh64 = "b92f70a6d0a2aa31"
 
 [[requirement]]
 id = "provider-agnostic-execution"
@@ -476,30 +561,42 @@ title = "Verdict Captured Via Judge Tool"
 prompt_xxh64 = "8598ba69a5a7fcd2"
 decider = "agent"
 verdict = true
-evidence = "The `report-check-result` tool is implemented as an in-process `JudgeTool`, registered per check, writing to an in-process `VerdictSink`. No network or external transport is used for verdict reporting."
-agent_reason = "truncated discovery"
+evidence = "The `JudgeTool` struct implements the `Tool` trait and manages verdicts in-process, using an in-memory slot. No evidence of out-of-process or network endpoints for verdict reporting."
+jev = { model = "jev-1.13.0", noul = 0.59, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/*.rs" }
+xxh64 = "b5318e5c3bd386d8"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { path = ".", pattern = "report-check-result" }
-files_xxh64 = "36ac09545b9361a5"
-lines_xxh64 = "30a93c2533b77d87"
+input = { glob = "**/*.rs", path = ".", pattern = "report-check-result" }
+files_xxh64 = "45561906e6cc788c"
+lines_xxh64 = "437ca7e0c6ba80ac"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "Tool" }
-truncated = true
+input = { glob = "**/*.rs", path = ".", pattern = 'Tool\s*\{' }
+files_xxh64 = "604f6a23297d477e"
+lines_xxh64 = "da82585744e4d626"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "JudgeTool" }
-files_xxh64 = "0df497cd08069bbf"
-lines_xxh64 = "6eceaa256075e69b"
+input = { glob = "**/*.rs", path = ".", pattern = 'impl\s+Tool\s+for\s+JudgeTool' }
+files_xxh64 = "45561906e6cc788c"
+lines_xxh64 = "b428a6771fd3d827"
 
 [[requirement.check.call]]
 tool = "Read"
-input = { file_path = "src/checks/executor/judge.rs", limit = 40 }
-xxh64 = "f36a53628028c225"
+input = { file_path = "src/checks/executor/judge.rs", limit = 40, offset = 80 }
+xxh64 = "5a5a1f7f47be411b"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/judge.rs", limit = 40, offset = 40 }
+xxh64 = "67d85c147dc827b6"
 
 [[requirement.check]]
 id = "verdict-from-tool-call-not-stdout"
@@ -507,13 +604,14 @@ title = "Verdict From Tool Call Not Stdout"
 prompt_xxh64 = "73712b07362b19fb"
 decider = "agent"
 verdict = true
-evidence = "The verdict is derived from the `success` boolean reported through the `report-check-result` tool, and not from stdout or the process exit code. The code in `src/checks/executor/judge.rs` confirms this behavior."
-agent_reason = "truncated discovery"
+evidence = "The verdict is derived from the `success` boolean reported through the `report-check-result` tool, not from stdout, stderr, or exit codes. Unreported checks are treated as failures."
+jev = { model = "jev-1.13.0", noul = 0.65, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
 
 [[requirement.check.call]]
 tool = "Glob"
-input = { path = ".", pattern = "**/*" }
-truncated = true
+input = { path = ".", pattern = "**/*.rs" }
+xxh64 = "b5318e5c3bd386d8"
 
 [[requirement.check.call]]
 tool = "Grep"
@@ -523,23 +621,17 @@ lines_xxh64 = "30a93c2533b77d87"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { glob = "**/*.rs", path = ".", pattern = "stdout|exit code" }
-files_xxh64 = "ca5b16a196505be3"
-lines_xxh64 = "0e34d067f6efc2b2"
+input = { path = "src/checks/execution.rs", pattern = "stdout|process exit|exit code" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
 
 [[requirement.check.call]]
 tool = "Grep"
-input = { path = "src/checks/executor/judge.rs", pattern = "report-check-result" }
-files_xxh64 = "45561906e6cc788c"
-lines_xxh64 = "437ca7e0c6ba80ac"
-
-[[requirement.check.call]]
-tool = "Grep"
-input = { path = "src/checks/executor/judge.rs", pattern = "stdout" }
+input = { path = "src/checks/executor/judge.rs", pattern = "stdout|process exit|exit code" }
 files_xxh64 = "45561906e6cc788c"
 lines_xxh64 = "ad06647ed05d3d56"
 
 [[requirement.check.call]]
 tool = "Read"
-input = { file_path = "src/checks/executor/judge.rs" }
-xxh64 = "6bd7dd33254c42ea"
+input = { file_path = "src/checks/executor/judge.rs", limit = 50 }
+xxh64 = "e90a656ca1b30188"
