@@ -8,6 +8,7 @@
 //! the repo's `BoxedIngress` / `BoxedMonitor` / `BoxedPlatform` convention.
 
 mod activity;
+mod bounded;
 pub mod cersei;
 #[cfg(test)]
 mod fake;
@@ -275,6 +276,11 @@ the check is treated as a FAILURE.",
 /// instructions also state `declared_in` — the declaring file's path relative
 /// to that root — to preserve the implicit scoping a smaller sandbox used to
 /// provide for free.
+///
+/// The instructions also ask for narrowly scoped searches up front. Broad
+/// first-turn searches (`**/*.rs`) were the sole source of "truncated
+/// discovery" plan entries; the `bounded` tool wrapper refuses them, and
+/// this steer keeps the agent from spending turns getting refused.
 pub fn assemble_instructions(
     check: &Check,
     reporting: &str,
@@ -297,6 +303,10 @@ Your working directory is `{working_dir}` — a sandboxed, throwaway copy of the
 repository that you may inspect freely. Every file relevant to this check lives under \
 that path: do not read or search outside it. Tool calls that take an optional `path` \
 default to it when omitted.\n\
+Search narrowly from the start: scope every `Grep` and `Glob` with a `path` or `glob` \
+aimed at the code the check is about (e.g. `src/checks/**/*.rs`, not `**/*.rs` or `**/*`), \
+and use specific patterns. A search that matches too many lines is refused and must be \
+re-run narrower. Once you know which file holds the evidence, read just the relevant lines.\n\
 This requirement is declared in `{declared_in}`.\n\
 {retry_note}\
 \n\
@@ -363,6 +373,19 @@ mod tests {
         );
         assert!(text.contains("attempt 2"));
         assert!(text.contains("previous attempt finished without reporting"));
+    }
+
+    #[test]
+    fn instructions_ask_for_narrowly_scoped_searches() {
+        let text = assemble_instructions(
+            &check(),
+            &judge_tool_directive(),
+            Path::new("/tmp/sandbox-copy"),
+            Path::new("CHECKS.toml"),
+            1,
+        );
+        assert!(text.contains("Search narrowly"));
+        assert!(text.contains("not `**/*.rs`"));
     }
 
     /// MULTI-1834 acceptance: the declaring file's root-relative path appears

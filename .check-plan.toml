@@ -1,0 +1,803 @@
+version = 2
+
+[[requirement]]
+id = "authoring-errors-are-actionable"
+title = "Authoring Errors Are Actionable"
+
+[[requirement.check]]
+id = "diagnostics-name-the-file"
+title = "Diagnostics Name the File"
+prompt_xxh64 = "61353fef5e8122bd"
+decider = "agent"
+verdict = true
+evidence = "The code handles all specified validation errors for `CHECKS.toml` files using `miette` diagnostics, and each diagnostic includes the offending file's name."
+jev = { model = "jev-1.13.0", noul = 0.49, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "miette" }
+files_xxh64 = "77e709a1a79e5fe8"
+lines_xxh64 = "42ade59236c95458"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/discovery/**/*.rs", path = ".", pattern = "diagnostic" }
+files_xxh64 = "9632c4bb31c98456"
+lines_xxh64 = "b539e04cdef5d9d6"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/discovery/**/*.rs", path = ".", pattern = "CHECKS.toml" }
+files_xxh64 = "041e3d5211aa6701"
+lines_xxh64 = "8d4c7f8f70901052"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/discovery/**/*.rs", path = ".", pattern = "invalid|unsupported|unknown|missing|malformed|duplicate|empty|whitespace|control" }
+files_xxh64 = "9632c4bb31c98456"
+lines_xxh64 = "1a5056091afffacc"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/discovery/parse.rs", limit = 20, offset = 55 }
+xxh64 = "363267d2ddf42cfc"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/discovery/parse.rs", limit = 20, offset = 267 }
+xxh64 = "b32d57340f509710"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/discovery/parse.rs", limit = 20, offset = 190 }
+xxh64 = "a35c38d92b1c2099"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/discovery/parse.rs", limit = 20, offset = 302 }
+xxh64 = "5cdc05d62dd37794"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/discovery/parse.rs", limit = 20, offset = 344 }
+xxh64 = "0374bc534025c473"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/discovery/parse.rs", limit = 20, offset = 69 }
+xxh64 = "dde35f8fed34f266"
+
+[[requirement]]
+id = "checks-cannot-corrupt-workspace"
+title = "Checks Cannot Corrupt the Workspace"
+
+[[requirement.check]]
+id = "execution-uses-sandbox"
+title = "Execution Uses the Sandbox"
+prompt_xxh64 = "3fcd9f22cea68679"
+decider = "agent"
+verdict = true
+evidence = "The codebase includes multiple references to sandboxing, indicating that checks are executed within a sandbox. The `src/checks/execution.rs` and `src/checks/executor/mod.rs` files describe the use of a sandbox for running agents, and the `src/checks/sandbox/mod.rs` file confirms that the sandbox allows modifications without affecting the real working directory."
+agent_reason = "truncated discovery"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "sandbox" }
+truncated = true
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "working directory" }
+files_xxh64 = "d3da2e429ccc718c"
+lines_xxh64 = "dc4c9f2e60ccdc83"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "real working directory" }
+files_xxh64 = "86cb6fd73b23062c"
+lines_xxh64 = "512fb7c347d9c332"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "sandbox directory" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "sandboxed" }
+files_xxh64 = "5562f5ad1a9763c9"
+lines_xxh64 = "6068d4ef0a2046fe"
+
+[[requirement.check]]
+id = "sandbox-cross-platform"
+title = "Sandbox Is Cross-Platform and Platform-Gated"
+prompt_xxh64 = "a99d7b24502d2754"
+decider = "agent"
+verdict = true
+evidence = "The sandboxing code provides a `Sandbox` trait with implementations for both macOS and Linux. On macOS, it uses the `clonefile` syscall for copy-on-write, and on Linux, it uses the `FICLONE` ioctl with a plain-copy fallback for filesystems that do not support reflinks. The code uses `cfg` attributes to ensure platform-specific implementations are selected, allowing the crate to compile on all targets."
+jev = { model = "jev-1.13.0", noul = 0.56, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/*.rs" }
+xxh64 = "b00727bcb4df4130"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/sandbox/mod.rs", pattern = 'trait\s+Sandbox' }
+files_xxh64 = "86cb6fd73b23062c"
+lines_xxh64 = "7ae1e66112af61c3"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/sandbox/mod.rs", pattern = "cfg" }
+files_xxh64 = "86cb6fd73b23062c"
+lines_xxh64 = "e08987d556fc40e9"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/sandbox/macos.rs", pattern = "clonefile" }
+files_xxh64 = "986f82682903205b"
+lines_xxh64 = "8dd22f1434bb0b1a"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/sandbox/linux.rs", pattern = "FICLONE" }
+files_xxh64 = "e6e0d5cfd90b39e6"
+lines_xxh64 = "1654657e32754629"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/sandbox/linux.rs", pattern = "fallback" }
+files_xxh64 = "e6e0d5cfd90b39e6"
+lines_xxh64 = "e431b1530bea9a5e"
+
+[[requirement]]
+id = "ci-friendly-exit-status"
+title = "CI-Friendly Exit Status"
+
+[[requirement.check]]
+id = "exit-code-reflects-result"
+title = "Exit Code Reflects Result"
+prompt_xxh64 = "609491717022cc84"
+decider = "agent"
+verdict = true
+evidence = "The `exit_code` function returns 0 if all requirements are satisfied and 1 if any are unsatisfied, ensuring correct exit status."
+jev = { model = "jev-1.13.0", noul = 0.73, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/*.rs" }
+xxh64 = "b00727bcb4df4130"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/cmd/check.rs", pattern = "exit" }
+files_xxh64 = "1a249627c0653240"
+lines_xxh64 = "613a675fd436491d"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/cmd/check.rs", limit = 20, offset = 40 }
+xxh64 = "b76a4e05f0da29ee"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/cmd/check.rs", pattern = "code" }
+files_xxh64 = "1a249627c0653240"
+lines_xxh64 = "8ca4dec2576ab80e"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/cmd/check.rs", limit = 20, offset = 20 }
+xxh64 = "01d9c6a2e1cdf973"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks", pattern = "async fn run" }
+files_xxh64 = "ba64e5b82a5744b6"
+lines_xxh64 = "e110fa583c73302e"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/mod.rs", limit = 20, offset = 80 }
+xxh64 = "e1199f6d490244f3"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/mod.rs", pattern = "return" }
+files_xxh64 = "0f669c66f67d5d6a"
+lines_xxh64 = "886e377d637fdf3d"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/mod.rs", limit = 20, offset = 340 }
+xxh64 = "c5667d059ac10eb5"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/mod.rs", limit = 20, offset = 100 }
+xxh64 = "0c260cf1e62034d8"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/mod.rs", limit = 20, offset = 120 }
+xxh64 = "6849b463d546bedb"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/mod.rs", limit = 20, offset = 140 }
+xxh64 = "947405d3dae89366"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/mod.rs", limit = 20, offset = 160 }
+xxh64 = "6bb42e72c85b31e8"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/mod.rs", limit = 20, offset = 180 }
+xxh64 = "71e2ba0176c8a8b1"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/reporting.rs", pattern = "fn exit_code" }
+files_xxh64 = "501b973debbdafb9"
+lines_xxh64 = "320328bf2b061b1a"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/reporting.rs", limit = 20, offset = 220 }
+xxh64 = "2e95cb9a01a19113"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/reporting.rs", limit = 20, offset = 240 }
+xxh64 = "fa008423271b4d09"
+
+[[requirement]]
+id = "concurrency-defaults-to-core-count"
+title = "Concurrency Defaults To The Host's Core Count"
+
+[[requirement.check]]
+id = "default-concurrency-equals-available-parallelism"
+title = "Default Concurrency Equals Available Parallelism"
+prompt_xxh64 = "3a857919937ea535"
+decider = "jev"
+verdict = true
+evidence = "The default concurrency is computed using `std::thread::available_parallelism()`, which derives from the host's available parallelism."
+jev = { model = "jev-1.13.0", noul = 0.85, control_noul = 0.02, reading = "satisfied" }
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/*.rs" }
+xxh64 = "b00727bcb4df4130"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/**/*.rs", path = ".", pattern = "concurrency" }
+files_xxh64 = "c613c9e8a04e28fb"
+lines_xxh64 = "ed97052491ec6138"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/config/mod.rs", path = ".", pattern = "default_concurrency" }
+files_xxh64 = "66a39bc62bbd0d7f"
+lines_xxh64 = "0e1832997584ad58"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/config/mod.rs", path = ".", pattern = "fn default_concurrency" }
+files_xxh64 = "66a39bc62bbd0d7f"
+lines_xxh64 = "77f489d3f7845b36"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/config/mod.rs", limit = 20, offset = 53 }
+xxh64 = "8284d1721a7765a3"
+
+[[requirement]]
+id = "concurrent-check-execution"
+title = "Concurrent Check Execution"
+
+[[requirement.check]]
+id = "concurrent-dispatch"
+title = "Concurrent Dispatch"
+prompt_xxh64 = "c625b9c131c1b822"
+decider = "agent"
+verdict = true
+evidence = "The execution phase uses a `foreach` workflow with bounded concurrency to run checks, indicating concurrent dispatch rather than sequential execution."
+jev = { model = "jev-1.13.0", noul = 0.64, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "JoinSet|FuturesUnordered|tokio::spawn" }
+files_xxh64 = "985dd350745735bc"
+lines_xxh64 = "1e8ebcdea4fae951"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/execution.rs", path = ".", pattern = "tokio::spawn" }
+files_xxh64 = "e3584330c45633d7"
+lines_xxh64 = "6522b4328bdc14b6"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/execution.rs", path = ".", pattern = "spawn" }
+files_xxh64 = "e3584330c45633d7"
+lines_xxh64 = "54cef7faa5e2145f"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/execution.rs", limit = 40, offset = 380 }
+xxh64 = "ed8246eaf5348e63"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/execution.rs", path = ".", pattern = "for|while" }
+files_xxh64 = "e3584330c45633d7"
+lines_xxh64 = "bb0b0b68927e2f1d"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/execution.rs", path = ".", pattern = "foreach" }
+files_xxh64 = "e3584330c45633d7"
+lines_xxh64 = "4e389111b82c67fe"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/execution.rs", limit = 40, offset = 160 }
+xxh64 = "6a759ec226aa1e0d"
+
+[[requirement]]
+id = "in-process-agent-execution"
+title = "In-Process Agent Execution"
+
+[[requirement.check]]
+id = "default-executor-runs-in-process"
+title = "Default Executor Runs In-Process"
+prompt_xxh64 = "9f4bfea20e8599f1"
+decider = "jev"
+verdict = true
+evidence = "The `cersei_agent::Agent` is run in-process using `agent.run(&instructions)`. No external processes are spawned, as there are no instances of `process::Command` in the codebase."
+jev = { model = "jev-1.13.0", noul = 0.9, control_noul = 0.02, reading = "satisfied" }
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "cersei_agent::Agent" }
+files_xxh64 = "fe781837d76fe203"
+lines_xxh64 = "2903a5a520730d6e"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/**/*.rs", path = ".", pattern = "run_stream|run" }
+files_xxh64 = "0e86c0e4ab0e9645"
+lines_xxh64 = "7949d55fa056d2f5"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/cersei.rs", limit = 20, offset = 300 }
+xxh64 = "a346237f3c2e2b7d"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "process::Command" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "tokio::process::Command" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "std::process::Command" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement]]
+id = "isolated-agent-sessions"
+title = "Isolated Agent Sessions"
+
+[[requirement.check]]
+id = "distinct-session-per-check"
+title = "Distinct Session Per Check"
+prompt_xxh64 = "cefff8ebd4534a59"
+decider = "agent"
+verdict = true
+evidence = "Each check is assigned a unique session_id derived from the check's id, and the shell state is cleared using clear_session_shell_state after each check."
+jev = { model = "jev-1.13.0", noul = 0.5, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "session_id" }
+files_xxh64 = "997393e4594d3f03"
+lines_xxh64 = "875231d4721a4f2f"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/cersei.rs", limit = 20, offset = 180 }
+xxh64 = "da4c2c2d13efbb63"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = "clear_session_shell_state" }
+files_xxh64 = "7716ca4ca35ad990"
+lines_xxh64 = "803c0cf2f30ff709"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/cersei.rs", limit = 20, offset = 300 }
+xxh64 = "a346237f3c2e2b7d"
+
+[[requirement]]
+id = "layered-configuration"
+title = "Layered Configuration"
+
+[[requirement.check]]
+id = "credentials-are-environment-only"
+title = "Credentials Are Environment-Only"
+prompt_xxh64 = "64c061f129685f82"
+decider = "agent"
+verdict = true
+evidence = "No API keys are loaded from configuration files or MULTI_-prefixed variables. No evidence of disallowed sources for API keys was found."
+jev = { model = "jev-1.13.0", noul = 0.18, control_noul = 0.02, reading = "insufficient" }
+agent_reason = "jev disagreed"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = 'env::var\("(ANTHROPIC|OPENAI|OTHER)_API_KEY"' }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/*.rs", path = ".", pattern = 'env::var\("MULTI_' }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "config.*(ANTHROPIC|OPENAI|OTHER)_API_KEY" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "MULTI_.*(ANTHROPIC|OPENAI|OTHER)_API_KEY" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/*.toml" }
+xxh64 = "81c13e5cc78abdeb"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "MultiTool.toml", pattern = "(ANTHROPIC|OPENAI|OTHER)_API_KEY" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "CHECKS.toml", pattern = "(ANTHROPIC|OPENAI|OTHER)_API_KEY" }
+files_xxh64 = "321ce8c38e256c5b"
+lines_xxh64 = "49cf9ce8937359f8"
+
+[[requirement.check]]
+id = "precedence-and-validation"
+title = "Precedence And Validation"
+prompt_xxh64 = "ddff6675e5b058ea"
+decider = "agent"
+verdict = true
+evidence = "The configuration phase merges provider/model/effort from config file, MULTI_-prefixed env vars, and CLI flags with precedence flag > env > file. The model is validated against a hardcoded allowlist of known IDs for the provider."
+jev = { model = "jev-1.13.0", noul = 0.37, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/multi_check*" }
+xxh64 = "b0a7bdba170294f6"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/multi*" }
+xxh64 = "dff361623db760f0"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "crates/multi-core", pattern = "multi check" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "crates/multi-core", pattern = "multi_check" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "crates/multi-core", pattern = "check" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "crates/multi-core", pattern = "config" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = ".", pattern = "multi check" }
+files_xxh64 = "4e0cdba36aa187a8"
+lines_xxh64 = "77e8ea87c7abcb38"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/config", pattern = "config" }
+files_xxh64 = "7219fd6760b5abc0"
+lines_xxh64 = "f51a2223a2990609"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/config/mod.rs", pattern = "flag > env var > config file" }
+files_xxh64 = "66a39bc62bbd0d7f"
+lines_xxh64 = "dbbb1d5e00ad89cd"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/config/mod.rs", limit = 20, offset = 0 }
+xxh64 = "099737ecda482c6a"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "src/checks/config", pattern = "allowlist" }
+files_xxh64 = "89d984e4a559d993"
+lines_xxh64 = "e24eff70fa94d050"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/config/models.rs", limit = 20, offset = 0 }
+xxh64 = "0e4f13f971f4ee75"
+
+[[requirement]]
+id = "least-privilege-agent-permissions"
+title = "Least-Privilege Agent Permissions"
+
+[[requirement.check]]
+id = "read-only-tools-by-default"
+title = "Read-Only Tools By Default"
+prompt_xxh64 = "3c282e318f84b21b"
+decider = "agent"
+verdict = true
+evidence = "The agent is configured with a read-only tool set by default, consisting of `Read`, `Grep`, and `Glob` tools, as defined in `ReadOnlyTool` enum and `read_only_tools` function."
+jev = { model = "jev-1.13.0", noul = 0.35, control_noul = 0.02, reading = "insufficient" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "src/in_process_executor/**/*.rs" }
+xxh64 = "b0a7bdba170294f6"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/in_process_executor/**/*.rs" }
+xxh64 = "b0a7bdba170294f6"
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/*executor*/**/*.rs" }
+xxh64 = "9858cdf32399f885"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/mod.rs", path = ".", pattern = "agent" }
+files_xxh64 = "8745a010a3e62543"
+lines_xxh64 = "e270ce1082cc9b4a"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/mod.rs", path = ".", pattern = "tool" }
+files_xxh64 = "8745a010a3e62543"
+lines_xxh64 = "bb5cc0b9e261aceb"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/mod.rs", path = ".", pattern = "ReadOnlyTool" }
+files_xxh64 = "8745a010a3e62543"
+lines_xxh64 = "ce58452146f65059"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/tool_capture.rs", path = ".", pattern = "ReadOnlyTool" }
+files_xxh64 = "c52233d1dc775c84"
+lines_xxh64 = "ad8e04a38ceedcae"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/tool_capture.rs", limit = 20, offset = 30 }
+xxh64 = "282b15cce45e2ffc"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/cersei.rs", path = ".", pattern = "read_only_tools" }
+files_xxh64 = "7716ca4ca35ad990"
+lines_xxh64 = "b6b8991b80be02e4"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/cersei.rs", limit = 20, offset = 90 }
+xxh64 = "51dfa1e5045dd0b4"
+
+[[requirement]]
+id = "provider-agnostic-execution"
+title = "Provider-Agnostic Execution"
+
+[[requirement.check]]
+id = "boxed-executor-trait"
+title = "Boxed Executor Trait"
+prompt_xxh64 = "3f07445af3c43e25"
+decider = "jev"
+verdict = true
+evidence = "The `JevExecutor` struct uses an `Arc<dyn CheckExecutor + Send + Sync>` for its `inner` field, indicating that agent execution is defined behind a trait and consumed as a dynamically-dispatched trait object. This matches the requirement for using a trait object instead of a concrete executor type."
+jev = { model = "jev-1.13.0", noul = 0.85, control_noul = 0.02, reading = "satisfied" }
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/Cargo.toml", path = ".", pattern = '\[features\]' }
+files_xxh64 = "440bde50971f7bdb"
+lines_xxh64 = "a671dbb745f27236"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { path = "Cargo.toml", pattern = "multi check" }
+files_xxh64 = "440bde50971f7bdb"
+lines_xxh64 = "91b946ee5427206d"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/Cargo.toml", path = ".", pattern = "multi_check" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/Cargo.toml", path = ".", pattern = "multi-check" }
+files_xxh64 = "ef46db3751d8e999"
+lines_xxh64 = "ef46db3751d8e999"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/Cargo.toml", path = ".", pattern = "multi" }
+files_xxh64 = "f3fc49c8e8d65cc6"
+lines_xxh64 = "f65b55c813a5fb31"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/CHECKS.toml", path = ".", pattern = "multi check" }
+files_xxh64 = "321ce8c38e256c5b"
+lines_xxh64 = "db35d13e88d715f8"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/src/**", path = ".", pattern = "BoxedIngress|BoxedMonitor|BoxedPlatform" }
+files_xxh64 = "0c1f9946264ebcc6"
+lines_xxh64 = "f43ba17e1d9556e4"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/src/**", path = ".", pattern = "Box<dyn CheckExecutor|Arc<dyn CheckExecutor" }
+files_xxh64 = "b5622e3fb1c22e5f"
+lines_xxh64 = "9a619c5873615b1f"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "**/src/**", path = ".", pattern = "JevExecutor" }
+files_xxh64 = "6e964bffed63c3d8"
+lines_xxh64 = "d9d163e71641ba22"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/jev/executor.rs", limit = 20, offset = 240 }
+xxh64 = "eec7ed92b75b7827"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/jev/executor.rs", limit = 20, offset = 285 }
+xxh64 = "a03af4f011599b94"
+
+[[requirement]]
+id = "trustworthy-in-process-reporting"
+title = "Trustworthy In-Process Reporting"
+
+[[requirement.check]]
+id = "verdict-captured-via-judge-tool"
+title = "Verdict Captured Via Judge Tool"
+prompt_xxh64 = "8598ba69a5a7fcd2"
+decider = "jev"
+verdict = true
+evidence = "The `report-check-result` tool is implemented as the `JudgeTool`, which writes the verdict into an in-process `VerdictSink`. There is no network or external transport involved in reporting the verdict."
+jev = { model = "jev-1.13.0", noul = 0.8, control_noul = 0.02, reading = "satisfied" }
+
+[[requirement.check.call]]
+tool = "Glob"
+input = { path = ".", pattern = "**/*.rs" }
+xxh64 = "b00727bcb4df4130"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "report-check-result" }
+files_xxh64 = "45561906e6cc788c"
+lines_xxh64 = "437ca7e0c6ba80ac"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/**/*.rs", path = ".", pattern = "Tool" }
+files_xxh64 = "0e86c0e4ab0e9645"
+lines_xxh64 = "8559d690ab62a9ee"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/judge.rs", limit = 20, offset = 74 }
+xxh64 = "12c35c7f9c7f935e"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/judge.rs", limit = 20, offset = 122 }
+xxh64 = "9fba168c8cbf902d"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/executor/**/*.rs", path = ".", pattern = "VerdictSink" }
+files_xxh64 = "0df497cd08069bbf"
+lines_xxh64 = "e2c78b4eef028652"
+
+[[requirement.check.call]]
+tool = "Read"
+input = { file_path = "src/checks/executor/judge.rs", limit = 20, offset = 38 }
+xxh64 = "5145a7f7eed8b8c1"
+
+[[requirement.check]]
+id = "verdict-from-tool-call-not-stdout"
+title = "Verdict From Tool Call Not Stdout"
+prompt_xxh64 = "73712b07362b19fb"
+decider = "agent"
+verdict = true
+evidence = "The check's verdict is derived from the `success` boolean reported through the `report-check-result` tool, as confirmed by the code and documentation. If the tool is not called, it results in a failure or error."
+jev = { model = "jev-1.13.0", noul = 0.45, control_noul = 0.02, reading = "satisfied" }
+agent_reason = "jev uncertain"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "report-check-result" }
+files_xxh64 = "45561906e6cc788c"
+lines_xxh64 = "437ca7e0c6ba80ac"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "success" }
+files_xxh64 = "38857a1f722c7eaf"
+lines_xxh64 = "1768f295777bf89c"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "stdout" }
+files_xxh64 = "17a46363b331a198"
+lines_xxh64 = "21b30bec526ece44"
+
+[[requirement.check.call]]
+tool = "Grep"
+input = { glob = "src/checks/**/*.rs", path = ".", pattern = "exit" }
+files_xxh64 = "47a29ebb09903b85"
+lines_xxh64 = "7ef85bc30fc2faa7"

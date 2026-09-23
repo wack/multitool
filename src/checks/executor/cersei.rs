@@ -18,6 +18,7 @@ use miette::{Result, miette};
 use tokio_util::sync::CancellationToken;
 
 use super::activity::render_activity;
+use super::bounded::Bounded;
 use super::jail::Jailed;
 use super::judge::{JudgeTool, VerdictSink};
 use super::tool_capture::ToolCallCollector;
@@ -82,21 +83,26 @@ impl CerseiExecutor {
 /// unbounded globs over the host filesystem (timeouts) and grade the live
 /// repository instead of the sandbox (postmortem C5). The jail turns an
 /// out-of-sandbox path into an immediate tool error that steers the agent back.
+///
+/// The search tools are also [`Bounded`]: a result too large for the agent to
+/// see whole becomes a tool error that steers it toward a narrower search, so
+/// a capped result never becomes plan evidence the Jev decision engine must
+/// distrust ("truncated discovery").
 fn read_only_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(Jailed::path_keys(
             cersei_tools::file_read::FileReadTool,
             &["file_path"],
         )),
-        Box::new(Jailed::path_keys(
+        Box::new(Bounded::grep(Jailed::path_keys(
             cersei_tools::grep_tool::GrepTool,
             &["path"],
-        )),
-        Box::new(Jailed::glob(
+        ))),
+        Box::new(Bounded::glob(Jailed::glob(
             cersei_tools::glob_tool::GlobTool,
             &["path"],
             "pattern",
-        )),
+        ))),
     ]
 }
 
