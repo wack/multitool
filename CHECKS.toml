@@ -164,7 +164,7 @@ make the format usable.
   id = "diagnostics-name-the-file"
   title = "Diagnostics Name the File"
   prompt = '''
-Inspect discovery-time validation of `CHECKS.toml` files. Confirm that it produces `miette` diagnostics for each malformed case — invalid TOML, an unsupported `version`, an unknown key, a requirement with no checks, a check missing its `prompt`, an unknown check `kind`, an id that is not kebab-case, and a duplicate requirement or check id — and that each diagnostic names the offending `CHECKS.toml` file. The check fails if any of these conditions is unhandled, or if a diagnostic does not name the source file.
+Inspect discovery-time validation of `CHECKS.toml` files. Confirm that it produces `miette` diagnostics for each malformed case — invalid TOML, an unsupported `version`, an unknown key, a requirement with no checks, a check missing its `prompt`, an unknown check `kind`, an empty id or one with leading/trailing whitespace or control characters, and a duplicate requirement or check id — and that each diagnostic names the offending `CHECKS.toml` file. The check fails if any of these conditions is unhandled, or if a diagnostic does not name the source file.
 '''
 
 [[requirement]]

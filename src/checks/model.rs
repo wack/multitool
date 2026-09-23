@@ -25,8 +25,9 @@ pub type CheckId = usize;
 pub struct Requirement {
     /// The `CHECKS.toml` file that declared this requirement.
     pub filepath: PathBuf,
-    /// The requirement's stable identifier: kebab-case, unique within its
-    /// declaring file. Titles are for display only; `id` is what a
+    /// The requirement's stable identifier: any non-empty string (without
+    /// leading/trailing whitespace or control characters), unique within its
+    /// declaring file and matched exactly. Titles are for display only; `id` is what a
     /// `.check-plan.toml` keys on, so reordering or retitling requirements
     /// never detaches them from their frozen evidence.
     pub id: String,
@@ -74,8 +75,8 @@ pub enum RootSource {
 /// A check: instructions for deciding whether a requirement is satisfied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
-    /// The check's stable identifier: kebab-case, unique within its
-    /// requirement — see [`Requirement::id`].
+    /// The check's stable identifier: same rules as [`Requirement::id`],
+    /// unique within its requirement — see [`Requirement::id`].
     pub id: String,
     /// The check title, for display.
     pub title: String,

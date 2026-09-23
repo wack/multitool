@@ -7,13 +7,13 @@
 //! version = 1
 //!
 //! [[requirement]]
-//! id = "no-yellow-text"            # kebab-case, unique within the file
+//! id = "no-yellow-text"            # any non-empty string, unique within the file
 //! title = "No Yellow Text"
 //! description = "..."              # optional; metadata only, never sent to an agent
 //! tags = ["style"]                 # optional
 //!
 //!   [[requirement.check]]
-//!   id = "css-colors"              # kebab-case, unique within its requirement
+//!   id = "css-colors"              # unique within its requirement
 //!   title = "Confirm No Yellow Text"
 //!   kind = "prompt"                # optional; "prompt" is the default and only kind
 //!   prompt = '''
@@ -150,7 +150,7 @@ struct RawCheck {
 }
 
 const ID_HELP: &str =
-    "ids are lowercase kebab-case: letters, digits, and single hyphens (e.g. `no-yellow-text`)";
+    "an id may be any non-empty string without leading/trailing whitespace or control characters";
 
 /// Parse `source` (the contents of `path`) and extract its requirements/checks.
 ///
@@ -335,13 +335,13 @@ fn convert_check(raw: RawCheck, reporter: &mut Reporter<'_>) -> Option<Check> {
     })
 }
 
-/// Report (and return `false` for) an id that isn't lowercase kebab-case.
+/// Report (and return `false` for) an invalid id — see [`id_problem`].
 fn validate_id(id: &Spanned<String>, what: &str, reporter: &mut Reporter<'_>) -> bool {
-    if is_kebab_case(id.get_ref()) {
+    let Some(problem) = id_problem(id.get_ref()) else {
         return true;
-    }
+    };
     reporter.report(
-        format!("invalid {what} id `{}`", id.get_ref()),
+        format!("invalid {what} id {:?}: {problem}", id.get_ref()),
         Some(id.span()),
         Some(ID_HELP),
     );
@@ -357,15 +357,20 @@ fn validate_title(title: &Spanned<String>, what: &str, reporter: &mut Reporter<'
     false
 }
 
-/// `^[a-z0-9]+(-[a-z0-9]+)*$`.
-fn is_kebab_case(id: &str) -> bool {
-    !id.is_empty()
-        && id.split('-').all(|segment| {
-            !segment.is_empty()
-                && segment
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        })
+/// Why `id` is unusable, if it is. Ids are matched exactly (case-sensitive),
+/// so beyond being non-empty they only exclude what makes two ids look
+/// identical while comparing unequal: leading/trailing whitespace and
+/// invisible control characters.
+fn id_problem(id: &str) -> Option<&'static str> {
+    if id.is_empty() {
+        Some("it is empty")
+    } else if id.trim() != id {
+        Some("it has leading or trailing whitespace")
+    } else if id.chars().any(char::is_control) {
+        Some("it contains a control character")
+    } else {
+        None
+    }
 }
 
 /// Convenience: read + extract, surfacing read errors as a one-off diagnostic.
@@ -584,16 +589,8 @@ title = "R"
     }
 
     #[test]
-    fn non_kebab_case_ids_are_errors() {
-        for bad in [
-            "Upper",
-            "under_score",
-            "-leading",
-            "trailing-",
-            "double--dash",
-            "",
-            "sp ace",
-        ] {
+    fn empty_padded_or_control_character_ids_are_errors() {
+        for bad in ["", " ", " leading", "trailing ", "tab\there", "new\nline"] {
             let src = format!(
                 "version = 1\n[[requirement]]\nid = {bad:?}\ntitle = \"R\"\n[[requirement.check]]\nid = \"c\"\ntitle = \"C\"\nprompt = \"x\"\n"
             );
@@ -603,7 +600,40 @@ title = "R"
                 "{bad:?} should be rejected"
             );
         }
-        assert!(is_kebab_case("a1-b2-c3"));
+    }
+
+    #[test]
+    fn ids_may_be_any_other_string_and_are_case_sensitive() {
+        let src = r#"
+version = 1
+
+[[requirement]]
+id = "Auth lives in Keystore"
+title = "R1"
+  [[requirement.check]]
+  id = "Only Keystore signs JWTs (v2) ✓"
+  title = "C"
+  prompt = "x"
+
+[[requirement]]
+id = "auth lives in keystore"
+title = "R2"
+  [[requirement.check]]
+  id = "under_score/slash.dot"
+  title = "C"
+  prompt = "y"
+"#;
+        let out = extract_str(src);
+        assert!(out.errors.is_empty(), "errors: {}", rendered_errors(&out));
+        let ids: Vec<_> = out.requirements.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["Auth lives in Keystore", "auth lives in keystore"]
+        );
+        assert_eq!(
+            out.requirements[0].checks[0].id,
+            "Only Keystore signs JWTs (v2) ✓"
+        );
     }
 
     #[test]

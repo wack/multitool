@@ -154,7 +154,7 @@ impl Message<BeginDiscovery> for DiscoveryActor {
 
 /// Render a minimal valid `CHECKS.toml` for tests: each requirement is
 /// `(title, checks)` and each check is `(title, prompt)`. Ids are the
-/// kebab-cased titles (see [`slug`]), so titles must be unique within their
+/// slugified titles (see [`slug`]), so titles must be unique within their
 /// scope — tests that need duplicate titles write the TOML by hand.
 #[cfg(test)]
 pub(crate) fn checks_toml(requirements: &[(&str, &[(&str, &str)])]) -> String {

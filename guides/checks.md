@@ -125,7 +125,7 @@ tags = ["style"]
 
 | Key           | Required | Notes |
 | ------------- | -------- | ----- |
-| `id`          | yes      | Lowercase kebab-case (`a-z`, `0-9`, single hyphens), unique within the file. |
+| `id`          | yes      | Any non-empty string without leading/trailing whitespace or control characters, unique within the file. Matched exactly, so `"Auth"` and `"auth"` are different ids. |
 | `title`       | yes      | Shown in the report. Titles need not be unique. |
 | `description` | no       | Prose about the requirement. Metadata only; it is **never** sent to the agent. |
 | `tags`        | no       | A list of strings for filtering and reporting. |
@@ -152,7 +152,7 @@ title = "No Yellow Text"
 
 | Key      | Required | Notes |
 | -------- | -------- | ----- |
-| `id`     | yes      | Lowercase kebab-case, unique within its requirement. |
+| `id`     | yes      | Same rules as a requirement id, unique within its requirement. |
 | `title`  | yes      | Shown in the report. |
 | `kind`   | no       | What kind of check this is. Defaults to `"prompt"`, currently the only kind. |
 | `prompt` | yes, for `kind = "prompt"` | The agent's instructions. Leading and trailing whitespace is trimmed. |
@@ -185,9 +185,9 @@ description = "To keep downloads snappy, no image in this folder may exceed 5 MB
 
 Ids, not titles or positions, identify requirements and checks. `multi plan`
 keys each `.check-plan.toml` entry by `(requirement id, check id)`, so you can
-reorder or retitle requirements and checks without losing their cached
-results. Changing an id, or a check's title or prompt, invalidates that
-check's cached entry.
+reorder requirements and checks, or retitle requirements, without losing
+their cached results. Changing an id, or a check's title or prompt,
+invalidates that check's cached entry.
 
 ### Validation
 
@@ -198,7 +198,8 @@ pointing at the offending line, when a file:
 - contains an unknown key (so a typo like `promt` is caught, not ignored);
 - has a requirement with no checks, or a check with a missing or blank `prompt`;
 - uses an unknown check `kind`;
-- has an id that is not kebab-case, or a duplicate requirement or check id.
+- has an empty id, an id with leading/trailing whitespace or control
+  characters, or a duplicate requirement or check id.
 
 ### Multiple files
 

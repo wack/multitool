@@ -102,10 +102,10 @@ A non-zero exit code on any failure makes it drop-in for CI.
 ## 📋 The CHECKS.toml format
 
 * **`version = 1`** starts every file.  
-* **`[[requirement]]`** declares a requirement: a kebab-case `id` (unique within the file), a `title`, and optional `description` and `tags`. The description is metadata only; it is never sent to the agent.  
-* **`[[requirement.check]]`** declares a check belonging to the requirement above it: a kebab-case `id` (unique within its requirement), a `title`, and a `prompt` handed to the agent. `kind = "prompt"` is the default and, for now, the only kind.  
+* **`[[requirement]]`** declares a requirement: an `id` (any non-empty string, unique within the file), a `title`, and optional `description` and `tags`. The description is metadata only; it is never sent to the agent.  
+* **`[[requirement.check]]`** declares a check belonging to the requirement above it: an `id` (unique within its requirement), a `title`, and a `prompt` handed to the agent. `kind = "prompt"` is the default and, for now, the only kind.  
 * **Every requirement needs at least one check.** Unknown keys, duplicate ids, and a missing `prompt` are errors that point at the exact line.  
-* **Ids are identity.** Plans (`.check-plan.toml`) are keyed by ids, so you can reorder or retitle requirements and checks without losing cached results.  
+* **Ids are identity.** Plans (`.check-plan.toml`) are keyed by ids, so you can reorder requirements and checks, or retitle requirements, without losing cached results.  
 * **Checks are ANDed.** A requirement passes only if all of its checks pass.  
 * **Checks are independent.** Each runs in its own fresh context window, in no guaranteed order; a check should never assume another ran first.  
 * **Keep each check narrow.** If a check needs the word "and," it is probably two checks.
