@@ -33,7 +33,7 @@ use crate::checks::executor::{AgentOutcome, CheckExecutor, CheckReport};
 use crate::checks::messages::{
     CheckCompleted, CheckDiscovered, CheckJob, DiscoveryComplete, ExecutionComplete,
 };
-use crate::checks::model::{Check, CheckId, CheckOutcome, Verdict};
+use crate::checks::model::{CheckOutcome, Verdict};
 use crate::checks::presenter::{PresenterActor, UiEvent};
 use crate::checks::reporting::ReportingActor;
 use crate::checks::sandbox::Sandbox;
@@ -44,7 +44,6 @@ use crate::checks::trace_archive::{TraceCollector, TraceEntry};
 pub(crate) struct ExecutionActor {
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    working_dir: PathBuf,
     /// The bounded-concurrency cap handed to the `foreach` workflow (≥1).
     concurrency: usize,
     /// How many times to (re)run a check whose agent fails to report (≥1).
@@ -81,7 +80,6 @@ impl ExecutionActor {
     pub(crate) fn new(
         executor: Arc<dyn CheckExecutor + Send + Sync>,
         sandbox: Arc<dyn Sandbox + Send + Sync>,
-        working_dir: PathBuf,
         concurrency: usize,
         max_attempts: usize,
         reporting: ActorRef<ReportingActor>,
@@ -91,7 +89,6 @@ impl ExecutionActor {
         Self {
             executor,
             sandbox,
-            working_dir,
             concurrency: concurrency.max(1),
             max_attempts: max_attempts.max(1),
             reporting,
@@ -114,7 +111,6 @@ impl ExecutionActor {
 
         let executor = self.executor.clone();
         let sandbox = self.sandbox.clone();
-        let working_dir = self.working_dir.clone();
         let reporting = self.reporting.clone();
         let presenter = self.presenter.clone();
         let trace_collector = self.trace_collector.clone();
@@ -126,7 +122,6 @@ impl ExecutionActor {
             move |input: Value, _ctx| {
                 let executor = executor.clone();
                 let sandbox = sandbox.clone();
-                let working_dir = working_dir.clone();
                 let reporting = reporting.clone();
                 let presenter = presenter.clone();
                 let trace_collector = trace_collector.clone();
@@ -137,7 +132,6 @@ impl ExecutionActor {
                     execute_check_job(
                         executor,
                         sandbox,
-                        &working_dir,
                         &presenter,
                         &reporting,
                         trace_collector.as_ref(),
@@ -224,7 +218,6 @@ impl Message<DiscoveryComplete> for ExecutionActor {
 async fn execute_check_job(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    working_dir: &Path,
     presenter: &ActorRef<PresenterActor>,
     reporting: &ActorRef<ReportingActor>,
     trace_collector: Option<&Arc<TraceCollector>>,
@@ -237,15 +230,7 @@ async fn execute_check_job(
         // The agent is about to run: mark the check Running.
         let _ = presenter.tell(UiEvent::CheckStarted { id }).await;
 
-        let mut result = run_one(
-            executor.clone(),
-            sandbox.clone(),
-            job.id,
-            job.check.clone(),
-            working_dir,
-            attempt,
-        )
-        .await;
+        let mut result = run_one(executor.clone(), sandbox.clone(), &job, attempt).await;
 
         // Harvest this attempt's trace *before* signalling completion, so it is
         // collected even for retried attempts (whose outcome never reaches
@@ -305,20 +290,27 @@ fn has_verdict(outcome: Option<&Result<AgentOutcome>>) -> bool {
 /// the sandbox down. The executor owns the agent lifecycle (the in-process
 /// executor cancels its agent the instant it reports; the legacy fallback runs
 /// the subprocess to completion or timeout).
+///
+/// The sandbox clones `job.root` — the requirement's repository root
+/// (MULTI-1834), resolved per requirements file during discovery — not the
+/// directory `multi check` was scanned from. MULTI-1818's lazy sandbox lease
+/// will replace this eager `sandbox.create` call; `job.root` is the value it
+/// will lease.
 async fn run_one(
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    id: CheckId,
-    check: Check,
-    working_dir: &Path,
+    job: &CheckJob,
     attempt: usize,
 ) -> Result<AgentOutcome> {
-    let handle = sandbox.create(working_dir).await?;
+    let handle = sandbox.create(&job.root).await?;
+
+    let declared_in = declared_in_relative_to_root(&job.filepath, &job.root);
 
     let request = crate::checks::executor::AgentRunRequest {
-        check_id: id,
-        check,
+        check_id: job.id,
+        check: job.check.clone(),
         working_dir: handle.path().to_path_buf(),
+        declared_in,
         attempt: u32::try_from(attempt).unwrap_or(u32::MAX),
     };
 
@@ -327,6 +319,42 @@ async fn run_one(
     // Drop the sandbox after the run completes (RAII teardown of the clone).
     drop(handle);
     outcome
+}
+
+/// The declaring file's path relative to `root`, for display in the agent's
+/// instructions (MULTI-1834), e.g. `services/keystore/CHECKS.md`. Stated so
+/// the agent retains the scoping a smaller, per-scan-directory sandbox used
+/// to provide for free, now that the sandbox spans the whole repository root.
+///
+/// `filepath` may be relative to the process's current directory —
+/// [`super::discovery::discover`] leaves discovered `CHECKS.md` paths exactly
+/// as found, so diagnostics elsewhere that name a file keep their
+/// pre-MULTI-1834 display — while `root` is always absolute (resolved during
+/// discovery). This absolutizes `filepath` before stripping `root` off, so
+/// the result is correct regardless of the invocation directory or how deep
+/// `job.root` sits above it.
+///
+/// `root` is always a lexical ancestor of the absolutized `filepath` by
+/// construction (both are derived from the same scan root via the same
+/// lexical `std::path::absolute` operation — see `discover` and
+/// `repo_root::resolve`), so the `strip_prefix` below cannot fail in
+/// practice. The fallback exists only to guarantee this *never* emits an
+/// absolute host filesystem path into an agent's instructions if that
+/// invariant is somehow violated (e.g. `std::path::absolute` itself errors,
+/// which only happens if the process's current directory is unavailable): it
+/// degrades to just the file's name, dropping directory context rather than
+/// leaking the host path.
+fn declared_in_relative_to_root(filepath: &Path, root: &Path) -> PathBuf {
+    let absolute = std::path::absolute(filepath).unwrap_or_else(|_| filepath.to_path_buf());
+    absolute
+        .strip_prefix(root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| {
+            filepath
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| filepath.to_path_buf())
+        })
 }
 
 /// Reconcile a single check's verdict from its agent outcome. The reported
@@ -388,13 +416,47 @@ fn turns_suffix(turns: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    // `figment::Jail`'s closure returns a large `Result`; unavoidable here.
+    #![allow(clippy::result_large_err)]
+
     use crate::checks::config::configuration;
     use crate::checks::executor::FakeExecutor;
-    use crate::checks::model::{Check, Requirement, Verdict};
+    use crate::checks::model::{Check, Requirement, RootSource, Verdict};
     use crate::checks::run_to_outcomes;
     use crate::checks::sandbox::NoopSandbox;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    /// Regression test for a code-review blocker on MULTI-1834: `job.filepath`
+    /// is relative to the process's current directory (discovery leaves it
+    /// exactly as found), and `job.root` is always absolute — `declared_in`
+    /// must absolutize `filepath` before stripping `root`, or the two never
+    /// share a common prefix.
+    #[test]
+    fn declared_in_strips_the_root_even_when_filepath_is_relative() {
+        use figment::Jail;
+        Jail::expect_with(|jail| {
+            let root = jail.directory().to_path_buf();
+            let filepath = PathBuf::from("services/keystore/CHECKS.md");
+            assert_eq!(
+                super::declared_in_relative_to_root(&filepath, &root),
+                PathBuf::from("services/keystore/CHECKS.md")
+            );
+            Ok(())
+        });
+    }
+
+    /// If `root` is somehow not an ancestor of `filepath` (unreachable in the
+    /// real pipeline — see `declared_in_relative_to_root`'s doc comment), the
+    /// result must degrade to just the file name, never leak the absolute
+    /// host path into an agent's instructions.
+    #[test]
+    fn declared_in_never_leaks_an_absolute_path_on_mismatch() {
+        let filepath = PathBuf::from("/some/unrelated/tree/CHECKS.md");
+        let root = PathBuf::from("/a/totally/different/root");
+        let declared_in = super::declared_in_relative_to_root(&filepath, &root);
+        assert_eq!(declared_in, PathBuf::from("CHECKS.md"));
+    }
 
     fn req(title: &str, checks: Vec<(&str, &str)>) -> Requirement {
         Requirement {
@@ -407,6 +469,8 @@ mod tests {
                     prompt: p.to_string(),
                 })
                 .collect(),
+            root: PathBuf::from("."),
+            root_source: RootSource::ScanDirectory,
         }
     }
 
@@ -429,7 +493,6 @@ mod tests {
             &cfg,
             executor.clone(),
             Arc::new(NoopSandbox),
-            &PathBuf::from("."),
             &reqs,
             crate::checks::presenter::null_backend(),
         )
@@ -458,7 +521,6 @@ mod tests {
             &cfg,
             Arc::new(executor),
             Arc::new(NoopSandbox),
-            &PathBuf::from("."),
             &reqs,
             crate::checks::presenter::null_backend(),
         )
@@ -479,7 +541,6 @@ mod tests {
             &cfg,
             executor.clone(),
             Arc::new(NoopSandbox),
-            &PathBuf::from("."),
             &reqs,
             crate::checks::presenter::null_backend(),
         )

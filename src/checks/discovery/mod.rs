@@ -8,6 +8,7 @@
 //! authoring ergonomics.
 
 mod parse;
+mod repo_root;
 mod walk;
 
 use std::path::{Path, PathBuf};
@@ -29,13 +30,37 @@ use crate::checks::reporting::ReportingActor;
 /// Returns the validated requirement set (every requirement guaranteed to have
 /// ≥1 check), or an aggregated diagnostic naming every offending file/line. An
 /// empty tree yields an empty set (the pipeline then succeeds with exit 0).
+///
+/// `root` is frequently **relative** — `multi check` defaults it to `.` and
+/// accepts relative arguments like `services/keystore` — but repository-root
+/// resolution (MULTI-1834) needs an absolute anchor: a relative path's
+/// ancestors never climb above it, so a relative `root` could never discover
+/// a manifest above the scan directory (exactly the invocation-dependence
+/// this ticket exists to remove), and its fallback root would itself be
+/// relative, breaking the sandbox/`declared_in` machinery downstream that
+/// assumes `Requirement::root` is always absolute. `scan_root` is therefore
+/// resolved to absolute once, here, for root resolution/sandboxing only. The
+/// `CHECKS.md` paths [`walk::find_checks_files`] discovers (and thus
+/// `Requirement::filepath`) are left exactly as `root` produced them, so any
+/// diagnostic naming a file (a malformed-file error, for instance) keeps
+/// displaying the same path the user typed — unaffected by this ticket.
 pub async fn discover(root: &Path) -> Result<Vec<Requirement>> {
     let files = walk::find_checks_files(root)?;
+    let scan_root = std::path::absolute(root).into_diagnostic()?;
 
     // Parse + extract each file in parallel on blocking tasks (file IO + CPU).
+    // Repository-root resolution (MULTI-1834) rides along on the same
+    // blocking task: it's a handful of `fs::metadata` calls walking up from
+    // the file's own directory, cheap but still blocking I/O.
     let handles: Vec<_> = files
         .into_iter()
-        .map(|path| tokio::task::spawn_blocking(move || parse::extract_file(&path)))
+        .map(|path| {
+            let scan_root = scan_root.clone();
+            tokio::task::spawn_blocking(move || {
+                let (req_root, root_source) = repo_root::resolve(&path, &scan_root);
+                parse::extract_file(&path, req_root, root_source)
+            })
+        })
         .collect();
 
     let mut requirements = Vec::new();

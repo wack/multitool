@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use std::{
     io::{BufReader, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 pub(crate) use file::File;
@@ -104,18 +104,8 @@ impl FileSystem {
     /// permissions, or the pwd is outside of the bounds of the filesystem.
     /// This function only checks if the file exists, not if the file is valid.
     pub fn application_dir(&self) -> Result<Option<PathBuf>> {
-        // • Check this directory for the `MultiTool.toml` manifest file. If not found,
-        //   traverse upward until found.
         let current_dir = std::env::current_dir().into_diagnostic()?;
-        for dir in current_dir.ancestors() {
-            for filename in crate::fs::manifest::manifest_filenames() {
-                let candidate = dir.join(filename);
-                if fs::metadata(&candidate).is_ok() {
-                    return Ok(Some(dir.to_path_buf()));
-                }
-            }
-        }
-        Ok(None)
+        Ok(find_manifest_root(&current_dir))
     }
 
     /// Open the file and deserialize it with serde.
@@ -221,6 +211,42 @@ impl FileSystem {
     }
 }
 
+/// Walk upward from `start` (inclusive) for the nearest ancestor directory
+/// containing a MultiTool manifest (`MultiTool.toml` / `.json` / `.jsonc`).
+/// Returns `None` if no ancestor of `start` has one.
+///
+/// This is the walk [`FileSystem::application_dir`] performs, factored out so
+/// callers that need it from a directory other than the process's current
+/// directory can reuse it directly (MULTI-1834: each requirements file
+/// resolves its own repository root from its own location, never from the
+/// pwd or the scan directory `multi check` was invoked with).
+///
+/// `start` is resolved to an absolute path internally (via
+/// [`std::path::absolute`], a lexical operation — no symlinks are resolved
+/// and nothing is required to exist) before walking. This matters for a
+/// **relative** `start`: `Path::ancestors()` on a relative path terminates at
+/// the *empty* path rather than climbing to the filesystem root, so a
+/// relative walk can never see a manifest above the directory `start` was
+/// relative to, and `"".join(filename)` silently resolves against the
+/// process's current directory instead of correctly reporting "no ancestor
+/// found". Absolutizing first fixes both: the walk always reaches the real
+/// filesystem root, and this function can never return the empty path. A
+/// failure to resolve `start` (e.g. the process's current directory is
+/// unavailable) is treated as "no manifest found" rather than propagated,
+/// matching this function's `Option`-shaped, best-effort contract.
+pub(crate) fn find_manifest_root(start: &Path) -> Option<PathBuf> {
+    let start = std::path::absolute(start).ok()?;
+    for dir in start.ancestors() {
+        for filename in crate::fs::manifest::manifest_filenames() {
+            let candidate = dir.join(filename);
+            if fs::metadata(&candidate).is_ok() {
+                return Some(dir.to_path_buf());
+            }
+        }
+    }
+    None
+}
+
 #[derive(Error, Debug, Diagnostic)]
 #[error("MultiTool manifest file not found")]
 pub struct ManifestMissing;
@@ -248,4 +274,97 @@ pub enum DirectoryType {
     /// working directory. This extension is for cases when we're
     /// not interested in the application root. e.g. `multi init`
     Pwd,
+}
+
+#[cfg(test)]
+mod tests {
+    // `figment::Jail`'s closure returns a large `Result`; unavoidable here.
+    #![allow(clippy::result_large_err)]
+
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn manifest_beside_the_file_is_the_root() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("MultiTool.toml"), "").unwrap();
+        assert_eq!(
+            find_manifest_root(dir.path()),
+            Some(dir.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn manifest_several_levels_up_is_found() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("MultiTool.toml"), "").unwrap();
+        let nested = dir.path().join("a/b/c");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(find_manifest_root(&nested), Some(dir.path().to_path_buf()));
+    }
+
+    #[test]
+    fn nested_manifests_the_nearest_wins() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("MultiTool.toml"), "").unwrap();
+        let service = dir.path().join("services/keystore");
+        fs::create_dir_all(&service).unwrap();
+        fs::write(service.join("MultiTool.toml"), "").unwrap();
+        assert_eq!(find_manifest_root(&service), Some(service.clone()));
+    }
+
+    #[test]
+    fn json_and_jsonc_manifests_count() {
+        for filename in ["MultiTool.json", "MultiTool.jsonc"] {
+            let dir = TempDir::new().unwrap();
+            fs::write(dir.path().join(filename), "").unwrap();
+            assert_eq!(
+                find_manifest_root(dir.path()),
+                Some(dir.path().to_path_buf()),
+                "extension: {filename}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolution_is_unaffected_by_process_cwd() {
+        use figment::Jail;
+        Jail::expect_with(|jail| {
+            // The process cwd (the jail) holds its own manifest — a decoy that
+            // must not influence resolution starting from an unrelated `start`.
+            jail.create_file("MultiTool.toml", "")?;
+
+            let real = TempDir::new().unwrap();
+            fs::write(real.path().join("MultiTool.toml"), "").unwrap();
+            let start = real.path().join("a/b");
+            fs::create_dir_all(&start).unwrap();
+
+            assert_eq!(find_manifest_root(&start), Some(real.path().to_path_buf()));
+            Ok(())
+        });
+    }
+
+    /// Regression test for a code-review blocker on MULTI-1834: `start.ancestors()`
+    /// on a *relative* path terminates at the empty path rather than climbing to
+    /// the filesystem root, so a relative `start` (e.g. `multi check`'s default
+    /// scan directory `.`, or a relative subdirectory argument) could never see a
+    /// manifest above wherever it was relative to, and — worse — the empty-path
+    /// ancestor's manifest check silently resolved against the process's cwd,
+    /// which could return `Some(PathBuf::new())`. `find_manifest_root` must
+    /// absolutize its input so a relative `start` climbs correctly and the
+    /// result is never the empty path.
+    #[test]
+    fn relative_start_climbs_to_a_manifest_above_and_is_never_empty() {
+        use figment::Jail;
+        Jail::expect_with(|jail| {
+            jail.create_file("MultiTool.toml", "")?;
+            fs::create_dir_all("a/b/c").unwrap();
+
+            let found = find_manifest_root(Path::new("a/b/c"));
+            assert_eq!(found, Some(jail.directory().to_path_buf()));
+            assert_ne!(found, Some(PathBuf::new()));
+            Ok(())
+        });
+    }
 }

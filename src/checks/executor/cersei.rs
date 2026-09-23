@@ -184,6 +184,7 @@ impl CheckExecutor for CerseiExecutor {
             &req.check,
             &judge_tool_directive(),
             &req.working_dir,
+            &req.declared_in,
             req.attempt,
         );
 

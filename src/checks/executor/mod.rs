@@ -50,6 +50,12 @@ pub struct AgentRunRequest {
     pub check: Check,
     /// The sandbox directory to run the agent in (its working directory).
     pub working_dir: PathBuf,
+    /// The declaring `CHECKS.md`'s path relative to the requirement's
+    /// repository root (MULTI-1834), e.g. `services/keystore/CHECKS.md`.
+    /// Stated in the assembled instructions so the agent retains the scoping
+    /// a smaller, per-scan-directory sandbox used to provide implicitly, now
+    /// that the sandbox spans the requirement's whole repository root.
+    pub declared_in: PathBuf,
     /// Which attempt this is, 1-based. Retries must not replay the failed
     /// attempt verbatim: executors use this to tell the agent a previous
     /// attempt went unreported and — on thinking-free runs — to raise the
@@ -135,10 +141,17 @@ the check is treated as a FAILURE.",
 /// inside unbounded directory walks. On a retry (`attempt > 1`) the agent is
 /// also told a previous attempt went unreported, so the new trajectory has a
 /// reason to differ from the failed one.
+///
+/// Since MULTI-1834 the sandbox spans the requirement's whole repository root
+/// rather than just the directory `multi check` was scanned from, so the
+/// instructions also state `declared_in` — the declaring file's path relative
+/// to that root — to preserve the implicit scoping a smaller sandbox used to
+/// provide for free.
 pub fn assemble_instructions(
     check: &Check,
     reporting: &str,
     working_dir: &Path,
+    declared_in: &Path,
     attempt: u32,
 ) -> String {
     let retry_note = if attempt > 1 {
@@ -156,6 +169,7 @@ Your working directory is `{working_dir}` — a sandboxed, throwaway copy of the
 repository that you may inspect freely. Every file relevant to this check lives under \
 that path: do not read or search outside it. Tool calls that take an optional `path` \
 default to it when omitted.\n\
+This requirement is declared in `{declared_in}`.\n\
 {retry_note}\
 \n\
 {reporting}\n\
@@ -163,6 +177,7 @@ default to it when omitted.\n\
 --- CHECK: {title} ---\n\
 {prompt}\n",
         working_dir = working_dir.display(),
+        declared_in = declared_in.display(),
         title = check.title,
         prompt = check.prompt,
     )
@@ -188,6 +203,7 @@ mod tests {
             &check(),
             &judge_tool_directive(),
             Path::new("/tmp/sandbox-copy"),
+            Path::new("CHECKS.md"),
             1,
         );
         assert!(text.contains("scan for yellow text"));
@@ -202,6 +218,7 @@ mod tests {
             &check(),
             &judge_tool_directive(),
             Path::new("/tmp/sandbox-copy"),
+            Path::new("CHECKS.md"),
             1,
         );
         assert!(text.contains("`/tmp/sandbox-copy`"));
@@ -216,9 +233,25 @@ mod tests {
             &check(),
             &judge_tool_directive(),
             Path::new("/tmp/sandbox-copy"),
+            Path::new("CHECKS.md"),
             2,
         );
         assert!(text.contains("attempt 2"));
         assert!(text.contains("previous attempt finished without reporting"));
+    }
+
+    /// MULTI-1834 acceptance: the declaring file's root-relative path appears
+    /// in the assembled instructions, so the agent retains the scoping a
+    /// smaller, per-scan-directory sandbox used to provide for free.
+    #[test]
+    fn instructions_state_where_the_requirement_was_declared() {
+        let text = assemble_instructions(
+            &check(),
+            &judge_tool_directive(),
+            Path::new("/tmp/sandbox-copy"),
+            Path::new("services/keystore/CHECKS.md"),
+            1,
+        );
+        assert!(text.contains("This requirement is declared in `services/keystore/CHECKS.md`"));
     }
 }

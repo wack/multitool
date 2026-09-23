@@ -32,6 +32,33 @@ pub struct Requirement {
     /// Invariant: guaranteed **non-empty** after discovery validation (M1). An
     /// empty `checks` is a discovery-time error, never surfaced to execution.
     pub checks: Vec<Check>,
+    /// The repository this requirement is scoped to (MULTI-1834): the nearest
+    /// ancestor of `filepath` that contains a MultiTool manifest, or the scan
+    /// directory when no manifest exists above it. Every check under this
+    /// requirement is sandboxed here — not at the directory `multi check` was
+    /// invoked from — so the same requirement gets the same scope regardless
+    /// of invocation, and a monorepo with one manifest per service scopes
+    /// each service's requirements to that service.
+    pub root: PathBuf,
+    /// How [`Requirement::root`] was determined.
+    pub root_source: RootSource,
+}
+
+/// Where a [`Requirement::root`] came from (MULTI-1834).
+///
+/// Later tickets (the frozen-plan machinery, MULTI-1820/1822/1823/1824/1825)
+/// need this distinction to know whether a requirement's scope is anchored to
+/// a real manifest or is only the scan-directory fallback, so it's modeled as
+/// its own type rather than folded into a bare `bool`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootSource {
+    /// The nearest ancestor of the requirements file containing a MultiTool
+    /// manifest (`MultiTool.toml` / `.json` / `.jsonc`).
+    Manifest,
+    /// No manifest exists above the requirements file; `root` falls back to
+    /// the scan directory `multi check` was invoked with — exactly the
+    /// pre-MULTI-1834 behavior, so manifest-less projects keep working.
+    ScanDirectory,
 }
 
 /// A check: instructions for deciding whether a requirement is satisfied.

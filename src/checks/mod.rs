@@ -147,7 +147,6 @@ fn spawn_core(
     cfg: &Config,
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    working_dir: &Path,
     backend: Box<dyn RenderBackend>,
     trace_collector: Option<Arc<TraceCollector>>,
 ) -> (
@@ -162,7 +161,6 @@ fn spawn_core(
     let execution = ExecutionActor::spawn(ExecutionActor::new(
         executor,
         sandbox,
-        working_dir.to_path_buf(),
         cfg.concurrency,
         cfg.max_attempts,
         reporting.clone(),
@@ -224,6 +222,7 @@ async fn stream_requirements(
                 req_index,
                 req_title: req.title.clone(),
                 filepath: req.filepath.clone(),
+                root: req.root.clone(),
                 check: check.clone(),
             };
             execution
@@ -285,9 +284,16 @@ async fn await_result(rx: oneshot::Receiver<RunResult>) -> Result<Vec<Requiremen
     }
 }
 
-/// Drive the full pipeline (all three actors) over `working_dir` and return the
-/// ordered per-requirement outcomes (or the abort diagnostic from an invalid
-/// suite). The actor refs are held alive until the terminal result arrives.
+/// Drive the full pipeline (all three actors) and return the ordered
+/// per-requirement outcomes (or the abort diagnostic from an invalid suite).
+/// The actor refs are held alive until the terminal result arrives.
+///
+/// `working_dir` only selects which requirements files discovery walks; it no
+/// longer determines what a check's agent can see (MULTI-1834 — each
+/// requirement is sandboxed at its own [`Requirement::root`], resolved per
+/// requirements file during discovery).
+///
+/// [`Requirement::root`]: crate::checks::model::Requirement::root
 async fn run_pipeline(
     cfg: &Config,
     executor: Arc<dyn CheckExecutor + Send + Sync>,
@@ -296,14 +302,8 @@ async fn run_pipeline(
     backend: Box<dyn RenderBackend>,
     trace_collector: Option<Arc<TraceCollector>>,
 ) -> Result<Vec<RequirementOutcome>> {
-    let (execution, reporting, presenter, rx) = spawn_core(
-        cfg,
-        executor,
-        sandbox,
-        working_dir,
-        backend,
-        trace_collector,
-    );
+    let (execution, reporting, presenter, rx) =
+        spawn_core(cfg, executor, sandbox, backend, trace_collector);
     let discovery = DiscoveryActor::spawn(DiscoveryActor::new(
         working_dir.to_path_buf(),
         execution.clone(),
@@ -338,12 +338,10 @@ async fn run_to_outcomes(
     cfg: &Config,
     executor: Arc<dyn CheckExecutor + Send + Sync>,
     sandbox: Arc<dyn Sandbox + Send + Sync>,
-    working_dir: &Path,
     requirements: &[Requirement],
     backend: Box<dyn RenderBackend>,
 ) -> Result<Vec<RequirementOutcome>> {
-    let (execution, reporting, presenter, rx) =
-        spawn_core(cfg, executor, sandbox, working_dir, backend, None);
+    let (execution, reporting, presenter, rx) = spawn_core(cfg, executor, sandbox, backend, None);
     stream_requirements(&execution, &presenter, requirements).await?;
     let outcomes = await_result(rx).await;
     shutdown_actor(&execution).await;

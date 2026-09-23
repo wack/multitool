@@ -4,6 +4,7 @@
 //! deterministically. (Tests & docs, MULTI-1354; updated for MULTI-1367.)
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -28,6 +29,10 @@ pub struct FakeExecutor {
     tool_calls: HashMap<CheckId, Vec<ToolCall>>,
     /// Every `(check_id, attempt)` the fake was asked to run, in call order.
     seen: Mutex<Vec<(CheckId, u32)>>,
+    /// Every `declared_in` (MULTI-1834) the fake was asked to run with, in
+    /// call order — lets tests assert the root-relative "declared in" path
+    /// reaches the executor correctly, end to end.
+    declared_ins: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeExecutor {
@@ -100,6 +105,12 @@ impl FakeExecutor {
     pub fn seen_attempts(&self) -> Vec<(CheckId, u32)> {
         self.seen.lock().unwrap().clone()
     }
+
+    /// Every `declared_in` (MULTI-1834) the fake was asked to run with, in
+    /// call order.
+    pub fn declared_ins(&self) -> Vec<PathBuf> {
+        self.declared_ins.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -110,6 +121,10 @@ impl CheckExecutor for FakeExecutor {
             seen.push((req.check_id, req.attempt));
             seen.iter().filter(|(id, _)| *id == req.check_id).count()
         };
+        self.declared_ins
+            .lock()
+            .unwrap()
+            .push(req.declared_in.clone());
 
         let tool_calls = self
             .tool_calls
@@ -167,6 +182,7 @@ mod tests {
                 prompt: "p".into(),
             },
             working_dir: std::path::PathBuf::from("."),
+            declared_in: std::path::PathBuf::from("CHECKS.md"),
             attempt: 1,
         }
     }

@@ -7,6 +7,7 @@
 //! regressions.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,9 +22,10 @@ use crate::checks::discovery::discover;
 use crate::checks::executor::{
     AgentOutcome, AgentRunRequest, CheckExecutor, CheckReport, FakeExecutor,
 };
+use crate::checks::model::RootSource;
 use crate::checks::presenter::null_backend;
 use crate::checks::reporting::report;
-use crate::checks::sandbox::NoopSandbox;
+use crate::checks::sandbox::{NoopSandbox, RecordingSandbox};
 use crate::checks::{run_pipeline, run_to_outcomes};
 use crate::{Cli, Terminal};
 
@@ -96,7 +98,6 @@ async fn pipeline_satisfied_failed_multi_and_anonymous() {
         &cfg,
         fake.clone(),
         Arc::new(NoopSandbox),
-        dir.path(),
         &reqs,
         null_backend(),
     )
@@ -135,16 +136,9 @@ async fn all_satisfied_exits_zero() {
 
     let fake = Arc::new(FakeExecutor::new().with_report(0, true, None));
     let cfg = configuration();
-    let outcomes = run_to_outcomes(
-        &cfg,
-        fake,
-        Arc::new(NoopSandbox),
-        dir.path(),
-        &reqs,
-        null_backend(),
-    )
-    .await
-    .unwrap();
+    let outcomes = run_to_outcomes(&cfg, fake, Arc::new(NoopSandbox), &reqs, null_backend())
+        .await
+        .unwrap();
     assert!(outcomes[0].satisfied);
 
     let code = report(&plain_terminal(), &outcomes).unwrap();
@@ -162,7 +156,6 @@ async fn empty_tree_exits_zero() {
         &cfg,
         Arc::new(FakeExecutor::new()),
         Arc::new(NoopSandbox),
-        dir.path(),
         &reqs,
         null_backend(),
     )
@@ -229,16 +222,9 @@ async fn checks_execute_concurrently_not_in_a_barrier() {
         ..configuration()
     };
 
-    let outcomes = run_to_outcomes(
-        &cfg,
-        executor,
-        Arc::new(NoopSandbox),
-        dir.path(),
-        &reqs,
-        null_backend(),
-    )
-    .await
-    .unwrap();
+    let outcomes = run_to_outcomes(&cfg, executor, Arc::new(NoopSandbox), &reqs, null_backend())
+        .await
+        .unwrap();
 
     // Both satisfied ⇒ both ran simultaneously (the barrier tripped).
     assert!(
@@ -282,4 +268,199 @@ async fn invalid_suite_aborts_run_without_spawning_agents() {
         "no agents should run for an invalid suite, saw: {:?}",
         fake.seen()
     );
+}
+
+/// A fixture with a `MultiTool.toml` at the repository root and a requirements
+/// file nested several levels down under a service directory — the monorepo
+/// shape MULTI-1834 targets.
+fn write_manifest_fixture() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("MultiTool.toml"), "").unwrap();
+    fs::create_dir_all(dir.path().join("services/keystore")).unwrap();
+    fs::write(
+        dir.path().join("services/keystore/CHECKS.md"),
+        "# Requirement Keystore Scoped\ndo it\n",
+    )
+    .unwrap();
+    dir
+}
+
+/// MULTI-1834 acceptance: scanning a *subdirectory* of a repository with a
+/// root manifest still clones the repository root, not the scanned
+/// subdirectory — root resolution is per requirements file, never the scan
+/// directory.
+#[tokio::test]
+async fn sandbox_clones_repository_root_not_scan_directory() {
+    let dir = write_manifest_fixture();
+    let scan_dir = dir.path().join("services/keystore");
+
+    let reqs = discover(&scan_dir).await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].root, dir.path());
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let cfg = configuration();
+    let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+    let outcomes = run_to_outcomes(&cfg, fake, sandbox.clone(), &reqs, null_backend())
+        .await
+        .unwrap();
+    assert!(outcomes[0].satisfied);
+
+    // The sandbox cloned the repository root, not the scanned subdirectory.
+    assert_eq!(sandbox.sources(), vec![dir.path().to_path_buf()]);
+}
+
+/// MULTI-1834 acceptance: scanning from the repository root itself is
+/// unchanged — the sandbox still clones that same root.
+#[tokio::test]
+async fn sandbox_clones_repository_root_when_scanning_from_root() {
+    let dir = write_manifest_fixture();
+
+    let reqs = discover(dir.path()).await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].root, dir.path());
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let cfg = configuration();
+    let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+    let outcomes = run_to_outcomes(&cfg, fake, sandbox.clone(), &reqs, null_backend())
+        .await
+        .unwrap();
+    assert!(outcomes[0].satisfied);
+    assert_eq!(sandbox.sources(), vec![dir.path().to_path_buf()]);
+}
+
+/// MULTI-1834 acceptance: a retried check clones the repository root **once
+/// per attempt**, not once for the whole check.
+#[tokio::test]
+async fn sandbox_clones_repository_root_once_per_attempt() {
+    let dir = write_manifest_fixture();
+    let scan_dir = dir.path().join("services/keystore");
+    let reqs = discover(&scan_dir).await.unwrap();
+
+    let sandbox = Arc::new(RecordingSandbox::new());
+    let cfg = configuration(); // max_attempts = 3
+    // Silent on attempt 1, reports on attempt 2 — exercises the retry path.
+    let fake = Arc::new(FakeExecutor::new().with_silent_until(0, 2, true, Some("ok")));
+    let outcomes = run_to_outcomes(&cfg, fake, sandbox.clone(), &reqs, null_backend())
+        .await
+        .unwrap();
+    assert!(outcomes[0].satisfied);
+
+    // Each attempt gets its own sandbox clone, and both clone the repository
+    // root — not the scan directory.
+    assert_eq!(
+        sandbox.sources(),
+        vec![dir.path().to_path_buf(), dir.path().to_path_buf()]
+    );
+}
+
+/// Code-review regression for MULTI-1834: all the tests above pass an
+/// **absolute** `TempDir` scan path, but `multi check`'s default scan
+/// directory is the RELATIVE `.`, and the ticket's own motivating case —
+/// `multi check services/keystore` — is a relative subdirectory argument
+/// too. Before this fix, `Path::ancestors()` on a relative path never climbs
+/// above itself, so root resolution silently fell back to the scan
+/// directory: exactly the invocation-dependence this ticket exists to
+/// remove. Drives discovery from a RELATIVE scan path and asserts the root
+/// still resolves to the manifest above it, and `declared_in` is
+/// root-relative (not an absolute host path).
+#[allow(clippy::result_large_err)] // `figment::Jail`'s closure returns a large `Result`.
+#[test]
+fn relative_scan_path_still_resolves_the_repository_root() {
+    figment::Jail::expect_with(|jail| {
+        jail.create_file("MultiTool.toml", "")?;
+        fs::create_dir_all("services/keystore").unwrap();
+        fs::write(
+            "services/keystore/CHECKS.md",
+            "# Requirement Keystore Scoped\ndo it\n",
+        )
+        .unwrap();
+
+        let repo_root = jail.directory().to_path_buf();
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            // A RELATIVE scan path, exactly `multi check services/keystore`
+            // run from the repository root.
+            let reqs = discover(Path::new("services/keystore")).await.unwrap();
+            assert_eq!(reqs.len(), 1);
+            assert_eq!(reqs[0].root, repo_root);
+            assert_eq!(reqs[0].root_source, RootSource::Manifest);
+
+            let sandbox = Arc::new(RecordingSandbox::new());
+            let cfg = configuration();
+            let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+            let outcomes =
+                run_to_outcomes(&cfg, fake.clone(), sandbox.clone(), &reqs, null_backend())
+                    .await
+                    .unwrap();
+            assert!(outcomes[0].satisfied);
+
+            // The sandbox cloned the repository root — not the relative scan
+            // directory.
+            assert_eq!(sandbox.sources(), vec![repo_root.clone()]);
+            // The instructions state where the requirement was declared,
+            // root-relative — never an absolute host path.
+            assert_eq!(
+                fake.declared_ins(),
+                vec![PathBuf::from("services/keystore/CHECKS.md")]
+            );
+        });
+
+        Ok(())
+    });
+}
+
+/// Code-review regression for MULTI-1834, the companion invocation to the
+/// test above: `cd services/keystore && multi check` scans `.` from *inside*
+/// the subdirectory, with the manifest two levels above `cwd`. Root
+/// resolution must still find it — a relative scan directory can't rely on
+/// climbing from the scan root; it has to climb from the file's own
+/// location — and it must resolve to the exact same root and `declared_in`
+/// as scanning the subdirectory from the repository root (the test above),
+/// proving resolution really is independent of the invocation directory.
+#[allow(clippy::result_large_err)] // `figment::Jail`'s closure returns a large `Result`.
+#[test]
+fn cwd_inside_a_subdirectory_scanning_dot_still_finds_the_root_above() {
+    figment::Jail::expect_with(|jail| {
+        jail.create_file("MultiTool.toml", "")?;
+        fs::create_dir_all("services/keystore").unwrap();
+        fs::write(
+            "services/keystore/CHECKS.md",
+            "# Requirement Keystore Scoped\ndo it\n",
+        )
+        .unwrap();
+
+        let repo_root = jail.directory().to_path_buf();
+
+        // `cd services/keystore && multi check` — cwd moves two levels below
+        // the manifest, and the scan directory is `.`.
+        jail.change_dir("services/keystore")?;
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let reqs = discover(Path::new(".")).await.unwrap();
+            assert_eq!(reqs.len(), 1);
+            assert_eq!(reqs[0].root, repo_root);
+            assert_eq!(reqs[0].root_source, RootSource::Manifest);
+
+            let sandbox = Arc::new(RecordingSandbox::new());
+            let cfg = configuration();
+            let fake = Arc::new(FakeExecutor::new().with_report(0, true, Some("ok")));
+            let outcomes =
+                run_to_outcomes(&cfg, fake.clone(), sandbox.clone(), &reqs, null_backend())
+                    .await
+                    .unwrap();
+            assert!(outcomes[0].satisfied);
+            assert_eq!(sandbox.sources(), vec![repo_root.clone()]);
+            // Same root-relative `declared_in` as the previous test, despite
+            // the discovered file's own path being spelled differently
+            // (`./CHECKS.md` here vs. `services/keystore/CHECKS.md` there).
+            assert_eq!(
+                fake.declared_ins(),
+                vec![PathBuf::from("services/keystore/CHECKS.md")]
+            );
+        });
+
+        Ok(())
+    });
 }
