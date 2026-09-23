@@ -29,6 +29,7 @@ impl Plan {
             self.args.directory(),
             self.args.overrides(),
             self.args.force(),
+            self.args.sandbox(),
         ))?;
         std::process::exit(code);
     }

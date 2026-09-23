@@ -42,6 +42,12 @@ pub struct CheckSubcommand {
     #[arg(long, value_name = "PATH")]
     trace_archive: Option<PathBuf>,
 
+    /// Run each check in a copy-on-write clone of its repository root (off by
+    /// default). Check agents only get read-only tools, so without this they
+    /// read the repository root directly.
+    #[arg(long)]
+    sandbox: bool,
+
     /// Skip the freshness cache and always consult Jev, even when a check's
     /// frozen evidence replays byte-identical to its plan (jev builds only:
     /// this flag does not exist in a default-feature build's clap surface).
@@ -73,6 +79,11 @@ impl CheckSubcommand {
             self.concurrency.map(NonZeroUsize::get),
             self.trace_archive.clone(),
         )
+    }
+
+    /// Whether `--sandbox` was passed: run each check in a CoW clone.
+    pub fn sandbox(&self) -> bool {
+        self.sandbox
     }
 
     /// Whether `--no-cache` was passed (jev builds only). Always `false` in

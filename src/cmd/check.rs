@@ -28,6 +28,7 @@ impl Check {
             &self.terminal,
             self.args.directory(),
             self.args.overrides(),
+            self.args.sandbox(),
             self.args.no_cache(),
             self.args.frozen(),
         ))?;

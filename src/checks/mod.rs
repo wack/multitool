@@ -78,6 +78,9 @@ use crate::checks::sandbox::Sandbox;
 /// Operational errors (e.g. an invalid `CHECKS.toml`) surface as `Err` diagnostics
 /// rather than an exit code, so CI can tell "checks failed" from "tool errored".
 ///
+/// `sandbox_enabled` is `multi check --sandbox`: run each check in a CoW
+/// clone (see [`sandbox::select_sandbox`]). Off by default.
+///
 /// `no_cache` is `multi check --no-cache` (jev builds only — see
 /// `crate::config::CheckSubcommand::no_cache`); `frozen` is `multi check
 /// --frozen` (jev builds only, MULTI-1826 — see
@@ -88,6 +91,7 @@ pub async fn run(
     terminal: &Terminal,
     working_dir: &Path,
     overrides: CliOverrides,
+    sandbox_enabled: bool,
     #[cfg_attr(not(feature = "jev"), allow(unused_variables))] no_cache: bool,
     #[cfg_attr(not(feature = "jev"), allow(unused_variables))] frozen: bool,
 ) -> Result<i32> {
@@ -124,7 +128,8 @@ pub async fn run(
         )?);
         Arc::from(resolved.build_executor(jev_client, jev_config, no_cache, frozen)?)
     };
-    let sandbox: Arc<dyn Sandbox + Send + Sync> = Arc::from(sandbox::select_sandbox());
+    let sandbox: Arc<dyn Sandbox + Send + Sync> =
+        Arc::from(sandbox::select_sandbox(sandbox_enabled));
 
     // Spawn the live presenter's backend up front (the inline viewport reserves
     // its terminal region immediately): inline TUI in a TTY, stderr heartbeat
