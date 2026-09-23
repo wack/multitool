@@ -23,6 +23,13 @@
 //!    code.
 //!
 //! [Kameo]: https://docs.rs/kameo
+//!
+//! `multi plan` (MULTI-1824, `--features jev`) is a **separate** subcommand
+//! and code path — see the `plan` submodule's own docs (only compiled under
+//! that feature) — reusing `discovery`'s walk/parse/validate functions and
+//! `executor`/`sandbox` directly, but deliberately *not* this actor pipeline:
+//! planning has its own DI seam (`plan::Planner`) and does not swap a
+//! [`executor::CheckExecutor`] into this one.
 
 pub mod config;
 mod discovery;
@@ -32,6 +39,8 @@ pub mod executor;
 pub mod jev;
 mod messages;
 pub mod model;
+#[cfg(feature = "jev")]
+pub mod plan;
 mod presenter;
 mod reporting;
 pub mod sandbox;

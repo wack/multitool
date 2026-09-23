@@ -1,6 +1,8 @@
 use clap::Subcommand;
 use miette::Result;
 
+#[cfg(feature = "jev")]
+use crate::cmd::Plan;
 #[cfg(feature = "proxy")]
 use crate::cmd::Proxy;
 use crate::cmd::{Check, Init, Login, Logout, Run, Version};
@@ -8,6 +10,8 @@ use crate::terminal::Terminal;
 
 use super::{CheckSubcommand, InitSubcommand, LoginSubcommand, RunSubcommand};
 
+#[cfg(feature = "jev")]
+use super::PlanSubcommand;
 #[cfg(feature = "proxy")]
 use super::ProxySubcommand;
 
@@ -39,6 +43,10 @@ pub enum MultiCommand {
     Run(RunSubcommand),
     /// Validate the requirements declared in `CHECKS.md` files using AI-agent checks.
     Check(CheckSubcommand),
+    /// Establish what evidence is necessary to verify each check and freeze it
+    /// into `.check-plan.toml` (the Jev decision engine).
+    #[cfg(feature = "jev")]
+    Plan(PlanSubcommand),
     /// Print the CLI version and exit
     Version,
 }
@@ -58,6 +66,8 @@ impl MultiCommand {
             #[cfg(feature = "proxy")]
             Self::Proxy(_) => Some("proxy"),
             Self::Run(_) => Some("run"),
+            #[cfg(feature = "jev")]
+            Self::Plan(_) => None,
             Self::Check(_) | Self::Version => None,
         }
     }
@@ -75,6 +85,8 @@ impl MultiCommand {
             Self::Proxy(flags) => Proxy::new(console, flags).dispatch(),
             Self::Run(flags) => Run::new(console, flags)?.dispatch(),
             Self::Check(flags) => Check::new(console, flags)?.dispatch(),
+            #[cfg(feature = "jev")]
+            Self::Plan(flags) => Plan::new(console, flags)?.dispatch(),
             Self::Version => Version::new(console).dispatch(),
         }
     }
@@ -140,5 +152,46 @@ mod tests {
                 "`{name}` should remain advertised in help output"
             );
         }
+    }
+
+    /// MULTI-1824 acceptance: `multi plan` does not exist in a default-feature
+    /// build. Parsing must fail outright (unknown subcommand), and the
+    /// subcommand must be absent from the list `--help` renders — the latter
+    /// is the regression guard for "default-build `--help` output is
+    /// byte-for-byte unchanged": a `Plan` variant that leaked outside its
+    /// `#[cfg(feature = "jev")]` gate would show up here.
+    #[cfg(not(feature = "jev"))]
+    #[test]
+    fn plan_subcommand_does_not_exist_without_the_jev_feature() {
+        // `Cli` (clap's `Parser::try_parse_from` success type) isn't `Debug`,
+        // so `expect_err`/`unwrap_err` (which require it for their panic
+        // message) don't apply here — match manually instead.
+        let result = Cli::try_parse_from(["multi", "plan"]);
+        let err = match result {
+            Err(err) => err,
+            Ok(_) => panic!("plan must be unknown in a default-feature build"),
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
+
+        let names: Vec<String> = Cli::command()
+            .get_subcommands()
+            .map(|c| c.get_name().to_string())
+            .collect();
+        assert!(!names.contains(&"plan".to_string()), "found: {names:?}");
+    }
+
+    /// The `--features jev` counterpart: `multi plan` parses, is not
+    /// deprecated, and is advertised (not hidden) in help output — the same
+    /// treatment as `check`/`version`.
+    #[cfg(feature = "jev")]
+    #[test]
+    fn plan_subcommand_parses_and_is_visible_under_the_jev_feature() {
+        assert_eq!(command_of(&["multi", "plan"]).deprecated_name(), None);
+
+        let hidden = Cli::command()
+            .get_subcommands()
+            .find(|c| c.get_name() == "plan")
+            .map(|c| c.is_hide_set());
+        assert_eq!(hidden, Some(false));
     }
 }
