@@ -120,8 +120,12 @@ impl CheckExecutor for FakeExecutor {
         // always acquires the sandbox lease (MULTI-1818). This is what keeps
         // the `RecordingSandbox`-based e2e assertions (one clone per attempt,
         // cloning the repository root) meaningful with this fake standing in
-        // for the real executor.
-        req.sandbox.acquire().await?;
+        // for the real executor. The acquired path is also carried onto
+        // every outcome below (MULTI-1826), mirroring `CerseiExecutor`'s own
+        // unconditional `AgentOutcome::sandbox_root` — tests that drive
+        // `JevExecutor`'s self-healing over this fake need it to relativize
+        // a scripted call the same way the real executor's outcome would.
+        let sandbox_root = req.sandbox.acquire().await?.to_path_buf();
 
         let attempt = {
             let mut seen = self.seen.lock().unwrap();
@@ -147,6 +151,7 @@ impl CheckExecutor for FakeExecutor {
                 error: None,
                 trace_jsonl: None,
                 tool_calls,
+                sandbox_root: Some(sandbox_root.clone()),
                 ..Default::default()
             });
         }
@@ -161,6 +166,7 @@ impl CheckExecutor for FakeExecutor {
                 error: None,
                 trace_jsonl: None,
                 tool_calls,
+                sandbox_root: Some(sandbox_root.clone()),
                 ..Default::default()
             });
         }
@@ -172,6 +178,7 @@ impl CheckExecutor for FakeExecutor {
             error: None,
             trace_jsonl: None,
             tool_calls,
+            sandbox_root: Some(sandbox_root),
             ..Default::default()
         })
     }

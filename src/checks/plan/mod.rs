@@ -73,24 +73,23 @@ use crate::checks::sandbox::{self, Sandbox};
 mod planner;
 
 pub use planner::{AgentPlanner, PlanRequest, PlannedCheck, Planner};
-// `BoxedPlanner`/`EntryContext` stay reachable only at `planner::{BoxedPlanner,
-// EntryContext}` for now — no caller outside `planner.rs` itself needs them
-// yet (`AgentPlanner` uses `Arc<dyn Planner>`, never `Box`, throughout this
-// module), and re-exporting them here today would be an unused `pub use` in
-// this privately-rooted module tree (`mod checks;` in `lib.rs` is not `pub`,
-// so nothing outside the crate can ever reach a `pub` item here either) —
-// widen this the moment something outside `planner.rs` needs one.
+// `BoxedPlanner` stays reachable only at `planner::BoxedPlanner` for now — no
+// caller outside `planner.rs` itself needs it yet (`AgentPlanner` uses
+// `Arc<dyn Planner>`, never `Box`, throughout this module), and re-exporting
+// it here today would be an unused `pub use` in this privately-rooted module
+// tree (`mod checks;` in `lib.rs` is not `pub`, so nothing outside the crate
+// can ever reach a `pub` item here either) — widen this the moment something
+// outside `planner.rs` needs it.
 //
-// `entry_from_outcome` IS re-exported flat despite having no caller in this
-// ticket, because MULTI-1826's self-healing (`multi check` escalation) is
-// documented to call it from outside this module (see its own docs on why
-// it's the single entry-builder both callers share) — the same situation
+// `entry_from_outcome`/`EntryContext` ARE re-exported flat: MULTI-1826's
+// self-healing (`multi check` escalation, `crate::checks::jev::executor`)
+// calls `entry_from_outcome` from outside this module (see its own docs on
+// why it's the single entry-builder both callers share) — the same situation
 // `crate::checks::config`'s `JevConfig`/`resolve_jev` re-export was in before
 // MULTI-1824 became their first cross-module consumer.
-#[allow(unused_imports)]
-pub(crate) use planner::entry_from_outcome;
 #[cfg(test)]
 pub(crate) use planner::fake::FakePlanner;
+pub(crate) use planner::{EntryContext, entry_from_outcome};
 
 /// Run `multi plan` rooted at `working_dir`. Builds the real [`AgentPlanner`]
 /// (composing the same raw agent executor/[`Sandbox`] `multi check` composes

@@ -837,6 +837,7 @@ mod jev_abort_tests {
             jev_client,
             jev_config,
             false,
+            false,
         ));
 
         // One requirement, two checks under the same `CHECKS.md`: check 0
