@@ -794,6 +794,8 @@ mod jev_abort_tests {
                 noul: 0.9,
                 control_noul: 0.02,
                 reading: Some(Reading::Satisfied),
+                reading_confidence: None,
+                reading_probabilities: None,
             }),
             calls: vec![PlanCall::Read {
                 input: json!({"file_path": "src/a.rs"}),

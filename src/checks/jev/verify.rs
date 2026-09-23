@@ -216,7 +216,7 @@ use crate::checks::model::Check;
 
 use super::client::JevClient;
 use super::error::JevError;
-use super::plan_file::Reading;
+use super::plan_file::{Reading, ReadingProbabilities};
 use super::types::{
     Answer, ChoiceQuestion, NoulCriteria, NoulQuestion, Question, SystemOneRequest,
     SystemOneResponse,
@@ -287,6 +287,9 @@ pub struct ChoiceOutcome {
     pub reading: Reading,
     /// `0.0..=1.0`.
     pub confidence: f64,
+    /// Every option's probability, or `None` if the answer omitted any of
+    /// the three — a partial distribution isn't recorded as if it were whole.
+    pub probabilities: Option<ReadingProbabilities>,
 }
 
 /// The outcome of asking Jev to verify one check against its evidence. See
@@ -734,9 +737,23 @@ fn extract_choice(response: &SystemOneResponse, id: &str) -> Option<ChoiceOutcom
         return None;
     }
     let reading = parse_reading(&choice.choice)?;
+    let probability = |option: &str| choice.probabilities.get(option).copied();
+    let probabilities = match (
+        probability("satisfied"),
+        probability("violated"),
+        probability("insufficient"),
+    ) {
+        (Some(satisfied), Some(violated), Some(insufficient)) => Some(ReadingProbabilities {
+            satisfied,
+            violated,
+            insufficient,
+        }),
+        _ => None,
+    };
     Some(ChoiceOutcome {
         reading,
         confidence: choice.confidence,
+        probabilities,
     })
 }
 
@@ -1337,6 +1354,81 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, JevError::Transport(_)));
+    }
+
+    // -- Choice probabilities ----------------------------------------------------
+
+    async fn mock_choice_probabilities(server: &MockServer, probabilities: serde_json::Value) {
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "jev-1.13.0",
+                "answers": {
+                    NOUL_QUESTION_ID: {"type": "noul", "noul": 0.6},
+                    CHOICE_QUESTION_ID: {
+                        "type": "choice", "choice": "satisfied", "confidence": 0.4,
+                        "probabilities": probabilities,
+                    },
+                },
+                "usage": {"input_tokens": 100, "output_tokens": 10},
+            })))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn choice_outcome_carries_every_reading_probability() {
+        let server = MockServer::start().await;
+        mock_choice_probabilities(
+            &server,
+            serde_json::json!({"satisfied": 0.6, "violated": 0.1, "insufficient": 0.3}),
+        )
+        .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let decision = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap();
+        let JevDecision::NotVerified { choice, .. } = decision else {
+            panic!("expected NotVerified, got {decision:?}");
+        };
+        let choice = choice.expect("well-formed Choice answer");
+        assert_eq!(choice.confidence, 0.4);
+        assert_eq!(
+            choice.probabilities,
+            Some(ReadingProbabilities {
+                satisfied: 0.6,
+                violated: 0.1,
+                insufficient: 0.3,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_choice_probabilities_keep_the_reading_but_record_none() {
+        let server = MockServer::start().await;
+        mock_choice_probabilities(
+            &server,
+            serde_json::json!({"satisfied": 0.6, "violated": 0.4}),
+        )
+        .await;
+        let client = JevClient::new(server.uri()).unwrap();
+        let cfg = config(0.75);
+        let (requirement, check, evidence) =
+            (sample_requirement(), sample_check(), sample_evidence());
+
+        let decision = with_api_key(|| verify(&client, &cfg, &requirement, &check, &evidence))
+            .await
+            .unwrap();
+        let JevDecision::NotVerified { choice, .. } = decision else {
+            panic!("expected NotVerified, got {decision:?}");
+        };
+        let choice = choice.expect("reading still parses");
+        assert_eq!(choice.reading, Reading::Satisfied);
+        assert_eq!(choice.probabilities, None);
     }
 
     // -- Noul range validation ---------------------------------------------------

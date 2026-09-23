@@ -710,6 +710,8 @@ fn decide_from_calibration(
     // plan entirely) rather than a synthesized stand-in for what Jev didn't
     // actually say (MULTI-1824 review).
     let reading = choice.map(|c| c.reading);
+    let reading_confidence = choice.map(|c| c.confidence);
+    let reading_probabilities = choice.and_then(|c| c.probabilities);
 
     let control_noul = match control {
         JevDecision::Satisfied { noul, .. } | JevDecision::NotVerified { noul, .. } => Some(*noul),
@@ -731,6 +733,8 @@ fn decide_from_calibration(
         noul: main_noul,
         control_noul,
         reading,
+        reading_confidence,
+        reading_probabilities,
     };
 
     let reason = match agreement_main {
@@ -759,7 +763,7 @@ mod tests {
     use super::*;
     use crate::checks::executor::{FakeExecutor, ReadOnlyTool as Tool};
     use crate::checks::jev::error::TYPESAFE_API_KEY_VAR;
-    use crate::checks::jev::plan_file::Reading as R;
+    use crate::checks::jev::plan_file::{Reading as R, ReadingProbabilities};
     use crate::checks::jev::verify::ChoiceOutcome;
     use crate::checks::model::Check;
     use crate::checks::sandbox::RecordingSandbox;
@@ -903,10 +907,25 @@ mod tests {
             choice: Some(ChoiceOutcome {
                 reading: R::Violated,
                 confidence: 0.9,
+                probabilities: Some(ReadingProbabilities {
+                    satisfied: 0.05,
+                    violated: 0.9,
+                    insufficient: 0.05,
+                }),
             }),
         };
         let (_, jev) = decide_from_calibration(Expected::Pass, 0.75, &main, &not_verified(0.1));
-        assert_eq!(jev.unwrap().reading, Some(R::Violated));
+        let jev = jev.unwrap();
+        assert_eq!(jev.reading, Some(R::Violated));
+        assert_eq!(jev.reading_confidence, Some(0.9));
+        assert_eq!(
+            jev.reading_probabilities,
+            Some(ReadingProbabilities {
+                satisfied: 0.05,
+                violated: 0.9,
+                insufficient: 0.05,
+            })
+        );
     }
 
     // -- entry_from_outcome: no-tool-calls / truncated short circuits ------

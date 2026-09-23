@@ -425,6 +425,29 @@ pub struct JevCalibration {
     /// stand-in for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reading: Option<Reading>,
+    /// The Choice answer's own confidence in `reading`
+    /// (<https://docs.typesafe.ai/confidence.md>). Recorded alongside
+    /// `reading` (never gating, same as it) so a `jev uncertain`/`jev
+    /// disagreed` entry shows how sure Jev's reading was, not only which one
+    /// it picked. `None` exactly when `reading` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_confidence: Option<f64>,
+    /// The Choice answer's full distribution over the three readings — what
+    /// splits a low `noul` into "leans violated" (the agent may be wrong)
+    /// vs. "leans insufficient" (the evidence is thin), which `reading` alone
+    /// can't when the top option is `satisfied`. `None` when `reading` is, or
+    /// when Jev's answer didn't carry a probability for every option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_probabilities: Option<ReadingProbabilities>,
+}
+
+/// The record-only Choice answer's probability for each [`Reading`] option.
+/// Rendered as a nested inline table in the order the options are asked.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ReadingProbabilities {
+    pub satisfied: f64,
+    pub violated: f64,
+    pub insufficient: f64,
 }
 
 /// The record-only Choice reading paired with a [`JevCalibration`].
@@ -1120,6 +1143,8 @@ mod tests {
                     noul: 0.93,
                     control_noul: 0.04,
                     reading: Some(Reading::Satisfied),
+                    reading_confidence: None,
+                    reading_probabilities: None,
                 }),
                 calls: vec![
                     PlanCall::Read {
@@ -1229,6 +1254,35 @@ mod tests {
     /// must round-trip too: the key is omitted from the rendered inline
     /// table entirely, and loading it back must not require the key to be
     /// present.
+    /// The Choice's confidence and full distribution render inline after
+    /// `reading` and load back unchanged.
+    #[test]
+    fn round_trips_a_calibration_with_reading_probabilities() {
+        let dir = TempDir::new().unwrap();
+        let mut plan = sample_plan();
+        plan.requirements[0].checks[0].jev = Some(JevCalibration {
+            model: "jev-1.13.0".to_string(),
+            noul: 0.54,
+            control_noul: 0.02,
+            reading: Some(Reading::Satisfied),
+            reading_confidence: Some(0.4),
+            reading_probabilities: Some(ReadingProbabilities {
+                satisfied: 0.6,
+                violated: 0.1,
+                insufficient: 0.3,
+            }),
+        });
+
+        let rendered = plan.to_toml_string().unwrap();
+        assert!(rendered.contains(
+            r#"reading = "satisfied", reading_confidence = 0.4, reading_probabilities = { satisfied = 0.6, violated = 0.1, insufficient = 0.3 } }"#
+        ));
+
+        PlanStore::write(dir.path(), &plan).unwrap();
+        let loaded = PlanStore::load(dir.path()).unwrap().expect("plan exists");
+        assert_eq!(loaded, plan);
+    }
+
     #[test]
     fn round_trips_a_calibration_with_no_reading() {
         let dir = TempDir::new().unwrap();
@@ -1238,6 +1292,8 @@ mod tests {
             noul: 0.93,
             control_noul: 0.04,
             reading: None,
+            reading_confidence: None,
+            reading_probabilities: None,
         });
 
         let rendered = plan.to_toml_string().unwrap();

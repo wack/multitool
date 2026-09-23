@@ -59,6 +59,8 @@ async fn planned_for(root: &std::path::Path, check: &Check, relative_file: &str)
             noul: 0.95,
             control_noul: 0.02,
             reading: Some(Reading::Satisfied),
+            reading_confidence: None,
+            reading_probabilities: None,
         }),
         calls: vec![PlanCall::Read {
             input: json!({ "file_path": relative_file }),
