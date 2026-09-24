@@ -99,6 +99,7 @@ fn calibration(model: &str, noul: f64) -> JevCalibration {
         reading: Some(Reading::Satisfied),
         reading_confidence: None,
         reading_probabilities: None,
+        followup: None,
     }
 }
 

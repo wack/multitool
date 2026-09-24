@@ -796,6 +796,7 @@ mod jev_abort_tests {
                 reading: Some(Reading::Satisfied),
                 reading_confidence: None,
                 reading_probabilities: None,
+                followup: None,
             }),
             calls: vec![PlanCall::Read {
                 input: json!({"file_path": "src/a.rs"}),
