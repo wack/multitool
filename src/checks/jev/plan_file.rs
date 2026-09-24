@@ -425,6 +425,63 @@ pub struct JevCalibration {
     /// stand-in for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reading: Option<Reading>,
+    /// The Choice answer's own confidence in `reading`
+    /// (<https://docs.typesafe.ai/confidence.md>). Recorded alongside
+    /// `reading` (never gating, same as it) so a `jev uncertain`/`jev
+    /// disagreed` entry shows how sure Jev's reading was, not only which one
+    /// it picked. `None` exactly when `reading` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_confidence: Option<f64>,
+    /// The Choice answer's full distribution over the three readings — what
+    /// splits a low `noul` into "leans violated" (the agent may be wrong)
+    /// vs. "leans insufficient" (the evidence is thin), which `reading` alone
+    /// can't when the top option is `satisfied`. `None` when `reading` is, or
+    /// when Jev's answer didn't carry a probability for every option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_probabilities: Option<ReadingProbabilities>,
+    /// What the evidence follow-up round did for this check, when it ran —
+    /// see [`Followup`]. `None` when no follow-up was attempted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub followup: Option<Followup>,
+}
+
+/// The record of a plan-time evidence follow-up: after the agent passed a
+/// check that Jev couldn't affirm, the agent was re-run once with a brief
+/// naming the gap, and its new evidence re-calibrated.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Followup {
+    /// The first-pass `noul` the follow-up was triggered by.
+    pub initial_noul: f64,
+    /// The follow-up agent's verdict (only a `true` follow-up is ever
+    /// adopted; a `false` one is recorded, never acted on).
+    pub verdict: bool,
+    /// The best `noul` among the follow-up's candidate evidence sets; `None`
+    /// when none was calibrated (no new calls, or `verdict = false`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noul: Option<f64>,
+    /// Which candidate replaced the first-pass evidence; `None` when the
+    /// first pass was kept (no candidate let Jev decide).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adopted: Option<EvidenceSet>,
+}
+
+/// A follow-up candidate evidence set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EvidenceSet {
+    /// Only the follow-up run's own calls.
+    Focused,
+    /// The first pass's calls plus the follow-up's new ones.
+    Merged,
+}
+
+/// The record-only Choice answer's probability for each [`Reading`] option.
+/// Rendered as a nested inline table in the order the options are asked.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ReadingProbabilities {
+    pub satisfied: f64,
+    pub violated: f64,
+    pub insufficient: f64,
 }
 
 /// The record-only Choice reading paired with a [`JevCalibration`].
@@ -1120,6 +1177,9 @@ mod tests {
                     noul: 0.93,
                     control_noul: 0.04,
                     reading: Some(Reading::Satisfied),
+                    reading_confidence: None,
+                    reading_probabilities: None,
+                    followup: None,
                 }),
                 calls: vec![
                     PlanCall::Read {
@@ -1229,6 +1289,67 @@ mod tests {
     /// must round-trip too: the key is omitted from the rendered inline
     /// table entirely, and loading it back must not require the key to be
     /// present.
+    /// The Choice's confidence and full distribution render inline after
+    /// `reading` and load back unchanged.
+    #[test]
+    fn round_trips_a_calibration_with_reading_probabilities() {
+        let dir = TempDir::new().unwrap();
+        let mut plan = sample_plan();
+        plan.requirements[0].checks[0].jev = Some(JevCalibration {
+            model: "jev-1.13.0".to_string(),
+            noul: 0.54,
+            control_noul: 0.02,
+            reading: Some(Reading::Satisfied),
+            reading_confidence: Some(0.4),
+            reading_probabilities: Some(ReadingProbabilities {
+                satisfied: 0.6,
+                violated: 0.1,
+                insufficient: 0.3,
+            }),
+            followup: None,
+        });
+
+        let rendered = plan.to_toml_string().unwrap();
+        assert!(rendered.contains(
+            r#"reading = "satisfied", reading_confidence = 0.4, reading_probabilities = { satisfied = 0.6, violated = 0.1, insufficient = 0.3 } }"#
+        ));
+
+        PlanStore::write(dir.path(), &plan).unwrap();
+        let loaded = PlanStore::load(dir.path()).unwrap().expect("plan exists");
+        assert_eq!(loaded, plan);
+    }
+
+    /// A follow-up record renders as its own nested inline table, omitting
+    /// its `None` fields, and loads back unchanged.
+    #[test]
+    fn round_trips_a_calibration_with_a_followup() {
+        let dir = TempDir::new().unwrap();
+        let mut plan = sample_plan();
+        plan.requirements[0].checks[0].jev = Some(JevCalibration {
+            model: "jev-1.13.0".to_string(),
+            noul: 0.9,
+            control_noul: 0.02,
+            reading: None,
+            reading_confidence: None,
+            reading_probabilities: None,
+            followup: Some(Followup {
+                initial_noul: 0.54,
+                verdict: true,
+                noul: Some(0.9),
+                adopted: Some(EvidenceSet::Focused),
+            }),
+        });
+
+        let rendered = plan.to_toml_string().unwrap();
+        assert!(rendered.contains(
+            r#"followup = { initial_noul = 0.54, verdict = true, noul = 0.9, adopted = "focused" } }"#
+        ));
+
+        PlanStore::write(dir.path(), &plan).unwrap();
+        let loaded = PlanStore::load(dir.path()).unwrap().expect("plan exists");
+        assert_eq!(loaded, plan);
+    }
+
     #[test]
     fn round_trips_a_calibration_with_no_reading() {
         let dir = TempDir::new().unwrap();
@@ -1238,6 +1359,9 @@ mod tests {
             noul: 0.93,
             control_noul: 0.04,
             reading: None,
+            reading_confidence: None,
+            reading_probabilities: None,
+            followup: None,
         });
 
         let rendered = plan.to_toml_string().unwrap();

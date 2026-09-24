@@ -27,6 +27,12 @@ pub struct FakeExecutor {
     /// `AgentOutcome::tool_calls` to attach for a given check id, scripted via
     /// `with_tool_calls` (MULTI-1817). Absent ids default to no calls.
     tool_calls: HashMap<CheckId, Vec<ToolCall>>,
+    /// Per-run scripts, scripted via `with_runs`: the Nth run of an id
+    /// (1-based, counting every run) reports `runs[N - 1]`, repeating the
+    /// last entry once exhausted. Takes precedence over every other script.
+    runs: HashMap<CheckId, Vec<(CheckReport, Vec<ToolCall>)>>,
+    /// Every check prompt the fake was asked to run, in call order.
+    prompts: Mutex<Vec<String>>,
     /// Every `(check_id, attempt)` the fake was asked to run, in call order.
     seen: Mutex<Vec<(CheckId, u32)>>,
     /// Every `declared_in` (MULTI-1834) the fake was asked to run with, in
@@ -89,6 +95,30 @@ impl FakeExecutor {
         self
     }
 
+    /// Script `id`'s runs one by one: the Nth run reports `(success, calls)`
+    /// from `runs[N - 1]`, and the last entry repeats once exhausted.
+    pub fn with_runs(mut self, id: CheckId, runs: Vec<(bool, Vec<ToolCall>)>) -> Self {
+        let runs = runs
+            .into_iter()
+            .map(|(success, calls)| {
+                (
+                    CheckReport {
+                        success,
+                        evidence: None,
+                    },
+                    calls,
+                )
+            })
+            .collect();
+        self.runs.insert(id, runs);
+        self
+    }
+
+    /// Every check prompt the fake was asked to run, in call order.
+    pub fn prompts(&self) -> Vec<String> {
+        self.prompts.lock().unwrap().clone()
+    }
+
     /// The check ids the fake was asked to run, in call order.
     pub fn seen(&self) -> Vec<CheckId> {
         self.seen
@@ -136,6 +166,25 @@ impl CheckExecutor for FakeExecutor {
             .lock()
             .unwrap()
             .push(req.declared_in.clone());
+        self.prompts
+            .lock()
+            .unwrap()
+            .push(req.check.prompt().to_string());
+
+        if let Some(runs) = self.runs.get(&req.check_id)
+            && let Some((report, calls)) = runs.get(attempt - 1).or(runs.last())
+        {
+            return Ok(AgentOutcome {
+                verdict: Some(report.clone()),
+                stop_reason: Some("fake: scripted run".into()),
+                turns: 1,
+                error: None,
+                trace_jsonl: None,
+                tool_calls: calls.clone(),
+                sandbox_root: Some(sandbox_root),
+                ..Default::default()
+            });
+        }
 
         let tool_calls = self
             .tool_calls

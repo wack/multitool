@@ -67,7 +67,9 @@ use crate::checks::executor::{
 };
 use crate::checks::jev::client::JevClient;
 use crate::checks::jev::error::JevError;
-use crate::checks::jev::plan_file::{self, AgentReason, Decider, JevCalibration, PlanCall};
+use crate::checks::jev::plan_file::{
+    self, AgentReason, Decider, EvidenceSet, Followup, JevCalibration, PlanCall,
+};
 use crate::checks::jev::replay;
 use crate::checks::jev::verify::{self, Agreement, Evidence, Expected, JevDecision};
 use crate::checks::model::{Check, CheckId, RootSource};
@@ -247,7 +249,7 @@ impl AgentPlanner {
     /// fire-and-forgets each update as a [`PlanUiEvent::Progress`], wrapped in
     /// an [`AbortOnDrop`] guard so it can never delay or block settlement —
     /// it is deliberately never awaited on its own.
-    async fn run_agent(&self, req: &PlanRequest) -> Result<(PathBuf, AgentOutcome)> {
+    async fn run_agent(&self, req: &PlanRequest, check: &Check) -> Result<(PathBuf, AgentOutcome)> {
         let mut attempt: u32 = 1;
         loop {
             if let Some(sink) = &req.sink {
@@ -283,7 +285,7 @@ impl AgentPlanner {
 
             let request = AgentRunRequest {
                 check_id: req.check_id,
-                check: req.check.clone(),
+                check: check.clone(),
                 source_dir: req.root.clone(),
                 sandbox: lease,
                 declared_in: req.declared_in.clone(),
@@ -340,7 +342,7 @@ impl Drop for AbortOnDrop {
 #[async_trait]
 impl Planner for AgentPlanner {
     async fn plan_check(&self, req: PlanRequest) -> Result<PlannedCheck> {
-        let (sandbox_root, outcome) = self.run_agent(&req).await?;
+        let (sandbox_root, outcome) = self.run_agent(&req, &req.check).await?;
         // MULTI-1829: about to calibrate against Jev — but only when there's
         // actually evidence to calibrate over (cheap, already-available
         // check; `entry_from_outcome`'s own, more complete gate — zero tool
@@ -364,7 +366,199 @@ impl Planner for AgentPlanner {
             jev_client: self.jev_client.as_ref(),
             jev_config: &self.jev_config,
         };
-        entry_from_outcome(&req.check, &outcome, &ctx).await
+        let entry = entry_from_outcome(&req.check, &outcome, &ctx).await?;
+        if !wants_followup(&entry) {
+            return Ok(entry);
+        }
+        self.follow_up(&req, &ctx, &outcome, entry).await
+    }
+}
+
+/// Whether a first-pass entry earns an evidence follow-up: the agent passed
+/// the check but Jev, over the same evidence, couldn't affirm it. Only a
+/// pass is followed up — the aim is affirmative verification, and a failing
+/// verdict has nothing to affirm.
+fn wants_followup(entry: &PlannedCheck) -> bool {
+    entry.verdict
+        && entry.jev.is_some()
+        && matches!(
+            entry.decider,
+            Decider::Agent(AgentReason::JevUncertain | AgentReason::JevDisagreed)
+        )
+}
+
+impl AgentPlanner {
+    /// One bounded evidence follow-up for a check [`wants_followup`] picked:
+    /// re-run the agent with a brief naming Jev's gap
+    /// ([`followup_brief`]), replay its calls, and calibrate two candidate
+    /// evidence sets — the follow-up's calls alone ([`EvidenceSet::Focused`],
+    /// less distracting state) and the first pass's plus the follow-up's new
+    /// ones ([`EvidenceSet::Merged`]). The best candidate that lets Jev
+    /// decide replaces `first`; otherwise `first` stands, annotated with what
+    /// the follow-up found. Never makes a check worse than its first pass:
+    /// an agent failure, a failing follow-up verdict, or no new calls all
+    /// keep `first`.
+    async fn follow_up(
+        &self,
+        req: &PlanRequest,
+        ctx: &EntryContext<'_>,
+        first_outcome: &AgentOutcome,
+        first: PlannedCheck,
+    ) -> Result<PlannedCheck> {
+        let initial_noul = first.jev.as_ref().map_or(0.0, |j| j.noul);
+        let record = |verdict: bool, noul: Option<f64>, adopted: Option<EvidenceSet>| Followup {
+            initial_noul,
+            verdict,
+            noul,
+            adopted,
+        };
+
+        let brief = followup_brief(&first);
+        let followup_check = Check::new_prompt(
+            req.check.id.clone(),
+            req.check.title.clone(),
+            format!("{}\n\n{brief}", req.check.prompt()),
+        );
+        let Ok((followup_root, outcome)) = self.run_agent(req, &followup_check).await else {
+            return Ok(first);
+        };
+        let Some(report) = outcome.verdict.clone() else {
+            return Ok(first);
+        };
+        if !report.success {
+            return Ok(with_followup(first, record(false, None, None)));
+        }
+
+        let first_replayed =
+            replay_captured_calls(&first_outcome.tool_calls, ctx.sandbox_root, ctx.root).await?;
+        let Ok(followup_replayed) =
+            replay_captured_calls(&outcome.tool_calls, &followup_root, ctx.root).await
+        else {
+            return Ok(first);
+        };
+        let new_calls: Vec<_> = followup_replayed
+            .iter()
+            .filter(|r| {
+                !first_replayed
+                    .iter()
+                    .any(|f| f.tool == r.tool && f.input == r.input)
+            })
+            .cloned()
+            .collect();
+        if new_calls.is_empty() {
+            return Ok(with_followup(first, record(true, None, None)));
+        }
+
+        let mut merged = first_replayed;
+        merged.extend(new_calls);
+        let candidates = [
+            (EvidenceSet::Focused, dedup_calls(followup_replayed)),
+            (EvidenceSet::Merged, merged),
+        ];
+
+        let mut best: Option<(EvidenceSet, PlannedCheck)> = None;
+        let mut best_noul: Option<f64> = None;
+        for (set, calls) in candidates {
+            let entry = entry_from_replayed(&req.check, &report, &calls, ctx).await?;
+            let Some(noul) = entry.jev.as_ref().map(|j| j.noul) else {
+                continue;
+            };
+            best_noul = Some(best_noul.map_or(noul, |b: f64| b.max(noul)));
+            let beats = best
+                .as_ref()
+                .is_none_or(|(_, b)| b.jev.as_ref().is_some_and(|j| noul > j.noul));
+            if entry.decider == Decider::Jev && beats {
+                best = Some((set, entry));
+            }
+        }
+
+        Ok(match best {
+            Some((set, entry)) => with_followup(entry, record(true, best_noul, Some(set))),
+            None => with_followup(first, record(true, best_noul, None)),
+        })
+    }
+}
+
+/// Attach a [`Followup`] record to `entry`'s calibration (a no-op for an
+/// uncalibrated entry, which [`wants_followup`] never selects).
+fn with_followup(mut entry: PlannedCheck, followup: Followup) -> PlannedCheck {
+    if let Some(jev) = entry.jev.as_mut() {
+        jev.followup = Some(followup);
+    }
+    entry
+}
+
+/// Drop repeated `(tool, input)` calls, keeping first occurrences in order.
+fn dedup_calls(calls: Vec<replay::ReplayedCall>) -> Vec<replay::ReplayedCall> {
+    let mut out: Vec<replay::ReplayedCall> = Vec::with_capacity(calls.len());
+    for call in calls {
+        if !out
+            .iter()
+            .any(|c| c.tool == call.tool && c.input == call.input)
+        {
+            out.push(call);
+        }
+    }
+    out
+}
+
+/// The follow-up agent's brief, appended to the check's own prompt. It
+/// names the gap concretely — what Jev made of the first pass's evidence
+/// and which calls that evidence was — instead of asking open-endedly for
+/// "more": an agent that believes it already proved its case has nothing to
+/// add to "more", but can answer "the verifier couldn't see it in the raw
+/// output of these calls".
+fn followup_brief(first: &PlannedCheck) -> String {
+    let jev = first.jev.as_ref();
+    let reading = match jev.and_then(|j| j.reading_probabilities) {
+        Some(p) => format!(
+            " It read that output as {:.0}% insufficient, {:.0}% violated and {:.0}% satisfied.",
+            p.insufficient * 100.0,
+            p.violated * 100.0,
+            p.satisfied * 100.0,
+        ),
+        None => String::new(),
+    };
+    let calls: String = first
+        .calls
+        .iter()
+        .map(|call| format!("\n- {}", call_summary(call)))
+        .collect();
+    format!(
+        "--- FOLLOW-UP: EVIDENCE REVIEW ---\n\
+A previous run of this check concluded it passes. An independent verifier then re-ran that \
+run's Read/Grep/Glob calls and judged whether their raw output — and nothing else; it never \
+sees your explanation — affirmatively demonstrates the check. It could not confirm it.{reading}\n\
+\n\
+The previous run's calls were:{calls}\n\
+\n\
+Build a focused, self-contained evidence set the verifier can confirm from raw tool output alone:\n\
+- For each condition the check states, make a call whose output directly shows it. Prefer \
+`Read` with `offset`/`limit` on the exact definition or usage lines over whole files.\n\
+- For a claim about absence (\"no X\", \"never Y\", \"not Z\"), include the `Grep` whose \
+output establishes it, scoped to where X would have to appear.\n\
+- Skip files that bear on no condition: unrelated output makes the verifier less certain.\n\
+Then report your verdict again. If the evidence shows the check does not hold, report \
+failure."
+    )
+}
+
+/// A one-line description of a frozen call for [`followup_brief`].
+fn call_summary(call: &PlanCall) -> String {
+    let (tool, input) = match call {
+        PlanCall::Read { input, .. } => ("Read", input),
+        PlanCall::Grep { input, .. } => ("Grep", input),
+        PlanCall::Glob { input, .. } => ("Glob", input),
+        PlanCall::Truncated { tool, input } => (tool_name(*tool), input),
+    };
+    format!("{tool} {input}")
+}
+
+fn tool_name(tool: ReadOnlyTool) -> &'static str {
+    match tool {
+        ReadOnlyTool::Read => "Read",
+        ReadOnlyTool::Grep => "Grep",
+        ReadOnlyTool::Glob => "Glob",
     }
 }
 
@@ -434,6 +628,20 @@ pub async fn entry_from_outcome(
     // `replay_captured_calls`'s docs on why a partial evidence set is the
     // dangerous direction here.
     let replayed = replay_captured_calls(&outcome.tool_calls, ctx.sandbox_root, ctx.root).await?;
+    entry_from_replayed(check, &report, &replayed, ctx).await
+}
+
+/// [`entry_from_outcome`] after replay: freeze `replayed` (root-relative, so
+/// calls from different agent runs — and sandbox roots — can be combined) and
+/// calibrate it against `report`'s verdict. Precondition: `replayed` is
+/// non-empty.
+async fn entry_from_replayed(
+    check: &Check,
+    report: &CheckReport,
+    replayed: &[replay::ReplayedCall],
+    ctx: &EntryContext<'_>,
+) -> Result<PlannedCheck> {
+    let prompt_hash = plan_file::prompt_xxh64(&check.title, check.prompt());
 
     if replayed.iter().any(|r| r.missing || r.truncated) {
         // The plan cannot guard against a moved/deleted file or a Grep/Glob
@@ -464,7 +672,7 @@ pub async fn entry_from_outcome(
         return Ok(no_calibration_entry(
             check,
             &prompt_hash,
-            &report,
+            report,
             AgentReason::TruncatedDiscovery,
             calls,
         ));
@@ -518,7 +726,7 @@ pub async fn entry_from_outcome(
         prompt_xxh64: prompt_hash,
         decider,
         verdict: report.success,
-        evidence: report.evidence,
+        evidence: report.evidence.clone(),
         jev,
         calls,
     })
@@ -710,6 +918,8 @@ fn decide_from_calibration(
     // plan entirely) rather than a synthesized stand-in for what Jev didn't
     // actually say (MULTI-1824 review).
     let reading = choice.map(|c| c.reading);
+    let reading_confidence = choice.map(|c| c.confidence);
+    let reading_probabilities = choice.and_then(|c| c.probabilities);
 
     let control_noul = match control {
         JevDecision::Satisfied { noul, .. } | JevDecision::NotVerified { noul, .. } => Some(*noul),
@@ -731,6 +941,9 @@ fn decide_from_calibration(
         noul: main_noul,
         control_noul,
         reading,
+        reading_confidence,
+        reading_probabilities,
+        followup: None,
     };
 
     let reason = match agreement_main {
@@ -759,7 +972,7 @@ mod tests {
     use super::*;
     use crate::checks::executor::{FakeExecutor, ReadOnlyTool as Tool};
     use crate::checks::jev::error::TYPESAFE_API_KEY_VAR;
-    use crate::checks::jev::plan_file::Reading as R;
+    use crate::checks::jev::plan_file::{Reading as R, ReadingProbabilities};
     use crate::checks::jev::verify::ChoiceOutcome;
     use crate::checks::model::Check;
     use crate::checks::sandbox::RecordingSandbox;
@@ -903,10 +1116,25 @@ mod tests {
             choice: Some(ChoiceOutcome {
                 reading: R::Violated,
                 confidence: 0.9,
+                probabilities: Some(ReadingProbabilities {
+                    satisfied: 0.05,
+                    violated: 0.9,
+                    insufficient: 0.05,
+                }),
             }),
         };
         let (_, jev) = decide_from_calibration(Expected::Pass, 0.75, &main, &not_verified(0.1));
-        assert_eq!(jev.unwrap().reading, Some(R::Violated));
+        let jev = jev.unwrap();
+        assert_eq!(jev.reading, Some(R::Violated));
+        assert_eq!(jev.reading_confidence, Some(0.9));
+        assert_eq!(
+            jev.reading_probabilities,
+            Some(ReadingProbabilities {
+                satisfied: 0.05,
+                violated: 0.9,
+                insufficient: 0.05,
+            })
+        );
     }
 
     // -- entry_from_outcome: no-tool-calls / truncated short circuits ------
@@ -1290,6 +1518,243 @@ mod tests {
             .unwrap();
 
         assert_eq!(via_plan_check, via_entry_from_outcome);
+    }
+
+    // -- evidence follow-up ---------------------------------------------------
+
+    /// Jev answers by evidence: the control (empty evidence) rejects, any
+    /// request carrying `first.rs` is uncertain (0.5), and anything else —
+    /// i.e. the follow-up's focused `second.rs` set — is affirmed (0.9).
+    async fn mock_followup_calibration(server: &MockServer) {
+        let answer = |noul: f64| {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "model": "jev-1.13.0",
+                "answers": {"satisfied": {"type": "noul", "noul": noul}},
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }))
+        };
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .and(body_string_contains("\"evidence\":[]"))
+            .respond_with(answer(0.02))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .and(body_string_contains("first.rs"))
+            .respond_with(answer(0.5))
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/systemone"))
+            .respond_with(answer(0.9))
+            .mount(server)
+            .await;
+    }
+
+    fn read_call(dir: &Path, relative: &str) -> ToolCall {
+        ToolCall {
+            tool: Tool::Read,
+            input: json!({"file_path": dir.join(relative).to_string_lossy()}),
+        }
+    }
+
+    async fn plan_with_runs(
+        dir: &Path,
+        runs: Vec<(bool, Vec<ToolCall>)>,
+    ) -> (PlannedCheck, Arc<FakeExecutor>) {
+        let server = MockServer::start().await;
+        mock_followup_calibration(&server).await;
+        let client = Arc::new(JevClient::new(server.uri()).unwrap());
+        let cfg = jev_config(0.75, &server.uri());
+        let executor = Arc::new(FakeExecutor::new().with_runs(0, runs));
+        let planner = AgentPlanner::new(
+            executor.clone(),
+            Arc::new(RecordingSandbox::new()),
+            client,
+            cfg,
+            3,
+        );
+        let req = PlanRequest {
+            check_id: 0,
+            check: check(),
+            requirement_title: "R".to_string(),
+            declared_in: PathBuf::from("CHECKS.toml"),
+            root: dir.to_path_buf(),
+            plan_dir: dir.to_path_buf(),
+            requirement_id: "r".to_string(),
+            root_source: RootSource::Manifest,
+            sink: None,
+        };
+        let planned = with_api_key(|| planner.plan_check(req)).await.unwrap();
+        (planned, executor)
+    }
+
+    fn followup_dir() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        write_file(dir.path(), "src/first.rs", "fn first() {}\n");
+        write_file(dir.path(), "src/second.rs", "fn second() {}\n");
+        dir
+    }
+
+    #[tokio::test]
+    async fn followup_adopts_focused_evidence_jev_affirms() {
+        let dir = followup_dir();
+        let (planned, executor) = plan_with_runs(
+            dir.path(),
+            vec![
+                (true, vec![read_call(dir.path(), "src/first.rs")]),
+                (true, vec![read_call(dir.path(), "src/second.rs")]),
+            ],
+        )
+        .await;
+
+        assert_eq!(planned.decider, Decider::Jev);
+        assert!(planned.verdict);
+        assert_eq!(
+            planned.calls.len(),
+            1,
+            "focused set: the follow-up's call only"
+        );
+        let jev = planned.jev.unwrap();
+        assert_eq!(jev.noul, 0.9);
+        assert_eq!(
+            jev.followup,
+            Some(Followup {
+                initial_noul: 0.5,
+                verdict: true,
+                noul: Some(0.9),
+                adopted: Some(EvidenceSet::Focused),
+            })
+        );
+
+        let prompts = executor.prompts();
+        assert_eq!(prompts.len(), 2);
+        assert!(!prompts[0].contains("FOLLOW-UP"));
+        assert!(prompts[1].starts_with(check().prompt()));
+        assert!(prompts[1].contains("FOLLOW-UP"));
+        assert!(
+            prompts[1].contains("src/first.rs"),
+            "names the first pass's calls"
+        );
+    }
+
+    #[tokio::test]
+    async fn followup_with_no_new_calls_keeps_the_first_pass() {
+        let dir = followup_dir();
+        let first = vec![read_call(dir.path(), "src/first.rs")];
+        let (planned, _) =
+            plan_with_runs(dir.path(), vec![(true, first.clone()), (true, first)]).await;
+
+        assert_eq!(planned.decider, Decider::Agent(AgentReason::JevUncertain));
+        assert_eq!(
+            planned.jev.unwrap().followup,
+            Some(Followup {
+                initial_noul: 0.5,
+                verdict: true,
+                noul: None,
+                adopted: None,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn followup_merged_candidate_that_stays_uncertain_keeps_the_first_pass() {
+        let dir = followup_dir();
+        // The follow-up re-reads `first.rs` too, so its focused set still
+        // carries it: both candidates stay uncertain.
+        let (planned, _) = plan_with_runs(
+            dir.path(),
+            vec![
+                (true, vec![read_call(dir.path(), "src/first.rs")]),
+                (
+                    true,
+                    vec![
+                        read_call(dir.path(), "src/first.rs"),
+                        read_call(dir.path(), "src/second.rs"),
+                    ],
+                ),
+            ],
+        )
+        .await;
+
+        assert_eq!(planned.decider, Decider::Agent(AgentReason::JevUncertain));
+        assert_eq!(planned.calls.len(), 1, "first-pass evidence kept");
+        let followup = planned.jev.unwrap().followup.unwrap();
+        assert_eq!(followup.noul, Some(0.5));
+        assert_eq!(followup.adopted, None);
+    }
+
+    #[tokio::test]
+    async fn followup_failing_verdict_is_recorded_never_adopted() {
+        let dir = followup_dir();
+        let (planned, _) = plan_with_runs(
+            dir.path(),
+            vec![
+                (true, vec![read_call(dir.path(), "src/first.rs")]),
+                (false, vec![read_call(dir.path(), "src/second.rs")]),
+            ],
+        )
+        .await;
+
+        assert_eq!(planned.decider, Decider::Agent(AgentReason::JevUncertain));
+        assert!(planned.verdict, "the first pass's verdict stands");
+        let followup = planned.jev.unwrap().followup.unwrap();
+        assert!(!followup.verdict);
+        assert_eq!(followup.noul, None);
+    }
+
+    #[tokio::test]
+    async fn a_first_pass_jev_decides_runs_no_followup() {
+        let dir = followup_dir();
+        let (planned, executor) = plan_with_runs(
+            dir.path(),
+            vec![(true, vec![read_call(dir.path(), "src/second.rs")])],
+        )
+        .await;
+
+        assert_eq!(planned.decider, Decider::Jev);
+        assert_eq!(planned.jev.unwrap().followup, None);
+        assert_eq!(executor.prompts().len(), 1);
+    }
+
+    #[test]
+    fn only_a_passing_check_jev_could_not_affirm_wants_a_followup() {
+        let entry = |decider, verdict| PlannedCheck {
+            id: "c".to_string(),
+            title: "C".to_string(),
+            prompt_xxh64: String::new(),
+            decider,
+            verdict,
+            evidence: None,
+            jev: Some(JevCalibration {
+                model: "jev-1.13.0".to_string(),
+                noul: 0.5,
+                control_noul: 0.02,
+                reading: None,
+                reading_confidence: None,
+                reading_probabilities: None,
+                followup: None,
+            }),
+            calls: vec![],
+        };
+        assert!(wants_followup(&entry(
+            Decider::Agent(AgentReason::JevUncertain),
+            true
+        )));
+        assert!(wants_followup(&entry(
+            Decider::Agent(AgentReason::JevDisagreed),
+            true
+        )));
+        assert!(!wants_followup(&entry(
+            Decider::Agent(AgentReason::JevDisagreed),
+            false
+        )));
+        assert!(!wants_followup(&entry(
+            Decider::Agent(AgentReason::ControlFailed),
+            true
+        )));
+        assert!(!wants_followup(&entry(Decider::Jev, true)));
     }
 
     #[tokio::test]
