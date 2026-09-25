@@ -798,3 +798,69 @@ async fn evidence(ctx: &Ctx, cmd: EvidenceCmd) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::*;
+
+    /// `ReqsArgs` is only ever parsed nested inside the multi CLI; wrap it the
+    /// same way so clap's checks see a complete command.
+    #[derive(Parser)]
+    struct Harness {
+        #[command(flatten)]
+        args: ReqsArgs,
+    }
+
+    #[test]
+    fn args_definition_is_valid() {
+        Harness::command().debug_assert();
+    }
+
+    #[test]
+    fn global_flags_follow_the_subcommand() {
+        let h = Harness::try_parse_from([
+            "reqs",
+            "status",
+            "--db",
+            "api.db",
+            "--format",
+            "json",
+            "--required",
+        ])
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(h.args.db, PathBuf::from("api.db"));
+        assert!(h.args.format == Format::Json);
+        assert!(matches!(
+            h.args.cmd,
+            Cmd::Status {
+                only: None,
+                required: true
+            }
+        ));
+    }
+
+    #[test]
+    fn rule_names_must_be_lowercase_identifiers() {
+        assert!(check_name("resource_crud").is_ok());
+        assert!(check_name("ResourceCrud").is_err());
+        assert!(check_name("resource-crud").is_err());
+    }
+
+    #[test]
+    fn named_rule_takes_the_command_name() {
+        let r = named_rule("reach", "reach(X, Y) :- edge(X, Y).").unwrap();
+        assert_eq!(r.name, "reach");
+        assert!(named_rule("reach", "base: reach(X, Y) :- edge(X, Y).").is_err());
+    }
+
+    #[test]
+    fn tree_renders_with_box_drawing() {
+        let mut root = Tree::leaf("a");
+        let mut b = Tree::leaf("b");
+        b.children.push(Tree::leaf("c"));
+        root.children = vec![b, Tree::leaf("d")];
+        assert_eq!(root.render(), "a\n├─ b\n│  └─ c\n└─ d\n");
+    }
+}
