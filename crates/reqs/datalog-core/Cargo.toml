@@ -1,0 +1,10 @@
+[package]
+name = "datalog-core"
+description = "Datalog with stratified negation, aggregates, compound terms, and provenance"
+authors.workspace = true
+edition.workspace = true
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+thiserror.workspace = true

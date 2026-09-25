@@ -1,0 +1,44 @@
+% A small REST API described as requirements.
+%
+% Requirement predicates (@requirement) are nodes of the AND-OR graph.
+% Plain predicates are ordinary facts used as guards.
+
+.decl resource(name: symbol) @requirement
+.decl handler(method: symbol, path: string) @requirement
+.decl authenticated_requests() @requirement
+.decl session_auth() @requirement
+.decl token_auth() @requirement
+.decl api_ready() @requirement
+
+.decl collection_path(res: symbol, path: string)
+.decl item_path(res: symbol, path: string)
+
+% AND: a resource needs all five CRUD handlers.
+% collection_path/item_path are guards: they pick which resources exist.
+@requirement
+resource_crud: resource(R) :-
+    collection_path(R, P1), item_path(R, P2),
+    handler(get, P1), handler(post, P1),
+    handler(get, P2), handler(put, P2), handler(delete, P2).
+
+% OR: two alternatives for the same head.
+@requirement
+auth_via_session: authenticated_requests :- session_auth.
+@requirement
+auth_via_token: authenticated_requests :- token_auth.
+
+@requirement
+ready: api_ready :- resource(posts), resource(users), authenticated_requests.
+
+collection_path(posts, "/posts").
+item_path(posts, "/posts/{id}").
+collection_path(users, "/users").
+item_path(users, "/users/{id}").
+
+required(api_ready).
+exclusive(session_auth, token_auth).
+
+evidence(handler(get, "/posts"), "openapi.yaml").
+evidence(handler(post, "/posts"), "openapi.yaml").
+evidence(handler(put, "/posts/{id}"), "openapi.yaml").
+evidence(token_auth, "src/auth/jwt.rs").

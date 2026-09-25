@@ -1,0 +1,20 @@
+[package]
+name = "reqs-cli"
+description = "The `multi reqs` subcommand: requirement AND-OR graphs over a Datalog core"
+authors.workspace = true
+edition.workspace = true
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "reqs_cli"
+
+[dependencies]
+datalog-core.workspace = true
+datalog-sqlite.workspace = true
+requirements.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
