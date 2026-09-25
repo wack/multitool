@@ -1,0 +1,12 @@
+[package]
+name = "requirements"
+description = "Requirement AND-OR graphs compiled to Datalog"
+authors.workspace = true
+edition.workspace = true
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+datalog-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true

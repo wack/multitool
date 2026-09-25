@@ -2,6 +2,7 @@ pub use check::Check;
 pub use init::Init;
 pub use login::Login;
 pub use logout::Logout;
+pub use reqs::Reqs;
 pub use run::Run;
 pub use version::Version;
 
@@ -14,6 +15,7 @@ mod check;
 mod init;
 mod login;
 mod logout;
+mod reqs;
 mod run;
 mod version;
 

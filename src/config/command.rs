@@ -5,7 +5,7 @@ use miette::Result;
 use crate::cmd::Plan;
 #[cfg(feature = "proxy")]
 use crate::cmd::Proxy;
-use crate::cmd::{Check, Init, Login, Logout, Run, Version};
+use crate::cmd::{Check, Init, Login, Logout, Reqs, Run, Version};
 use crate::terminal::Terminal;
 
 use super::{CheckSubcommand, InitSubcommand, LoginSubcommand, RunSubcommand};
@@ -47,6 +47,9 @@ pub enum MultiCommand {
     /// into `.check-plan.toml` (the Jev decision engine).
     #[cfg(feature = "jev")]
     Plan(PlanSubcommand),
+    /// Track requirements as AND-OR graphs, evaluated by a Datalog engine and
+    /// stored in SQLite.
+    Reqs(reqs_cli::ReqsArgs),
     /// Print the CLI version and exit
     Version,
 }
@@ -68,7 +71,7 @@ impl MultiCommand {
             Self::Run(_) => Some("run"),
             #[cfg(feature = "jev")]
             Self::Plan(_) => None,
-            Self::Check(_) | Self::Version => None,
+            Self::Check(_) | Self::Reqs(_) | Self::Version => None,
         }
     }
 
@@ -87,6 +90,7 @@ impl MultiCommand {
             Self::Check(flags) => Check::new(console, flags)?.dispatch(),
             #[cfg(feature = "jev")]
             Self::Plan(flags) => Plan::new(console, flags)?.dispatch(),
+            Self::Reqs(args) => Reqs::new(args).dispatch(),
             Self::Version => Version::new(console).dispatch(),
         }
     }
@@ -130,6 +134,10 @@ mod tests {
     fn supported_commands_are_not_deprecated() {
         assert_eq!(command_of(&["multi", "check"]).deprecated_name(), None);
         assert_eq!(command_of(&["multi", "version"]).deprecated_name(), None);
+        assert_eq!(
+            command_of(&["multi", "reqs", "status"]).deprecated_name(),
+            None
+        );
     }
 
     #[test]
@@ -145,8 +153,9 @@ mod tests {
                 "legacy `{name}` should be hidden from help output"
             );
         }
-        // `help` is clap's built-in utility; `check`/`version` are supported.
-        for name in ["check", "version"] {
+        // `help` is clap's built-in utility; `check`/`reqs`/`version` are
+        // supported.
+        for name in ["check", "reqs", "version"] {
             assert!(
                 !hidden[name],
                 "`{name}` should remain advertised in help output"
