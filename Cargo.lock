@@ -3947,8 +3947,6 @@ name = "multi-core"
 version = "0.1.2"
 dependencies = [
  "async-stream",
- "base64 0.22.1",
- "ignore",
  "miette",
  "pretty_assertions",
  "static_assertions",
